@@ -1,103 +1,115 @@
+'use client';
+
+import { useState, ChangeEvent, FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import Image from "next/image";
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+export default function HomePage() {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+      setError(null); // Clear previous errors
+    } else {
+      setFile(null);
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!file) {
+      setError('Please select a .srt file to upload.');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || result.details || 'Upload failed');
+      }
+
+      // Assuming the API returns { id: string, blobUrl: string }
+      if (result.id) {
+        router.push(`/dashboard/${result.id}`);
+      } else {
+        throw new Error('Upload succeeded but no ID was returned.');
+      }
+
+    } catch (err) {
+      console.error('Upload error:', err);
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('An unknown error occurred during upload.');
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-gradient-to-br from-slate-900 to-slate-800 text-white">
+      <div className="bg-slate-800/50 backdrop-blur-md p-8 rounded-xl shadow-2xl w-full max-w-md">
+        <h1 className="text-3xl font-bold mb-6 text-center text-sky-400">Upload SRT File</h1>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div>
+            <label htmlFor="srtFile" className="block text-sm font-medium text-slate-300 mb-1">
+              SRT File Input
+            </label>
+            <input
+              id="srtFile"
+              name="srtFile"
+              type="file"
+              accept=".srt,application/x-subrip"
+              onChange={handleFileChange}
+              className="block w-full text-sm text-slate-400 
+                         file:mr-4 file:py-2 file:px-4
+                         file:rounded-lg file:border-0
+                         file:text-sm file:font-semibold
+                         file:bg-sky-600 file:text-sky-50
+                         hover:file:bg-sky-700
+                         disabled:opacity-50 disabled:pointer-events-none"
+              disabled={uploading}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+             {file && (
+              <p className="mt-2 text-xs text-slate-400">
+                Selected: {file.name} ({(file.size / 1024).toFixed(2)} KB)
+              </p>
+            )}
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-400 bg-red-900/30 p-3 rounded-md">Error: {error}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={uploading || !file}
+            className="w-full bg-sky-600 hover:bg-sky-700 disabled:bg-slate-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-opacity-75 transition duration-150 ease-in-out disabled:cursor-not-allowed"
           >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+            {uploading ? 'Uploading...' : 'Upload & Process'}
+          </button>
+        </form>
+      </div>
+      <footer className="mt-12 text-center text-slate-500 text-sm">
+        <p>Powered by Vercel Edge Functions & OpenRouter</p>
       </footer>
-    </div>
+    </main>
   );
 }
