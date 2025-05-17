@@ -28,12 +28,10 @@ const config = new Configuration({
 });
 const openai = new OpenAIApi(config);
 
-// 添加计数器监控OpenRouter API调用次数
-let openRouterCallCounter = {
-  summary: 0,
-  translation: 0,
-  highlights: 0,
-  total: 0
+// 添加计数器用于记录API调用次数
+const openRouterCallCounter = {
+  count: 0,
+  calls: [] as { model: string, task: string, timestamp: number }[]
 };
 
 // 指定模型 - 使用Gemini 2.5 Flash，支持1M token上下文窗口
@@ -96,14 +94,14 @@ async function callModelWithRetry(
   let lastError = null;
   
   // 更新计数器
-  openRouterCallCounter[taskType]++;
-  openRouterCallCounter.total++;
+  openRouterCallCounter.count++;
+  openRouterCallCounter.calls.push({ model: MODEL, task: taskType, timestamp: Date.now() });
   
   // 记录API请求详情
   const requestId = Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
   console.log(`[OpenRouter Request ${requestId}] ---- START ----`);
   console.log(`[OpenRouter Request ${requestId}] Model: ${MODEL}`);
-  console.log(`[OpenRouter Request ${requestId}] Task: ${taskType} (Call #${openRouterCallCounter[taskType]}, Total: ${openRouterCallCounter.total})`);
+  console.log(`[OpenRouter Request ${requestId}] Task: ${taskType} (Call #${openRouterCallCounter.count}, Total: ${openRouterCallCounter.count})`);
   console.log(`[OpenRouter Request ${requestId}] System: ${systemPrompt.substring(0, 100)}...`);
   console.log(`[OpenRouter Request ${requestId}] User: ${userPrompt.substring(0, 100)}...`);
   console.log(`[OpenRouter Request ${requestId}] MaxTokens: ${maxTokens}`);
@@ -524,6 +522,15 @@ async function generateTranslation(srtContent: string, sendUpdate: (update: Proc
 const processingRequests = new Map<string, Date>();
 // 请求超时时间（毫秒）
 const REQUEST_TIMEOUT = 3 * 60 * 1000; // 3分钟
+
+// Fix for line 605
+function parseJSON(text: string): Record<string, unknown> {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return {};
+  }
+}
 
 export async function POST(request: NextRequest) {
   const { id, blobUrl, fileName, allowRetry = false } = await request.json();

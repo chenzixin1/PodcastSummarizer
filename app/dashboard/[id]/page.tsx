@@ -68,7 +68,7 @@ export default function DashboardPage() {
         scrollToBottom();
       });
     }
-  }, [data?.summary]);
+  }, [data?.summary, isProcessing]);
 
   useEffect(() => {
     if (id) {
@@ -349,7 +349,7 @@ export default function DashboardPage() {
       console.log(`清理ID为 ${id} 的处理状态`);
       isProcessingRef.current = false;
     };
-  }, [id]);
+  }, [id, isProcessing]);
 
   // 添加重试处理函数
   const retryProcessing = () => {
