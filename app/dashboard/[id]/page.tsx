@@ -27,6 +27,16 @@ interface ProcessResult {
 
 type ViewMode = 'summary' | 'translate' | 'fullText';
 
+// Helper function to safely parse JSON with appropriate type casting
+const safelyParseJSON = (jsonString: string) => {
+  try {
+    return JSON.parse(jsonString) as any; // Use any here to bypass type checking
+  } catch (error) {
+    console.error('Error parsing JSON:', error);
+    return {}; // Return empty object for error cases
+  }
+};
+
 export default function DashboardPage() {
   const params = useParams();
   const id = params?.id as string; // Get ID from route
@@ -151,7 +161,7 @@ export default function DashboardPage() {
                 try {
                   // 确保text包含有效的JSON字符串
                   if (text && (text.startsWith('{') || text.startsWith('['))) {
-                    const errorData = JSON.parse(text);
+                    const errorData = safelyParseJSON(text);
                     errorMessage = errorData.error || errorMessage;
                   } else {
                     errorMessage = text || errorMessage;
@@ -202,7 +212,7 @@ export default function DashboardPage() {
                     if (message.startsWith('data: ')) {
                       try {
                         const jsonData = message.substring(5).trim();
-                        const eventData = JSON.parse(jsonData);
+                        const eventData = safelyParseJSON(jsonData);
                         
                         // 实时更新界面，显示分步处理结果
                         switch (eventData.type) {
@@ -412,7 +422,7 @@ export default function DashboardPage() {
           try {
             // 确保text包含有效的JSON字符串
             if (text && (text.startsWith('{') || text.startsWith('['))) {
-              const errorData = JSON.parse(text);
+              const errorData = safelyParseJSON(text);
               errorMessage = errorData.error || errorMessage;
             } else {
               errorMessage = text || errorMessage;
@@ -461,7 +471,7 @@ export default function DashboardPage() {
               if (message.startsWith('data: ')) {
                 try {
                   const jsonData = message.substring(5).trim();
-                  const eventData = JSON.parse(jsonData);
+                  const eventData = safelyParseJSON(jsonData);
                   
                   // 处理各种事件类型
                   switch (eventData.type) {

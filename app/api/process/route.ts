@@ -136,7 +136,7 @@ async function callModelWithRetry(
       const callEndTime = Date.now();
       console.log(`[OpenRouter Request ${requestId}] API call initiated in ${callEndTime - callStartTime}ms (stream: ${!!onTokenStream})`);
       
-            if (!response.ok) {
+      if (!response.ok) {
         const errorText = await response.text().catch(() => `Failed to get error text, status: ${response.status}`);
         console.error(`[OpenRouter Request ${requestId}] API ERROR: ${response.status} ${errorText}`);
         throw new Error(`API response not ok: ${response.status} ${errorText}`);
@@ -160,7 +160,7 @@ async function callModelWithRetry(
                 try {
                     const jsonDataString = buffer.substring(5).trim();
                     if (jsonDataString && jsonDataString !== '[DONE]') {
-                        const jsonData = JSON.parse(jsonDataString);
+                        const jsonData = parseJSON(jsonDataString);
                         if (jsonData.choices && jsonData.choices[0] && jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
                             const content = jsonData.choices[0].delta.content;
                             fullContent += content;
@@ -192,7 +192,7 @@ async function callModelWithRetry(
                   continue;
                 }
                 try {
-                  const jsonData = JSON.parse(jsonDataString);
+                  const jsonData = parseJSON(jsonDataString);
                   if (jsonData.choices && jsonData.choices[0] && jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
                     const content = jsonData.choices[0].delta.content;
                     fullContent += content;
@@ -524,10 +524,11 @@ const processingRequests = new Map<string, Date>();
 const REQUEST_TIMEOUT = 3 * 60 * 1000; // 3分钟
 
 // Fix for line 605
-function parseJSON(text: string): Record<string, unknown> {
+function parseJSON(text: string): any {
   try {
     return JSON.parse(text);
-  } catch (e) {
+  } catch (error) {
+    console.error('Error parsing JSON:', error);
     return {};
   }
 }
