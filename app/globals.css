@@ -24,3 +24,125 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Markdown 样式 */
+.markdown-body {
+  @apply text-slate-200;
+}
+
+.markdown-body h1 {
+  @apply text-3xl font-bold text-sky-400 mb-4 mt-6;
+}
+
+.markdown-body h2 {
+  @apply text-2xl font-bold text-sky-400 mb-3 mt-5;
+}
+
+.markdown-body h3 {
+  @apply text-xl font-bold text-sky-400 mb-2 mt-4;
+}
+
+.markdown-body h4 {
+  @apply text-lg font-bold text-sky-400 mb-2 mt-3;
+}
+
+.markdown-body p {
+  @apply mb-4;
+}
+
+.markdown-body ul {
+  @apply list-disc pl-6 mb-4;
+}
+
+.markdown-body ol {
+  @apply list-decimal pl-6 mb-4;
+}
+
+.markdown-body li {
+  @apply mb-1;
+}
+
+.markdown-body a {
+  @apply text-sky-400 hover:underline;
+}
+
+.markdown-body strong {
+  @apply font-bold text-sky-300;
+}
+
+.markdown-body blockquote {
+  @apply border-l-4 border-sky-600 pl-4 italic my-4;
+}
+
+.markdown-body pre {
+  @apply bg-slate-700 p-4 rounded overflow-x-auto my-4;
+}
+
+.markdown-body code {
+  @apply bg-slate-700 px-1 py-0.5 rounded text-amber-300;
+}
+
+.markdown-body table {
+  @apply w-full border-collapse my-4;
+}
+
+.markdown-body th, .markdown-body td {
+  @apply border border-slate-600 p-2;
+}
+
+.markdown-body th {
+  @apply bg-slate-700;
+}
+
+/* 流式内容容器样式 */
+.streaming-content {
+  display: block;
+  min-height: 200px; /* 最小高度，确保有滚动空间 */
+  max-height: none; /* 取消最大高度限制 */
+  overflow-x: hidden; /* 防止水平滚动 */
+  padding-right: 5px; /* 给滚动条留空间 */
+  scroll-behavior: smooth; /* 平滑滚动行为 */
+  font-size: 0.95rem; /* 固定字体大小 */
+  line-height: 1.5; /* 固定行高 */
+}
+
+/* 确保markdown元素不会改变内容大小 */
+.streaming-content * {
+  font-size: inherit !important; /* 强制继承字体大小 */
+  transition: none !important; /* 禁用过渡效果，防止闪烁 */
+}
+
+/* 滚动条样式，使其更美观 */
+.streaming-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.streaming-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+}
+
+.streaming-content::-webkit-scrollbar-thumb {
+  background: rgba(100, 100, 100, 0.5);
+  border-radius: 3px;
+}
+
+.streaming-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 100, 100, 0.7);
+}
+
+/* 提高内容可读性 */
+.streaming-content p,
+.streaming-content li {
+  margin-bottom: 0.75rem;
+}
+
+/* 最新添加的内容闪烁动画效果 */
+@keyframes fadeIn {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
+}
+
+.streaming-content p:last-child {
+  animation: fadeIn 0.3s ease-in-out;
+}

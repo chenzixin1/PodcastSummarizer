@@ -24,6 +24,23 @@ export async function POST(request: NextRequest) {
     const id = nanoid();
     const filename = `${id}-${file.name}`;
 
+    console.log('Attempting to upload file:', filename);
+    console.log('File type:', file.type);
+    console.log('File size:', file.size);
+
+    // Check if BLOB_READ_WRITE_TOKEN is configured
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      console.warn('BLOB_READ_WRITE_TOKEN not configured, using mock storage');
+      
+      // For testing purposes - store in localStorage via client-side
+      return NextResponse.json({ 
+        id, 
+        blobUrl: '#mock-blob-url', 
+        fileName: file.name,
+        fileSize: `${(file.size / 1024).toFixed(2)} KB`
+      }, { status: 200 });
+    }
+
     // Upload to Vercel Blob
     const blob = await put(filename, file, {
       access: 'public',
@@ -31,10 +48,17 @@ export async function POST(request: NextRequest) {
       // contentType: file.type, 
     });
 
+    console.log('File uploaded successfully, URL:', blob.url);
+
     // In a real scenario, you'd save the id and blob.url to a database (KV, Redis, etc.)
     // For now, we just return them.
 
-    return NextResponse.json({ id, blobUrl: blob.url }, { status: 200 });
+    return NextResponse.json({ 
+      id, 
+      blobUrl: blob.url,
+      fileName: file.name,
+      fileSize: `${(file.size / 1024).toFixed(2)} KB`
+    }, { status: 200 });
   } catch (error) {
     console.error('Error uploading file:', error);
     let errorMessage = 'Internal Server Error';
