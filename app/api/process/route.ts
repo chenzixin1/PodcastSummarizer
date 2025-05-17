@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 import { Configuration, OpenAIApi } from 'openai-edge';
 import { prompts } from '../../../lib/prompts';
@@ -523,7 +524,7 @@ const processingRequests = new Map<string, Date>();
 // 请求超时时间（毫秒）
 const REQUEST_TIMEOUT = 3 * 60 * 1000; // 3分钟
 
-// Fix for line 605
+// For the parseJSON function - line 527
 function parseJSON(text: string): any {
   try {
     return JSON.parse(text);
