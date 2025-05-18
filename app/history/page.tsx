@@ -101,11 +101,8 @@ export default function HistoryPage() {
   return (
     <div className="min-h-screen bg-slate-900 text-white">
       <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
-        <div className="container mx-auto flex justify-between items-center">
+        <div className="container mx-auto">
           <h1 className="text-xl font-semibold text-sky-400">SRT Processor / History</h1>
-          <Link href="/" className="text-sm bg-sky-600 hover:bg-sky-700 py-2 px-4 rounded-md">
-            Upload New File
-          </Link>
         </div>
       </header>
       
