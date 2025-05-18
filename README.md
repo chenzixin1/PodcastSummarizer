@@ -20,6 +20,29 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Environment Variables
+
+The application uses several environment variables to configure the LLM model and processing settings:
+
+### Required Environment Variables
+
+- `OPENROUTER_API_KEY`: Your API key for OpenRouter
+
+### Optional Environment Variables (with defaults)
+
+- `OPENROUTER_MODEL`: LLM model to use (default: "google/gemini-2.5-flash-preview")
+- `MAX_CONTENT_LENGTH`: Maximum content length for processing (default: 300000)
+- `MAX_SUMMARY_TOKENS`: Maximum tokens for summary generation (default: 8000)
+- `MAX_TRANSLATION_TOKENS`: Maximum tokens for translation (default: 16000)
+- `MAX_HIGHLIGHTS_TOKENS`: Maximum tokens for highlights (default: 12000)
+- `MAX_RETRIES`: Maximum API call retry attempts (default: 2)
+- `RETRY_DELAY`: Delay between retries in milliseconds (default: 1000)
+
+You can set these environment variables:
+1. Through your hosting platform (e.g., Vercel)
+2. In a local `.env.local` file for development
+3. They can also be overridden in `next.config.js`
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
