@@ -2,11 +2,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Configuration, OpenAIApi } from 'openai-edge';
 import { prompts } from '../../../lib/prompts';
+import { modelConfig } from '../../../lib/modelConfig';
 
 export const runtime = 'edge';
 
 // VERCEL DEBUG: Add version number to help track deployments
-const API_VERSION = '1.0.1';
+const API_VERSION = modelConfig.API_VERSION;
 console.log(`[DEBUG-API] Podcast Summarizer API v${API_VERSION} loading...`);
 
 // Define a type for stream updates
@@ -39,21 +40,17 @@ const openRouterCallCounter = {
   calls: [] as { model: string, task: string, timestamp: number }[]
 };
 
-// 指定模型 - 使用Gemini 2.5 Flash，支持1M token上下文窗口
+// 指定模型 - 使用环境变量中的模型
 // 参考: https://openrouter.ai/docs#models
-const MODEL = 'google/gemini-2.5-flash-preview';
+const MODEL = modelConfig.MODEL;
 
 // 重试配置
-const MAX_RETRIES = 2;
-const RETRY_DELAY = 1000; // 毫秒
+const MAX_RETRIES = modelConfig.MAX_RETRIES;
+const RETRY_DELAY = modelConfig.RETRY_DELAY; // 毫秒
 
 // 内容处理配置 - 提高以利用Gemini 2.5 Flash的1M token能力
-const MAX_CONTENT_LENGTH = 300000; // 提高到30万字符，减少分段需求
-const MAX_TOKENS = {
-  summary: 8000,      // 增加摘要token上限 
-  translation: 16000, // 增加翻译token上限
-  highlights: 12000   // 增加高亮token上限
-};
+const MAX_CONTENT_LENGTH = modelConfig.MAX_CONTENT_LENGTH; // 提高到30万字符，减少分段需求
+const MAX_TOKENS = modelConfig.MAX_TOKENS;
 
 // 辅助函数：延迟执行
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
