@@ -4,6 +4,21 @@
  * These utilities help with tracking and debugging issues, especially in production environments.
  */
 
+// Add NetworkInformation interface
+interface NetworkInformation {
+  effectiveType: string;
+  downlink: number;
+  rtt: number;
+  saveData: boolean;
+}
+
+// Extend Navigator type to include connection property
+declare global {
+  interface Navigator {
+    connection?: NetworkInformation;
+  }
+}
+
 // Configuration
 const DEBUG_VERSION = '1.0.1';
 const IS_PRODUCTION = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
@@ -120,18 +135,23 @@ export function getBrowserInfo(): Record<string, any> {
     return { environment: 'server' };
   }
   
+  // Safely check for navigator.connection
+  const hasConnection = typeof navigator !== 'undefined' && 
+                        'connection' in navigator && 
+                        navigator.connection !== null;
+  
   return {
     userAgent: navigator.userAgent,
     language: navigator.language,
     platform: navigator.platform,
     screenSize: `${window.screen.width}x${window.screen.height}`,
     viewportSize: `${window.innerWidth}x${window.innerHeight}`,
-    connection: navigator.connection 
+    connection: hasConnection 
       ? {
-          type: (navigator.connection as any).effectiveType, 
-          downlink: (navigator.connection as any).downlink,
-          rtt: (navigator.connection as any).rtt,
-          saveData: (navigator.connection as any).saveData,
+          type: navigator.connection?.effectiveType, 
+          downlink: navigator.connection?.downlink,
+          rtt: navigator.connection?.rtt,
+          saveData: navigator.connection?.saveData,
         } 
       : undefined,
     timestamp: new Date().toISOString()
