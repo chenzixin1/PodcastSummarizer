@@ -5,6 +5,10 @@ import { prompts } from '../../../lib/prompts';
 
 export const runtime = 'edge';
 
+// VERCEL DEBUG: Add version number to help track deployments
+const API_VERSION = '1.0.1';
+console.log(`[DEBUG-API] Podcast Summarizer API v${API_VERSION} loading...`);
+
 // Define a type for stream updates
 export interface ProcessStreamUpdate {
   type: 'status' | 'summary_token' | 'summary_chunk_result' | 'summary_final_result' | 'translation_token' | 'translation_chunk_result' | 'translation_final_result' | 'highlight_token' | 'highlight_chunk_result' | 'highlight_final_result' | 'error' | 'all_done';
@@ -535,17 +539,38 @@ function parseJSON(text: string): any {
 }
 
 export async function POST(request: NextRequest) {
-  const { id, blobUrl, fileName, allowRetry = false } = await request.json();
+  console.log(`[DEBUG-API] POST request received at ${new Date().toISOString()}`);
+  
+  let requestBody;
+  try {
+    requestBody = await request.json();
+    console.log(`[DEBUG-API] Request body parsed successfully: ${JSON.stringify({
+      id: requestBody.id,
+      fileName: requestBody.fileName,
+      blobUrl: requestBody.blobUrl ? '(URL exists)' : '(No URL)',
+      allowRetry: requestBody.allowRetry
+    })}`);
+  } catch (error) {
+    console.error(`[DEBUG-API] Failed to parse request body:`, error);
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+  
+  const { id, blobUrl, fileName, allowRetry = false, debug = false } = requestBody;
   const processId = Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
   
-  // 检查是否已经在处理相同的请求
+  console.log(`[DEBUG-API-${processId}] Processing started for ID: ${id}, File: ${fileName}`);
+  
+  // Check if already processing the same request
   if (processingRequests.has(id) && !allowRetry) {
     const requestTime = processingRequests.get(id)!;
     const timeSinceRequest = Date.now() - requestTime.getTime();
     
-    // 如果请求仍在超时时间内处理中，则返回已在处理的提示
+    console.log(`[DEBUG-API-${processId}] Duplicate check: ID ${id} is ${processingRequests.has(id) ? 'already being processed' : 'not being processed'}`);
+    console.log(`[DEBUG-API-${processId}] Time since last request: ${timeSinceRequest}ms, timeout: ${REQUEST_TIMEOUT}ms`);
+    
+    // If the request is still being processed within timeout, return already processing
     if (timeSinceRequest < REQUEST_TIMEOUT) {
-      console.log(`[Process Request ${processId}] Duplicate request for ID: ${id}, already processing for ${timeSinceRequest}ms`);
+      console.log(`[DEBUG-API-${processId}] Duplicate request for ID: ${id}, already processing for ${timeSinceRequest}ms`);
       return new Response(
         JSON.stringify({ 
           error: 'This file is already being processed',
@@ -557,39 +582,49 @@ export async function POST(request: NextRequest) {
         }
       );
     } else {
-      // 如果超时，移除旧请求并继续处理
-      console.log(`[Process Request ${processId}] Previous request for ID: ${id} timed out after ${timeSinceRequest}ms, starting new process`);
+      // If timed out, remove old request and continue
+      console.log(`[DEBUG-API-${processId}] Previous request for ID: ${id} timed out after ${timeSinceRequest}ms, starting new process`);
       processingRequests.delete(id);
     }
   }
   
-  // 如果是强制重试，先清除之前的请求记录
+  // If forced retry, clear previous request record
   if (allowRetry && processingRequests.has(id)) {
-    console.log(`[Process Request ${processId}] Forced retry for ID: ${id}`);
+    console.log(`[DEBUG-API-${processId}] Forced retry for ID: ${id}`);
     processingRequests.delete(id);
   }
   
-  // 记录新请求
+  // Record new request
   processingRequests.set(id, new Date());
+  console.log(`[DEBUG-API-${processId}] Request added to processing map, total in progress: ${processingRequests.size}`);
   
   const overallStartTime = Date.now();
-  console.log(`[Process Request ${processId}] ---- STREAMING START ----`);
-  console.log(`[Process Request ${processId}] Processing file: ${fileName}, ID: ${id}, URL: ${blobUrl}`);
+  console.log(`[DEBUG-API-${processId}] ---- STREAMING START ----`);
+  console.log(`[DEBUG-API-${processId}] Processing file: ${fileName}, ID: ${id}, URL: ${blobUrl ? '(exists)' : '(missing)'}`);
 
   if (!id || !blobUrl || !fileName) {
-    console.log(`[Process Request ${processId}] Missing required fields.`);
+    console.log(`[DEBUG-API-${processId}] Missing required fields.`);
     return NextResponse.json({ error: 'Missing required fields (id, blobUrl, fileName)' }, { status: 400 });
   }
 
   const encoder = new TextEncoder();
+  
+  console.log(`[DEBUG-API-${processId}] Creating ReadableStream for response`);
   const stream = new ReadableStream({
     async start(controller) {
+      console.log(`[DEBUG-API-${processId}] Stream controller started`);
+      
       const sendUpdate = async (update: ProcessStreamUpdate) => {
         try {
           const jsonString = JSON.stringify(update);
-          controller.enqueue(encoder.encode(`data: ${jsonString}\n\n`)); // SSE format, or use NDJSON: `${jsonString}\n`
+          // Debug log every 5th update to avoid excessive logging
+          if (debug || update.type === 'status' || update.type === 'error' || update.type === 'all_done' || 
+              (update.type === 'summary_token' && (openRouterCallCounter.count % 5 === 0))) {
+            console.log(`[DEBUG-API-${processId}] Sending update: ${update.type} ${update.task ? `(${update.task})` : ''}`);
+          }
+          controller.enqueue(encoder.encode(`data: ${jsonString}\n\n`)); // SSE format
         } catch (e) {
-          console.error(`[Process Request ${processId}] Error sending update to stream:`, e, update);
+          console.error(`[DEBUG-API-${processId}] Error sending update to stream:`, e, update);
         }
       };
 
@@ -597,22 +632,33 @@ export async function POST(request: NextRequest) {
         await sendUpdate({ type: 'status', message: `Processing request ${processId} for ${fileName}` });
 
         // 1. Fetch SRT Content
+        console.log(`[DEBUG-API-${processId}] Fetching SRT content from URL`);
         await sendUpdate({ type: 'status', message: 'Fetching SRT content...' });
         let srtContent = '';
         let plainText = '';
         try {
+          console.log(`[DEBUG-API-${processId}] Initiating fetch request to blob URL`);
           const fileResponse = await fetch(blobUrl);
+          
+          console.log(`[DEBUG-API-${processId}] Blob fetch response: status=${fileResponse.status}, ok=${fileResponse.ok}`);
+          
           if (!fileResponse.ok) {
             throw new Error(`Failed to fetch SRT file: ${fileResponse.status} ${fileResponse.statusText}`);
           }
+          
           srtContent = await fileResponse.text();
+          console.log(`[DEBUG-API-${processId}] SRT content fetched, length: ${srtContent.length}`);
+          
           plainText = await parseSrtContent(srtContent);
+          console.log(`[DEBUG-API-${processId}] SRT parsed to plain text, length: ${plainText.length}`);
+          
           if (!plainText || plainText.length < 10) {
             throw new Error('SRT content is too short or invalid after parsing.');
           }
+          
           await sendUpdate({ type: 'status', message: `Fetched and parsed SRT content (${plainText.length} chars).` });
         } catch (fetchError: any) {
-          console.error(`[Process Request ${processId}] Error fetching/parsing SRT:`, fetchError);
+          console.error(`[DEBUG-API-${processId}] Error fetching/parsing SRT:`, fetchError);
           await sendUpdate({ type: 'error', message: `Failed to fetch/parse SRT: ${fetchError.message}` });
           controller.close();
           return;
@@ -627,33 +673,39 @@ export async function POST(request: NextRequest) {
         const processingErrors: string[] = [];
 
         // 2. Generate Summary (Streaming)
+        console.log(`[DEBUG-API-${processId}] Starting summary generation`);
         try {
           summaryResult = await generateSummary(plainText, sendUpdate);
+          console.log(`[DEBUG-API-${processId}] Summary generation completed, length: ${summaryResult.length}`);
           await sendUpdate({ type: 'status', task: 'summary', message: 'Summary generation completed.' });
         } catch (summaryError: any) {
-          console.error(`[Process Request ${processId}] Error generating summary:`, summaryError);
+          console.error(`[DEBUG-API-${processId}] Error generating summary:`, summaryError);
           processingErrors.push(`Summary: ${summaryError.message}`);
           await sendUpdate({ type: 'error', task: 'summary', message: `Error: ${summaryError.message}` });
           summaryResult = "Failed to generate summary.";
         }
 
         // 3. Generate Translation (Streaming)
+        console.log(`[DEBUG-API-${processId}] Starting translation generation`);
         try {
           translationResult = await generateTranslation(srtContent, sendUpdate);
+          console.log(`[DEBUG-API-${processId}] Translation completed, length: ${translationResult.length}`);
           await sendUpdate({ type: 'status', task: 'translation', message: 'Translation completed.' });
         } catch (translationError: any) {
-          console.error(`[Process Request ${processId}] Error generating translation:`, translationError);
+          console.error(`[DEBUG-API-${processId}] Error generating translation:`, translationError);
           processingErrors.push(`Translation: ${translationError.message}`);
           await sendUpdate({ type: 'error', task: 'translation', message: `Error: ${translationError.message}` });
           translationResult = "Failed to generate translation.";
         }
 
         // 4. Generate Highlights (Non-Streaming)
+        console.log(`[DEBUG-API-${processId}] Starting highlights generation`);
         try {
           highlightsResult = await generateHighlights(srtContent, sendUpdate);
+          console.log(`[DEBUG-API-${processId}] Highlights generation completed, length: ${highlightsResult.length}`);
           await sendUpdate({ type: 'status', task: 'highlights', message: 'Highlights generation completed.' });
         } catch (highlightsError: any) {
-          console.error(`[Process Request ${processId}] Error generating highlights:`, highlightsError);
+          console.error(`[DEBUG-API-${processId}] Error generating highlights:`, highlightsError);
           processingErrors.push(`Highlights: ${highlightsError.message}`);
           await sendUpdate({ type: 'error', task: 'highlights', message: `Error: ${highlightsError.message}` });
           highlightsResult = "Failed to generate highlights.";
@@ -667,25 +719,35 @@ export async function POST(request: NextRequest) {
           errors: processingErrors
         };
 
+        console.log(`[DEBUG-API-${processId}] All processing completed, sending final results with lengths: summary=${summaryResult.length}, translation=${translationResult.length}, highlights=${highlightsResult.length}`);
         await sendUpdate({ type: 'all_done', finalResults: finalResult });
 
-        // 记录完成时间
+        // Record completion time
         const endTime = Date.now();
-        console.log(`[Process Request ${processId}] Processing completed in ${endTime - overallStartTime}ms`);
-        console.log(`[Process Request ${processId}] ---- STREAMING END ----`);
+        console.log(`[DEBUG-API-${processId}] Processing completed in ${endTime - overallStartTime}ms`);
+        console.log(`[DEBUG-API-${processId}] ---- STREAMING END ----`);
         
-        // Don't return inside the stream start method - it won't work
-        // We close the controller to signal the end of the stream instead
+        // Remove from processing map
+        processingRequests.delete(id);
+        console.log(`[DEBUG-API-${processId}] Request removed from processing map, remaining in progress: ${processingRequests.size}`);
+        
+        // Close the controller to signal the end of the stream
         controller.close();
       } catch (error: any) {
-        console.error(`[Process Request ${processId}] Error processing request:`, error);
+        console.error(`[DEBUG-API-${processId}] Unhandled error in stream processing:`, error);
         await sendUpdate({ type: 'error', message: `Error processing request: ${error.message}` });
+        
+        // Remove from processing map on error
+        processingRequests.delete(id);
+        console.log(`[DEBUG-API-${processId}] Request removed from processing map due to error, remaining in progress: ${processingRequests.size}`);
+        
         controller.close();
       }
     }
   });
 
-  // Return the stream response from the handler function
+  // Return the stream response
+  console.log(`[DEBUG-API-${processId}] Returning stream response`);
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',

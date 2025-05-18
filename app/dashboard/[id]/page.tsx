@@ -6,6 +6,11 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { logDebug, logError, logUserAction, logPerformance } from '../../../lib/debugUtils';
+
+// VERCEL DEBUG: Add version number to help track deployments
+const APP_VERSION = '1.0.1';
+console.log(`[DEBUG] Podcast Summarizer v${APP_VERSION} loading...`);
 
 // Define types for the processed data (optional but good practice)
 interface ProcessedData {
@@ -41,6 +46,9 @@ const safelyParseJSON = (jsonString: string) => {
 export default function DashboardPage() {
   const params = useParams();
   const id = params?.id as string; // Get ID from route
+  
+  console.log(`[DEBUG] Dashboard initializing for ID: ${id}`);
+  logDebug(`Dashboard initializing for ID: ${id}`);
 
   const [activeView, setActiveView] = useState<ViewMode>('summary');
   const [data, setData] = useState<ProcessedData | null>(null);
@@ -55,26 +63,33 @@ export default function DashboardPage() {
   const lastHeightRef = useRef(0);
   const requestSentRef = useRef(false); // 添加防止重复请求的引用
 
-  // 滚动函数：使用scrollIntoView自动滚动到最新内容
+  // Enhanced scroll function with debug
   const scrollToBottom = () => {
+    console.log(`[DEBUG] Attempting to scroll to bottom, isProcessing: ${isProcessingRef.current}`);
     if (contentRef.current) {
-      // 查找内容的最后一个元素
+      // Query for the last element
       const lastElement = contentRef.current.querySelector('p:last-child, h1:last-child, h2:last-child, h3:last-child');
       
-      // 如果找到最后一个元素，将其滚动到视图中
       if (lastElement) {
+        console.log('[DEBUG] Found last element, scrolling into view');
         lastElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      } else {
+        console.log('[DEBUG] No last element found for scrolling');
+        logDebug('No last element found for scrolling', { 
+          contentHeight: contentRef.current.scrollHeight,
+          contentHtml: contentRef.current.innerHTML.substring(0, 200) + '...'
+        });
       }
-      // 否则只是更新高度引用
+      
       lastHeightRef.current = contentRef.current.scrollHeight;
+      console.log(`[DEBUG] Updated lastHeightRef to ${lastHeightRef.current}`);
     }
   };
 
-  // 监控内容变化，并滚动
+  // Monitor content changes and scroll
   useEffect(() => {
-    // 只在流式处理中进行自动滚动
+    console.log(`[DEBUG] Content change detected, summary length: ${data?.summary?.length}, isProcessing: ${isProcessingRef.current}`);
     if (data?.summary && isProcessingRef.current) {
-      // 使用requestAnimationFrame确保DOM更新后再滚动
       requestAnimationFrame(() => {
         scrollToBottom();
       });
@@ -83,29 +98,41 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (id) {
-      // 从localStorage加载处理结果
+      console.log(`[DEBUG] useEffect triggered for ID: ${id}, isProcessing: ${isProcessing}, requestSent: ${requestSentRef.current}`);
+      logDebug('Dashboard useEffect triggered', { id, isProcessing, requestSent: requestSentRef.current });
+      
+      // Performance tracking
+      const startTime = performance.now();
+      
+      // Loading from localStorage
       setIsLoading(true);
       setError(null);
-      console.log(`Loading data for ID: ${id}`);
       
-      // 获取文件信息
+      // Get file info
       const fileName = localStorage.getItem(`srtfile-${id}-name`);
       const fileSize = localStorage.getItem(`srtfile-${id}-size`);
       const fileUrl = localStorage.getItem(`srtfile-${id}-url`);
       const processed = localStorage.getItem(`srtfile-${id}-processed`);
       
+      console.log(`[DEBUG] File status from localStorage - fileName: ${!!fileName}, fileUrl: ${!!fileUrl}, processed: ${processed}`);
+      
       if (!fileName) {
+        console.error('[DEBUG] File not found in localStorage');
+        logError('File not found in localStorage', { id });
         setError('File not found.');
         setIsLoading(false);
         return;
       }
       
       if (processed === 'true') {
-        // 获取处理结果
+        console.log('[DEBUG] File was previously processed, loading from localStorage');
+        // Retrieve processing results
         const summary = localStorage.getItem(`srtfile-${id}-summary`);
         const translation = localStorage.getItem(`srtfile-${id}-translation`);
         const highlights = localStorage.getItem(`srtfile-${id}-highlights`);
         const processedAt = localStorage.getItem(`srtfile-${id}-processedAt`) || undefined;
+
+        console.log(`[DEBUG] Retrieved data lengths - summary: ${summary?.length}, translation: ${translation?.length}, highlights: ${highlights?.length}`);
 
         setData({
           title: `Transcript Analysis: ${fileName.split('.')[0]} (${id.substring(0,6)}...)`,
@@ -117,8 +144,18 @@ export default function DashboardPage() {
           processedAt: processedAt,
         });
         setIsLoading(false);
+        
+        // Log performance for data loading
+        const loadTime = performance.now() - startTime;
+        logPerformance('dashboard-load-cached-data', loadTime, { id, dataSize: {
+          summary: summary?.length || 0,
+          translation: translation?.length || 0,
+          highlights: highlights?.length || 0
+        }});
+        
       } else {
-        // 文件未处理或处理失败，重新尝试处理
+        console.log('[DEBUG] File needs processing or reprocessing');
+        // File hasn't been processed or processing failed, attempt processing
         setData({
           title: `Transcript Analysis: ${fileName.split('.')[0]} (${id.substring(0,6)}...)`,
           originalFileName: fileName,
@@ -127,23 +164,28 @@ export default function DashboardPage() {
           translation: '处理中...',
           fullTextHighlights: '处理中...',
         });
-        setIsLoading(false); // 重要: 立即将加载状态设为false，这样用户可以看到流式更新
-        isProcessingRef.current = true; // 标记正在处理状态
+        setIsLoading(false); // Important: immediately set loading to false so user sees streaming updates
+        isProcessingRef.current = true; 
         
-        if (fileUrl && !isProcessing && !requestSentRef.current) { // 确保请求只发送一次
-          // 立即标记为处理中
-          setIsProcessing(true);
-          requestSentRef.current = true; // 标记请求已发送
-          console.log(`开始处理ID为 ${id} 的文件...`);
+        if (fileUrl && !isProcessing && !requestSentRef.current) { 
+          console.log('[DEBUG] Starting API processing request');
+          logUserAction('start-processing', { id, fileName });
           
-          // 清除现有处理结果（如果有）
+          // Mark as processing
+          setIsProcessing(true);
+          requestSentRef.current = true; 
+          
+          // Clear existing results (if any)
           localStorage.removeItem(`srtfile-${id}-summary`);
           localStorage.removeItem(`srtfile-${id}-translation`);
           localStorage.removeItem(`srtfile-${id}-highlights`);
           localStorage.removeItem(`srtfile-${id}-processed`);
           localStorage.removeItem(`srtfile-${id}-processedAt`);
           
-          // 重新处理文件
+          // Process the file
+          console.log(`[DEBUG] Sending fetch request to /api/process with ID: ${id}`);
+          const apiStartTime = performance.now();
+          
           fetch('/api/process', {
             method: 'POST',
             headers: {
@@ -153,48 +195,76 @@ export default function DashboardPage() {
               id,
               blobUrl: fileUrl,
               fileName,
+              debug: true, // Add debug flag for backend
             }),
           })
           .then(response => {
+            console.log(`[DEBUG] API response received, status: ${response.status}, ok: ${response.ok}`);
+            logDebug('API response received', { 
+              status: response.status, 
+              ok: response.ok, 
+              statusText: response.statusText,
+              headers: Object.fromEntries(response.headers.entries())
+            });
+            
             if (!response.ok) {
               return response.text().then(text => {
+                console.error(`[DEBUG] Error response text: ${text}`);
                 let errorMessage = 'Processing failed';
                 try {
-                  // 确保text包含有效的JSON字符串
                   if (text && (text.startsWith('{') || text.startsWith('['))) {
                     const errorData = safelyParseJSON(text);
                     errorMessage = errorData.error || errorMessage;
+                    console.error(`[DEBUG] Parsed error data: ${JSON.stringify(errorData)}`);
+                    logError('API error response', { errorData, status: response.status });
                   } else {
                     errorMessage = text || errorMessage;
+                    logError('API plain text error', { text, status: response.status });
                   }
                 } catch (e) {
-                  console.error('Error parsing error response:', e, text);
+                  console.error('[DEBUG] Error parsing error response:', e, text);
+                  logError('Failed to parse error response', { error: e, text });
                   errorMessage = text || errorMessage;
                 }
                 throw new Error(errorMessage);
               });
             }
             
-            // 处理 EventStream 响应
+            // Handle EventStream response
             const reader = response.body?.getReader();
             if (!reader) {
+              console.error('[DEBUG] Stream reader not available');
+              logError('Stream reader not available');
               throw new Error('Stream reader not available');
             }
             
+            console.log('[DEBUG] Stream reader created, beginning to process stream');
+            logDebug('Stream processing started');
             const decoder = new TextDecoder();
             let buffer = '';
             let summary = '';
             let translation = 'Translation not processed in this version.';
             let highlights = 'Highlights not processed in this version.';
             
-            // 创建一个处理流的 Promise
+            // Track events received
+            let eventsReceived = 0;
+            let streamStartTime = performance.now();
+            
+            // Create a Promise to process the stream
             return new Promise<ProcessResult>((resolve, reject) => {
               // Create a local variable that's definitely non-null
               const streamReader = reader;
               function processStream() {
                 streamReader.read().then(({ done, value }) => {
                   if (done) {
-                    // 完成流处理，返回最终结果
+                    console.log('[DEBUG] Stream processing completed');
+                    logDebug('Stream processing completed', { 
+                      eventsReceived,
+                      processingTime: performance.now() - streamStartTime,
+                      summaryLength: summary.length
+                    });
+                    
+                    // Finished processing stream, return final results
                     return resolve({
                       summary,
                       translation,
@@ -203,7 +273,9 @@ export default function DashboardPage() {
                     });
                   }
                   
-                  buffer += decoder.decode(value, { stream: true });
+                  const newChunk = decoder.decode(value, { stream: true });
+                  console.log(`[DEBUG] Received chunk of length: ${newChunk.length}`);
+                  buffer += newChunk;
                   let eolIndex;
                   
                   while ((eolIndex = buffer.indexOf('\n\n')) >= 0) {
@@ -213,88 +285,98 @@ export default function DashboardPage() {
                     if (message.startsWith('data: ')) {
                       try {
                         const jsonData = message.substring(5).trim();
+                        console.log(`[DEBUG] Processing stream event: ${jsonData.substring(0, 50)}...`);
+                        eventsReceived++;
+                        
                         const eventData = safelyParseJSON(jsonData);
                         
-                        // 实时更新界面，显示分步处理结果
+                        // Update UI with real-time processing results
                         switch (eventData.type) {
                           case 'status':
-                            console.log('Status update:', eventData.message);
-                            // 状态更新显示到UI
+                            console.log('[DEBUG] Status update:', eventData.message);
+                            // Update UI with status
                             setData(prevData => prevData ? {
                               ...prevData,
                               summary: `${summary}\n\n> Status: ${eventData.message}`,
                             } : null);
                             break;
                           case 'summary_token':
-                            // 处理摘要令牌
+                            // Handle summary token
                             const summaryContent = eventData.content;
                             summary += summaryContent;
                             
-                            // 更新UI
+                            if (summary.length % 100 === 0) {
+                              console.log(`[DEBUG] Summary accumulating, now at ${summary.length} characters`);
+                            }
+                            
+                            // Update UI
                             setData(prevData => prevData ? {
                               ...prevData,
                               summary: summary,
                             } : null);
                             break;
                           case 'translation_token':
-                            // 处理翻译令牌
+                            // Handle translation token
                             const translationContent = eventData.content;
                             translation += translationContent;
                             
-                            // 更新UI
+                            // Update UI
                             setData(prevData => prevData ? {
                               ...prevData,
                               translation: translation,
                             } : null);
                             break;
                           case 'highlight_token':
-                            // 处理高亮令牌
+                            // Handle highlight token
                             const highlightContent = eventData.content;
                             highlights += highlightContent;
                             
-                            // 更新UI
+                            // Update UI
                             setData(prevData => prevData ? {
                               ...prevData,
                               fullTextHighlights: highlights,
                             } : null);
                             break;
                           case 'summary_final_result':
-                            // 最终摘要结果
+                            // Handle summary final result
                             summary = eventData.content;
                             
-                            // 更新UI
+                            // Update UI
                             setData(prevData => prevData ? {
                               ...prevData,
                               summary: summary,
                             } : null);
                             break;
                           case 'translation_final_result':
-                            // 最终翻译结果
+                            // Handle translation final result
                             translation = eventData.content;
                             
-                            // 更新UI
+                            // Update UI
                             setData(prevData => prevData ? {
                               ...prevData,
                               translation: translation,
                             } : null);
                             break;
                           case 'highlight_final_result':
-                            // 最终高亮结果
+                            // Handle highlight final result
                             highlights = eventData.content;
                             
-                            // 更新UI
+                            // Update UI
                             setData(prevData => prevData ? {
                               ...prevData,
                               fullTextHighlights: highlights,
                             } : null);
                             break;
                           case 'all_done':
+                            console.log('[DEBUG] Received all_done event');
                             if (eventData.finalResults) {
                               summary = eventData.finalResults.summary;
                               translation = eventData.finalResults.translation;
                               highlights = eventData.finalResults.highlights;
                               
-                              // 全部结果更新UI
+                              console.log(`[DEBUG] Final results received - summary: ${summary?.length} chars, translation: ${translation?.length} chars`);
+                              
+                              // Update UI with all results
                               setData(prevData => prevData ? {
                                 ...prevData,
                                 summary,
@@ -304,74 +386,93 @@ export default function DashboardPage() {
                             }
                             break;
                           case 'error':
-                            console.error('Process error:', eventData.message);
+                            console.error('[DEBUG] Process error:', eventData.message);
+                            logError('Process stream error', { message: eventData.message, task: eventData.task });
                             setError(`处理错误: ${eventData.message}`);
                             reject(new Error(eventData.message));
                             break;
                         }
                       } catch (e) {
-                        console.error('Failed to parse event JSON:', e);
+                        console.error('[DEBUG] Failed to parse event JSON:', e);
+                        logError('Failed to parse stream event', { error: e });
                       }
                     }
                   }
                   
-                  // 继续处理流
+                  // Continue processing stream
                   processStream();
                 }).catch(err => {
-                  console.error('Stream processing error:', err);
+                  console.error('[DEBUG] Stream processing error:', err);
+                  logError('Stream processing error', { error: err });
                   reject(err);
                 });
               }
               
-              // 开始处理流
+              // Start processing the stream
               processStream();
             });
           })
           .then((result: ProcessResult) => {
-            // 保存处理结果到 localStorage
+            console.log('[DEBUG] Processing completed, saving results to localStorage');
+            // Save processing results to localStorage
             localStorage.setItem(`srtfile-${id}-summary`, result.summary);
             localStorage.setItem(`srtfile-${id}-translation`, result.translation);
             localStorage.setItem(`srtfile-${id}-highlights`, result.fullTextHighlights);
             localStorage.setItem(`srtfile-${id}-processed`, 'true');
             localStorage.setItem(`srtfile-${id}-processedAt`, result.processedAt);
             
-            console.log('Processing completed and results saved.');
-            isProcessingRef.current = false; // 处理完成，取消处理状态
-            setIsProcessing(false); // 重置处理状态
-            requestSentRef.current = false; // 重置请求标记
+            console.log('[DEBUG] Processing completed and results saved.');
+            logPerformance('api-processing-complete', performance.now() - apiStartTime, { 
+              id, 
+              resultSizes: {
+                summary: result.summary.length,
+                translation: result.translation.length,
+                highlights: result.fullTextHighlights.length
+              }
+            });
+            
+            isProcessingRef.current = false; // Processing completed, clear processing state
+            setIsProcessing(false); // Reset processing state
+            requestSentRef.current = false; // Reset request flag
           })
           .catch(err => {
-            console.error('Error processing file:', err);
+            console.error('[DEBUG] Error processing file:', err);
+            logError('Error processing file', { error: err.message });
             setError(`Failed to process file: ${err.message}`);
-            isProcessingRef.current = false; // 处理错误，也要取消处理状态
-            setIsProcessing(false); // 重置处理状态
-            requestSentRef.current = false; // 重置请求标记，允许重试
+            isProcessingRef.current = false; // Error occurred, also clear processing state
+            setIsProcessing(false); // Reset processing state
+            requestSentRef.current = false; // Reset request flag to allow retry
           });
         } else if (!fileUrl) {
+          console.error('[DEBUG] File URL not found in localStorage');
+          logError('File URL missing', { id });
           setError('File URL not found. Cannot process this file.');
         } else if (isProcessing) {
-          console.log(`已经在处理ID为 ${id} 的文件，避免重复请求`);
+          console.log(`[DEBUG] Already processing ID: ${id}, avoiding duplicate request`);
         }
       }
     }
     
-    // 清理函数，防止内存泄漏和处理中断
+    // Cleanup function
     return () => {
-      console.log(`清理ID为 ${id} 的处理状态`);
+      console.log(`[DEBUG] Cleaning up for ID: ${id}`);
       isProcessingRef.current = false;
     };
   }, [id, isProcessing]);
 
-  // 添加重试处理函数
+  // Enhanced retry function with debug logging
   const retryProcessing = () => {
-    // 如果已经在处理中，不要重复发送请求
+    console.log('[DEBUG] Retry button clicked');
+    logUserAction('retry-processing', { id });
+    
     if (isProcessing) {
-      console.log(`已经在处理ID为 ${id} 的文件，避免重复重试请求`);
+      console.log(`[DEBUG] Already processing ID: ${id}, avoiding duplicate retry request`);
       return;
     }
     
+    console.log('[DEBUG] Starting retry process');
     setError(null);
-    requestSentRef.current = false; // 重置请求标记，允许重试
+    requestSentRef.current = false; // Reset request flag to allow retry
     
     // 获取文件信息
     const fileName = localStorage.getItem(`srtfile-${id}-name`);
