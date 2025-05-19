@@ -10,6 +10,7 @@ export default function UploadPage() {
   const [processing, setProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [isPublic, setIsPublic] = useState(false);
   const router = useRouter();
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -34,6 +35,7 @@ export default function UploadPage() {
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('isPublic', isPublic.toString());
 
     try {
       // 第一步：上传文件
@@ -51,12 +53,13 @@ export default function UploadPage() {
       setUploading(false);
       setUploadProgress(100);
       
-      // 保存文件信息到localStorage
+      // 为了向后兼容，仍然保存到localStorage
       localStorage.setItem(`srtfile-${result.id}-name`, result.fileName || file.name);
       localStorage.setItem(`srtfile-${result.id}-size`, result.fileSize || `${(file.size / 1024).toFixed(2)} KB`);
       localStorage.setItem(`srtfile-${result.id}-url`, result.blobUrl || '');
       localStorage.setItem(`srtfile-${result.id}-date`, new Date().toISOString());
       localStorage.setItem(`srtfile-${result.id}-processed`, 'false'); // 标记为未处理状态
+      localStorage.setItem(`srtfile-${result.id}-isPublic`, isPublic.toString()); // 保存公开状态
 
       // 上传成功后立即跳转到dashboard页面，让用户在那里看到流式处理结果
       console.log('File successfully uploaded! Redirecting to dashboard...');
@@ -108,6 +111,26 @@ export default function UploadPage() {
               </p>
             )}
           </div>
+          
+          <div className="flex items-center">
+            <label className="flex items-center cursor-pointer">
+              <div className="relative mr-2">
+                <input 
+                  type="checkbox" 
+                  className="sr-only" 
+                  checked={isPublic} 
+                  onChange={() => setIsPublic(!isPublic)} 
+                />
+                <div className={`block w-10 h-6 rounded-full ${isPublic ? 'bg-sky-500' : 'bg-slate-600'}`}></div>
+                <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${isPublic ? 'transform translate-x-full' : ''}`}></div>
+              </div>
+              <span className="text-sm text-slate-300">Make this analysis public</span>
+            </label>
+          </div>
+          
+          <p className="text-xs text-slate-400 italic">
+            Public analyses can be viewed by anyone with the link.
+          </p>
 
           {(uploading || processing) && (
             <div className="w-full bg-slate-700 rounded-full h-2 mb-2">

@@ -2,6 +2,7 @@ export const prompts = {
   summarySystem: `
 您是一名Podcast 转录助手。
 请将以下 SRT 翻译为中文，并总结内容，要求总长不超过 10000 字。
+要求适当使用bullet point.
 返回纯 Markdown。`,
   
   translateSystem: `

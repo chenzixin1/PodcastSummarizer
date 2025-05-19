@@ -11,6 +11,7 @@ interface FileRecord {
   uploadDate: string;
   processed: boolean;
   processedAt?: string;
+  isPublic: boolean;
 }
 
 export default function HistoryPage() {
@@ -19,29 +20,69 @@ export default function HistoryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'date' | 'name' | 'size'>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
 
   useEffect(() => {
-    // Load files from localStorage
-    const loadFiles = () => {
-      const records: FileRecord[] = [];
+    // 加载文件
+    loadFiles();
+  }, [page]);
+
+  // 从数据库加载文件，并与localStorage中的缓存合并
+  const loadFiles = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // 从API获取数据库中的数据
+      const response = await fetch(`/api/podcasts?page=${page}&pageSize=20`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch podcast list');
+      }
       
-      // Loop through localStorage keys
+      const result = await response.json();
+      const dbRecords: FileRecord[] = result.data.map((item: any) => ({
+        id: item.id,
+        name: item.originalFileName,
+        size: item.fileSize,
+        url: item.blobUrl,
+        uploadDate: item.createdAt,
+        processed: item.isProcessed,
+        processedAt: item.processedAt,
+        isPublic: item.isPublic
+      }));
+      
+      // 检查是否还有更多数据
+      setHasMore(dbRecords.length === 20);
+      
+      // 合并本地缓存的记录（向后兼容）
+      const localRecords: FileRecord[] = [];
+      
+      // 遍历localStorage
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         
-        // Look for keys that match our SRT file pattern
+        // 查找匹配我们SRT文件模式的键
         if (key && key.startsWith('srtfile-') && key.endsWith('-name')) {
           const id = key.replace('srtfile-', '').replace('-name', '');
+          
+          // 如果数据库中已有此记录，跳过
+          if (dbRecords.some(record => record.id === id)) {
+            continue;
+          }
+          
           const name = localStorage.getItem(key) || 'Unknown file';
           const size = localStorage.getItem(`srtfile-${id}-size`) || 'Unknown size';
           const url = localStorage.getItem(`srtfile-${id}-url`) || '';
           const processed = localStorage.getItem(`srtfile-${id}-processed`) === 'true';
           const processedAt = localStorage.getItem(`srtfile-${id}-processedAt`) || undefined;
+          const isPublic = localStorage.getItem(`srtfile-${id}-isPublic`) === 'true';
           
-          // Try to find upload date if we stored it, or use "Unknown date"
+          // 尝试查找上传日期（如果有存储），否则使用当前日期
           const uploadDate = localStorage.getItem(`srtfile-${id}-date`) || new Date().toISOString();
           
-          records.push({
+          localRecords.push({
             id,
             name,
             size,
@@ -49,16 +90,73 @@ export default function HistoryPage() {
             uploadDate,
             processed,
             processedAt,
+            isPublic: isPublic || false
           });
         }
       }
       
-      setFiles(records);
+      // 合并记录并更新状态
+      const allRecords = [...dbRecords, ...localRecords];
+      setFiles(prevFiles => {
+        const newFiles = page === 1 
+          ? allRecords 
+          : [...prevFiles, ...allRecords.filter(newFile => 
+              !prevFiles.some(prevFile => prevFile.id === newFile.id)
+            )];
+        return newFiles;
+      });
+    } catch (err) {
+      console.error('Error loading files:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load files');
+      
+      // 如果API失败，至少尝试从localStorage加载
+      loadLocalFiles();
+    } finally {
       setIsLoading(false);
-    };
+    }
+  };
+  
+  // 从localStorage加载数据的备用函数
+  const loadLocalFiles = () => {
+    const records: FileRecord[] = [];
     
-    loadFiles();
-  }, []);
+    // 循环遍历localStorage键
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      
+      // 查找匹配我们SRT文件模式的键
+      if (key && key.startsWith('srtfile-') && key.endsWith('-name')) {
+        const id = key.replace('srtfile-', '').replace('-name', '');
+        const name = localStorage.getItem(key) || 'Unknown file';
+        const size = localStorage.getItem(`srtfile-${id}-size`) || 'Unknown size';
+        const url = localStorage.getItem(`srtfile-${id}-url`) || '';
+        const processed = localStorage.getItem(`srtfile-${id}-processed`) === 'true';
+        const processedAt = localStorage.getItem(`srtfile-${id}-processedAt`) || undefined;
+        const isPublic = localStorage.getItem(`srtfile-${id}-isPublic`) === 'true';
+        
+        // 尝试查找上传日期（如果有存储），否则使用当前日期
+        const uploadDate = localStorage.getItem(`srtfile-${id}-date`) || new Date().toISOString();
+        
+        records.push({
+          id,
+          name,
+          size,
+          url,
+          uploadDate,
+          processed,
+          processedAt,
+          isPublic: isPublic || false
+        });
+      }
+    }
+    
+    setFiles(records);
+  };
+
+  // 加载更多
+  const loadMore = () => {
+    setPage(prevPage => prevPage + 1);
+  };
 
   // 排序和过滤文件
   const filteredAndSortedFiles = files
@@ -102,7 +200,7 @@ export default function HistoryPage() {
     <div className="min-h-screen bg-slate-900 text-white">
       <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
         <div className="container mx-auto">
-          <h1 className="text-xl font-semibold text-sky-400">SRT Processor / History</h1>
+          <h1 className="text-xl font-semibold text-sky-400">PodSum.cc / History</h1>
         </div>
       </header>
       
@@ -114,7 +212,14 @@ export default function HistoryPage() {
           </Link>
         </div>
         
-        {isLoading ? (
+        {error && (
+          <div className="bg-red-800/30 text-red-400 p-4 rounded-lg mb-6">
+            <p className="font-medium">Error loading data</p>
+            <p className="text-sm mt-1">{error}</p>
+          </div>
+        )}
+        
+        {isLoading && page === 1 ? (
           <div className="flex items-center justify-center p-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500"></div>
           </div>
@@ -183,9 +288,12 @@ export default function HistoryPage() {
                         <h3 className="font-medium text-sky-400 mb-1 truncate" title={file.name}>
                           {file.name}
                         </h3>
-                        <div className="flex gap-4 text-xs text-slate-400">
+                        <div className="flex gap-4 text-xs text-slate-400 flex-wrap">
                           <span>{file.size}</span>
-                          <span>ID: {file.id.substring(0, 8)}...</span>
+                          <span>ID: {file.id.substring(0, 6)}...</span>
+                          {file.isPublic && (
+                            <span className="text-green-400">Public</span>
+                          )}
                           {file.processed && (
                             <span className="text-emerald-400">✓ Processed</span>
                           )}
@@ -205,12 +313,24 @@ export default function HistoryPage() {
                 </div>
               ))}
             </div>
+            
+            {hasMore && (
+              <div className="mt-6 text-center">
+                <button 
+                  onClick={loadMore}
+                  disabled={isLoading}
+                  className="bg-slate-800 hover:bg-slate-700 text-white px-6 py-2 rounded-md disabled:opacity-50"
+                >
+                  {isLoading ? 'Loading...' : 'Load More'}
+                </button>
+              </div>
+            )}
           </>
         )}
       </main>
       
       <footer className="p-4 text-center text-xs text-slate-600">
-        SRT Processor Edge Demo
+        PodSum.cc - Powered by Vercel
       </footer>
     </div>
   );

@@ -6,10 +6,11 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { logDebug, logError, logUserAction, logPerformance } from '../../../lib/debugUtils';
+import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getClientErrors } from '../../../lib/debugUtils';
+import { ErrorBoundary } from '../../../components/ErrorBoundary';
 
 // VERCEL DEBUG: Add version number to help track deployments
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2'; // Increment version for tracking
 console.log(`[DEBUG] Podcast Summarizer v${APP_VERSION} loading...`);
 
 // Define types for the processed data (optional but good practice)
@@ -43,6 +44,28 @@ const safelyParseJSON = (jsonString: string) => {
   }
 };
 
+// New debug interface to track application state
+interface DebugState {
+  appVersion: string;
+  initialized: boolean;
+  lastAction: string;
+  processingState: string;
+  errors: any[];
+  networkRequests: {
+    url: string;
+    status: number;
+    timestamp: string;
+    duration: number;
+  }[];
+  localStorage: Record<string, boolean>;
+  sessionInfo: {
+    id: string;
+    isProcessing: boolean;
+    requestSent: boolean;
+    lastHeightRef: number;
+  };
+}
+
 export default function DashboardPage() {
   const params = useParams();
   const id = params?.id as string; // Get ID from route
@@ -62,6 +85,154 @@ export default function DashboardPage() {
   const isProcessingRef = useRef(false);
   const lastHeightRef = useRef(0);
   const requestSentRef = useRef(false); // 添加防止重复请求的引用
+
+  // Add debug state
+  const [debugMode, setDebugMode] = useState(false);
+  const [debugState, setDebugState] = useState<DebugState>({
+    appVersion: APP_VERSION,
+    initialized: false,
+    lastAction: 'init',
+    processingState: 'idle',
+    errors: [],
+    networkRequests: [],
+    localStorage: {},
+    sessionInfo: {
+      id: id || '',
+      isProcessing: false,
+      requestSent: false,
+      lastHeightRef: 0
+    }
+  });
+  
+  // Track network requests for debugging
+  const networkRequestsRef = useRef<DebugState['networkRequests']>([]);
+
+  // Update debug state periodically
+  useEffect(() => {
+    if (!debugMode) return;
+    
+    // Initial debug state capture
+    captureDebugState('init');
+    
+    const interval = setInterval(() => {
+      if (debugMode) {
+        captureDebugState('interval');
+      }
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [debugMode, isProcessing]);
+
+  // Function to capture current debug state
+  const captureDebugState = (action: string) => {
+    try {
+      // Check localStorage for all keys related to this ID
+      const localStorageState: Record<string, boolean> = {};
+      const keys = [
+        `srtfile-${id}-name`,
+        `srtfile-${id}-size`,
+        `srtfile-${id}-url`,
+        `srtfile-${id}-processed`,
+        `srtfile-${id}-summary`,
+        `srtfile-${id}-translation`,
+        `srtfile-${id}-highlights`,
+        `srtfile-${id}-processedAt`
+      ];
+      
+      keys.forEach(key => {
+        localStorageState[key] = localStorage.getItem(key) !== null;
+      });
+      
+      setDebugState({
+        appVersion: APP_VERSION,
+        initialized: true,
+        lastAction: action,
+        processingState: isProcessing ? 'processing' : (data?.summary ? 'complete' : 'idle'),
+        errors: getClientErrors(),
+        networkRequests: networkRequestsRef.current,
+        localStorage: localStorageState,
+        sessionInfo: {
+          id,
+          isProcessing,
+          requestSent: requestSentRef.current,
+          lastHeightRef: lastHeightRef.current
+        }
+      });
+    } catch (error) {
+      console.error('[DEBUG] Error capturing debug state:', error);
+    }
+  };
+
+  // Enhanced fetch with debugging
+  const debugFetch = async (url: string, options: RequestInit) => {
+    const startTime = performance.now();
+    const requestId = Date.now().toString(36);
+    
+    try {
+      console.log(`[DEBUG-NET-${requestId}] Starting request to ${url}`);
+      logDebug(`Network request started`, { url, options: { 
+        method: options.method,
+        headers: options.headers
+      }});
+      
+      const response = await fetch(url, options);
+      
+      const duration = performance.now() - startTime;
+      console.log(`[DEBUG-NET-${requestId}] Response received: ${response.status} in ${duration.toFixed(0)}ms`);
+      
+      // Track network request
+      networkRequestsRef.current = [
+        ...networkRequestsRef.current.slice(-9), // Keep last 10 requests
+        {
+          url,
+          status: response.status,
+          timestamp: new Date().toISOString(),
+          duration: Number(duration.toFixed(0))
+        }
+      ];
+      
+      return response;
+    } catch (error) {
+      const duration = performance.now() - startTime;
+      console.error(`[DEBUG-NET-${requestId}] Request failed after ${duration.toFixed(0)}ms:`, error);
+      logError(`Network request failed`, { url, error, duration });
+      throw error;
+    }
+  };
+
+  // Copy debug info to clipboard
+  const copyDebugInfo = () => {
+    try {
+      const debugInfo = {
+        timestamp: new Date().toISOString(),
+        app: {
+          version: APP_VERSION,
+          url: window.location.href,
+          id
+        },
+        state: {
+          isLoading,
+          isProcessing,
+          requestSent: requestSentRef.current,
+          hasError: !!error,
+          errorMessage: error,
+          dataSummaryLength: data?.summary?.length
+        },
+        debug: debugState,
+        browser: getBrowserInfo(),
+        errors: getClientErrors()
+      };
+      
+      const debugString = JSON.stringify(debugInfo, null, 2);
+      navigator.clipboard.writeText(debugString);
+      
+      alert('Debug info copied to clipboard!');
+      logUserAction('copy-debug-info');
+    } catch (error) {
+      console.error('[DEBUG] Failed to copy debug info:', error);
+      alert('Failed to copy debug info: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  };
 
   // Enhanced scroll function with debug
   const scrollToBottom = () => {
@@ -186,7 +357,8 @@ export default function DashboardPage() {
           console.log(`[DEBUG] Sending fetch request to /api/process with ID: ${id}`);
           const apiStartTime = performance.now();
           
-          fetch('/api/process', {
+          // Use debugFetch instead of regular fetch
+          debugFetch('/api/process', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -196,6 +368,7 @@ export default function DashboardPage() {
               blobUrl: fileUrl,
               fileName,
               debug: true, // Add debug flag for backend
+              appVersion: APP_VERSION // Send app version for tracking
             }),
           })
           .then(response => {
@@ -464,6 +637,7 @@ export default function DashboardPage() {
   const retryProcessing = () => {
     console.log('[DEBUG] Retry button clicked');
     logUserAction('retry-processing', { id });
+    captureDebugState('retry-clicked');
     
     if (isProcessing) {
       console.log(`[DEBUG] Already processing ID: ${id}, avoiding duplicate retry request`);
@@ -727,17 +901,7 @@ export default function DashboardPage() {
       case 'fullText':
         return (
             <div className="p-6 bg-slate-800 rounded-lg">
-                <div className="flex justify-end mb-4">
-                    <label className="flex items-center cursor-pointer">
-                        <span className="mr-2 text-sm text-slate-300">Toggle Highlights</span>
-                        <div className="relative">
-                            <input type="checkbox" className="sr-only" checked={showHighlights} onChange={() => setShowHighlights(!showHighlights)} />
-                            <div className={`block w-10 h-6 rounded-full ${showHighlights ? 'bg-sky-500' : 'bg-slate-600'}`}></div>
-                            <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${showHighlights ? 'transform translate-x-full' : ''}`}></div>
-                        </div>
-                    </label>
-                </div>
-                <div className={`markdown-body ${showHighlights ? '' : '[&_strong]:font-normal'}`}>
+            <div className="markdown-body">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {data.fullTextHighlights}
                   </ReactMarkdown>
@@ -755,113 +919,179 @@ export default function DashboardPage() {
        ? 'bg-sky-600 text-white' 
        : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`;
 
+  // Add Debug Status Panel component
+  const DebugStatusPanel = () => {
+    if (!debugMode) return null;
+    
+    return (
+      <div className="fixed bottom-0 right-0 w-80 max-h-80 overflow-auto bg-slate-900 border border-sky-700 rounded-tl-md p-3 text-xs z-50 opacity-90">
+        <h3 className="text-sky-400 font-semibold mb-2">Debug Status v{APP_VERSION}</h3>
+        <div className="space-y-1 mb-2">
+          <div><span className="text-slate-400">ID:</span> <span className="text-white">{id}</span></div>
+          <div><span className="text-slate-400">State:</span> <span className={`${isProcessing ? 'text-yellow-400' : 'text-green-400'}`}>
+            {isProcessing ? 'PROCESSING' : (data ? 'LOADED' : 'IDLE')}</span></div>
+          <div><span className="text-slate-400">Request Sent:</span> <span className={`${requestSentRef.current ? 'text-yellow-400' : 'text-green-400'}`}>
+            {requestSentRef.current ? 'YES' : 'NO'}</span></div>
+          {error && <div><span className="text-red-400">Error:</span> <span className="text-white">{error}</span></div>}
+        </div>
+        
+        <h4 className="text-sky-400 font-semibold mt-2 mb-1">localStorage:</h4>
+        <div className="space-y-1 mb-2">
+          {Object.entries(debugState.localStorage).map(([key, exists]) => (
+            <div key={key}><span className="text-slate-400">{key.replace(`srtfile-${id}-`, '')}:</span> <span className={`${exists ? 'text-green-400' : 'text-red-400'}`}>
+              {exists ? 'EXISTS' : 'MISSING'}</span></div>
+          ))}
+        </div>
+        
+        <h4 className="text-sky-400 font-semibold mt-2 mb-1">Last Requests:</h4>
+        <div className="space-y-1 mb-2 max-h-20 overflow-y-auto">
+          {debugState.networkRequests.slice(-3).reverse().map((req, i) => (
+            <div key={i} className="flex justify-between">
+              <span className="text-slate-400 truncate">{req.url.split('/').pop()}</span>
+              <span className={`${req.status < 300 ? 'text-green-400' : 'text-red-400'}`}>
+                {req.status} ({req.duration}ms)
+              </span>
+            </div>
+          ))}
+        </div>
+        
+        <div className="pt-2 border-t border-slate-700 flex space-x-2">
+          <button 
+            onClick={() => captureDebugState('refresh-clicked')} 
+            className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded hover:bg-slate-600"
+          >
+            Refresh
+          </button>
+          <button 
+            onClick={copyDebugInfo}
+            className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded hover:bg-slate-600"
+          >
+            Copy Debug Info
+          </button>
+        </div>
+      </div>
+    );
+  };
+  
+  // Modify rendering to wrap in ErrorBoundary and include Debug Panel
   return (
-    <div className="min-h-screen bg-slate-900 text-white flex flex-col">
-      <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
-        <div className="container mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-semibold text-sky-400">SRT Processor / Dashboard</h1>
-          <div className="flex items-center gap-4">
-            <Link href="/history" className="text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-3 rounded-md text-slate-300">
-              View All Files
-            </Link>
-          {id && <span className="text-xs text-slate-500">ID: {id}</span>}
+    <ErrorBoundary>
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col">
+        <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
+          <div className="container mx-auto flex justify-between items-center">
+            <h1 className="text-xl font-semibold text-sky-400">SRT Processor / Dashboard</h1>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setDebugMode(!debugMode)}
+                className="text-xs bg-slate-700 hover:bg-slate-600 py-1 px-2 rounded-md text-slate-300"
+              >
+                {debugMode ? 'Hide Debug' : 'Debug Mode'}
+              </button>
+              <Link href="/history" className="text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-3 rounded-md text-slate-300">
+                View All Files
+              </Link>
+              {id && <span className="text-xs text-slate-500">ID: {id}</span>}
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* 中间内容区域 */}
-      {!data && !error && isLoading && (
-        <div className="flex-grow flex items-center justify-center">
-            <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
-                <p className="text-slate-400">Loading transcript data...</p>
-            </div>
-        </div>
-      )}
-
-      {error && (
-         <div className="flex-grow flex items-center justify-center">
-           <div className="text-red-400 bg-red-900/30 p-6 rounded-lg flex flex-col items-center max-w-md">
-              <p className="mb-4 text-center">{error}</p>
-              <button 
-                onClick={retryProcessing}
-                className="px-6 py-2 bg-red-600 hover:bg-red-700 rounded text-white text-sm font-medium transition-colors"
-                disabled={isProcessing}
-              >
-                {isProcessing ? (
-                  <>
-                    <span className="inline-block animate-spin mr-2">↻</span>
-                    处理中...
-                  </>
-                ) : '重新处理文件'}
-              </button>
-            </div>
-        </div>
-      )}
-
-      {data && (
-        <main className="container mx-auto p-4 md:p-6 flex-grow flex flex-col md:flex-row gap-6">
-          {/* Left Sidebar */} 
-          <aside className="w-full md:w-1/3 lg:w-1/4 bg-slate-800 p-6 rounded-lg shadow-xl self-start">
-            <h2 className="text-xl font-semibold mb-1 text-sky-400 truncate" title={data.title}>{data.title}</h2>
-            <p className="text-xs text-slate-500 mb-4">ID: {id}</p>
-            
-            <div className="space-y-3 text-sm">
-              <div>
-                <span className="font-medium text-slate-400">Original File:</span> 
-                <p className="text-slate-300 truncate" title={data.originalFileName}>{data.originalFileName}</p>
+        {/* 中间内容区域 */}
+        {!data && !error && isLoading && (
+          <div className="flex-grow flex items-center justify-center">
+              <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
+                  <p className="text-slate-400">Loading transcript data...</p>
               </div>
-              <div>
-                <span className="font-medium text-slate-400">File Size:</span> 
-                <p className="text-slate-300">{data.originalFileSize}</p>
+          </div>
+        )}
+
+        {error && (
+           <div className="flex-grow flex items-center justify-center">
+             <div className="text-red-400 bg-red-900/30 p-6 rounded-lg flex flex-col items-center max-w-md">
+                <p className="mb-4 text-center">{error}</p>
+                <button 
+                  onClick={retryProcessing}
+                  className="px-6 py-2 bg-red-600 hover:bg-red-700 rounded text-white text-sm font-medium transition-colors"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? (
+                    <>
+                      <span className="inline-block animate-spin mr-2">↻</span>
+                      处理中...
+                    </>
+                  ) : '重新处理文件'}
+                </button>
               </div>
-              {data.processedAt && (
+          </div>
+        )}
+
+        {data && (
+          <main className="container mx-auto p-4 md:p-6 flex-grow flex flex-col md:flex-row gap-6">
+            {/* Left Sidebar */} 
+            <aside className="w-full md:w-1/3 lg:w-1/4 bg-slate-800 p-6 rounded-lg shadow-xl self-start">
+              <h2 className="text-xl font-semibold mb-1 text-sky-400 truncate" title={data.title}>{data.title}</h2>
+              <p className="text-xs text-slate-500 mb-4">ID: {id}</p>
+              
+              <div className="space-y-3 text-sm">
                 <div>
-                  <span className="font-medium text-slate-400">Processed:</span> 
-                  <p className="text-slate-300">{new Date(data.processedAt).toLocaleString()}</p>
+                  <span className="font-medium text-slate-400">Original File:</span> 
+                  <p className="text-slate-300 truncate" title={data.originalFileName}>{data.originalFileName}</p>
                 </div>
-              )}
-            </div>
-            
-            {/* 添加重新处理按钮 */}
-            <div className="mt-6">
-              <button 
-                onClick={retryProcessing}
-                className="w-full py-2 bg-sky-600 hover:bg-sky-700 rounded text-white text-sm transition-colors flex items-center justify-center"
-                disabled={isProcessing}
-              >
-                {isProcessing ? (
-                  <>
-                    <div className="animate-spin mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-                    处理中...
-                  </>
-                ) : '重新处理文件'}
-              </button>
-            </div>
-            
-            {/* Placeholder for future elements like download original, re-process options, etc. */}
-          </aside>
+                <div>
+                  <span className="font-medium text-slate-400">File Size:</span> 
+                  <p className="text-slate-300">{data.originalFileSize}</p>
+                </div>
+                {data.processedAt && (
+                  <div>
+                    <span className="font-medium text-slate-400">Processed:</span> 
+                    <p className="text-slate-300">{new Date(data.processedAt).toLocaleString()}</p>
+                  </div>
+                )}
+              </div>
+              
+              {/* 添加重新处理按钮 */}
+              <div className="mt-6">
+                <button 
+                  onClick={retryProcessing}
+                  className="w-full py-2 bg-sky-600 hover:bg-sky-700 rounded text-white text-sm transition-colors flex items-center justify-center"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? (
+                    <>
+                      <div className="animate-spin mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                      处理中...
+                    </>
+                  ) : '重新处理文件'}
+                </button>
+              </div>
+              
+              {/* Placeholder for future elements like download original, re-process options, etc. */}
+            </aside>
 
-          {/* Right Content Area */} 
-          <section className="w-full md:w-2/3 lg:w-3/4">
-            <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
-                <div className="flex space-x-2 sm:space-x-3 flex-wrap gap-y-2">
-                    <button onClick={() => setActiveView('summary')} className={getButtonClass('summary')}>Summary</button>
-                    <button onClick={() => setActiveView('translate')} className={getButtonClass('translate')}>Translate</button>
-                    <button onClick={() => setActiveView('fullText')} className={getButtonClass('fullText')}>Full Text w/ Highlights</button>
-                </div>
-            </div>
-            
-            <div className="bg-slate-800/50 backdrop-blur-md rounded-lg shadow-xl min-h-[300px]">
-              {renderContent()}
-            </div>
-          </section>
-        </main>
-      )}
-      
-      <footer className="p-4 text-center text-xs text-slate-600">
-        SRT Processor Edge Demo
-      </footer>
-    </div>
+            {/* Right Content Area */} 
+            <section className="w-full md:w-2/3 lg:w-3/4">
+              <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
+                  <div className="flex space-x-2 sm:space-x-3 flex-wrap gap-y-2">
+                      <button onClick={() => setActiveView('summary')} className={getButtonClass('summary')}>Summary</button>
+                      <button onClick={() => setActiveView('translate')} className={getButtonClass('translate')}>Translate</button>
+                      <button onClick={() => setActiveView('fullText')} className={getButtonClass('fullText')}>Full Text w/ Highlights</button>
+                  </div>
+              </div>
+              
+              <div className="bg-slate-800/50 backdrop-blur-md rounded-lg shadow-xl min-h-[300px]">
+                {renderContent()}
+              </div>
+            </section>
+          </main>
+        )}
+        
+        {/* Add Debug Status Panel */}
+        <DebugStatusPanel />
+        
+        <footer className="p-4 text-center text-xs text-slate-600">
+          SRT Processor Edge Demo v{APP_VERSION}
+        </footer>
+      </div>
+    </ErrorBoundary>
   );
 } 
