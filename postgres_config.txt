@@ -1,0 +1,8 @@
+# Neon PostgreSQL数据库连接
+POSTGRES_URL=postgres://neondb_owner:npg_9OVaox5NCjkc@ep-still-silence-a4x2xn9u-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require
+POSTGRES_PRISMA_URL=postgres://neondb_owner:npg_9OVaox5NCjkc@ep-still-silence-a4x2xn9u-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require
+POSTGRES_URL_NON_POOLING=postgres://neondb_owner:npg_9OVaox5NCjkc@ep-still-silence-a4x2xn9u.us-east-1.aws.neon.tech/neondb?sslmode=require
+POSTGRES_USER=neondb_owner
+POSTGRES_HOST=ep-still-silence-a4x2xn9u-pooler.us-east-1.aws.neon.tech
+POSTGRES_PASSWORD=npg_9OVaox5NCjkc
+POSTGRES_DATABASE=neondb 
