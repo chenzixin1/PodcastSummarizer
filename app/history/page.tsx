@@ -231,7 +231,7 @@ export default function HistoryPage() {
                 : 'You haven\'t uploaded any SRT files yet.'}
             </p>
             {!searchQuery && (
-              <Link href="/" className="inline-block bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-4 rounded-md">
+              <Link href="/upload" className="inline-block bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-4 rounded-md">
                 Upload Your First File
               </Link>
             )}

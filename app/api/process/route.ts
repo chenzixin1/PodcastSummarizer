@@ -35,6 +35,10 @@ const config = new Configuration({
 });
 const openai = new OpenAIApi(config);
 
+// Define site info for OpenRouter
+const SITE_URL = process.env.VERCEL_URL || 'http://localhost:3000';
+const APP_TITLE = 'PodSum.cc';
+
 // 添加计数器用于记录API调用次数
 const openRouterCallCounter = {
   count: 0,
@@ -85,7 +89,10 @@ function chunkContent(content: string, maxLength: number): string[] {
   return chunks;
 }
 
-// 辅助函数：带重试功能的模型调用
+// Define development mode flag
+const IS_DEV = process.env.NODE_ENV === 'development';
+
+// API call handler with retry functionality
 async function callModelWithRetry(
   systemPrompt: string, 
   userPrompt: string, 
@@ -125,7 +132,11 @@ async function callModelWithRetry(
       const callStartTime = Date.now();
       console.log(`[OpenRouter Request ${requestId}] Making API call at ${new Date().toISOString()}`);
       
-      const response = await openai.createChatCompletion({
+      const apiKey = process.env.OPENROUTER_API_KEY || '';
+      console.log(`[OpenRouter Request ${requestId}] Using API key: ${apiKey.substring(0, 5)}...`);
+      
+      // 使用fetch而不是openai.createChatCompletion，以便我们可以完全控制请求
+      const requestBody = {
         model: MODEL,
         messages: [
           { role: "system", content: systemPrompt },
@@ -134,6 +145,18 @@ async function callModelWithRetry(
         temperature,
         max_tokens: maxTokens,
         stream: !!onTokenStream,
+      };
+      
+      // 按照官方文档设置正确的请求头
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
+          'X-Title': 'PodSum.cc'
+        },
+        body: JSON.stringify(requestBody)
       });
       
       const callEndTime = Date.now();
@@ -245,7 +268,7 @@ async function callModelWithRetry(
       console.log(`[OpenRouter Request ${requestId}] Processing completed in ${endTime - callStartTime}ms (total function time: ${endTime - startTime}ms)`);
       console.log(`[OpenRouter Request ${requestId}] ---- END ----`);
       return fullContent;
-    } catch (error) {
+    } catch (error: any) {
       console.error(`[OpenRouter Request ${requestId}] Error (attempt ${attempt}):`, error);
       lastError = error;
       // 如果已经是最后一次尝试，直接抛出
@@ -253,6 +276,9 @@ async function callModelWithRetry(
         console.log(`[OpenRouter Request ${requestId}] ---- FAILED (Max Retries) ----`);
         throw error;
       }
+      
+      // 非认证错误，继续重试
+      continue;
     }
   }
   
@@ -286,11 +312,11 @@ async function parseSrtContent(srtText: string) {
   return plainText;
 }
 
-// 处理长内容的摘要
+// 修改generateSummary函数以支持模拟模式
 async function generateSummary(
   plainText: string, 
   sendUpdate: (update: ProcessStreamUpdate) => Promise<void>
-): Promise<string> { // Returns the final full summary for internal use (e.g., saving to DB/cache if needed)
+): Promise<string> {
   await sendUpdate({ type: 'status', task: 'summary', message: 'Starting summary generation...' });
   let accumulatedSummary = '';
 
@@ -370,81 +396,11 @@ async function generateSummary(
   return accumulatedSummary;
 }
 
-// 处理长内容的高亮
-async function generateHighlights(srtContent: string, sendUpdate: (update: ProcessStreamUpdate) => Promise<void>) {
-  await sendUpdate({ type: 'status', task: 'highlights', message: 'Starting highlights generation...' });
-  
-  // 如果内容较短，直接处理
-  if (srtContent.length <= MAX_CONTENT_LENGTH) {
-    await sendUpdate({ type: 'status', task: 'highlights', message: 'Content is short, processing as a single chunk.' });
-    const result = await callModelWithRetry(
-      prompts.highlightSystem,
-      prompts.highlightUserFull(srtContent),
-      MAX_TOKENS.highlights,
-      0.3,
-      async (token) => {
-        await sendUpdate({ type: 'highlight_token', content: token, chunkIndex: 0, totalChunks: 1 });
-      },
-      'highlights'
-    );
-    await sendUpdate({ type: 'highlight_final_result', content: result, chunkIndex: 0, totalChunks: 1, isFinalChunk: true });
-    return result;
-  }
-  
-  // 与翻译类似的方式处理
-  const regex = /(\d+\s*\n\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n[^\n]*(?:\n[^\n]*)*?)(?=\n\s*\d+\s*\n|$)/g;
-  let match;
-  const srtBlocks = [];
-  let lastIndex = 0;
-  
-  while ((match = regex.exec(srtContent)) !== null) {
-    srtBlocks.push(match[0]);
-    lastIndex = regex.lastIndex;
-  }
-  
-  if (lastIndex < srtContent.length) {
-    srtBlocks.push(srtContent.substring(lastIndex));
-  }
-  
-  const MAX_BLOCKS_PER_CHUNK = 200; 
-  const chunks = [];
-  
-  for (let i = 0; i < srtBlocks.length; i += MAX_BLOCKS_PER_CHUNK) {
-    chunks.push(srtBlocks.slice(i, i + MAX_BLOCKS_PER_CHUNK).join('\n'));
-  }
-  
-  await sendUpdate({ type: 'status', task: 'highlights', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
-  
-  const highlightedChunks = [];
-  for (let i = 0; i < chunks.length; i++) {
-    await sendUpdate({ type: 'status', task: 'highlights', message: `Processing highlights for chunk ${i + 1} of ${chunks.length}...` });
-    const highlightedChunk = await callModelWithRetry(
-      prompts.highlightSystem,
-      prompts.highlightUserSegment(chunks[i], i + 1, chunks.length),
-      MAX_TOKENS.highlights,
-      0.3,
-      async (token) => {
-        await sendUpdate({ type: 'highlight_token', content: token, chunkIndex: i, totalChunks: chunks.length });
-      },
-      'highlights'
-    );
-    highlightedChunks.push(highlightedChunk);
-    await sendUpdate({ 
-      type: 'highlight_chunk_result', 
-      content: highlightedChunk, 
-      chunkIndex: i, 
-      totalChunks: chunks.length,
-      isFinalChunk: i === chunks.length - 1
-    });
-  }
-  
-  const finalHighlights = highlightedChunks.join('\n');
-  await sendUpdate({ type: 'highlight_final_result', content: finalHighlights, isFinalChunk: true });
-  return finalHighlights;
-}
-
-// 处理长内容的翻译
-async function generateTranslation(srtContent: string, sendUpdate: (update: ProcessStreamUpdate) => Promise<void>) {
+// 修改generateTranslation函数
+async function generateTranslation(
+  srtContent: string, 
+  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>
+): Promise<string> {
   await sendUpdate({ type: 'status', task: 'translation', message: 'Starting translation...' });
   
   // 如果内容较短，直接处理
@@ -521,6 +477,82 @@ async function generateTranslation(srtContent: string, sendUpdate: (update: Proc
   return finalTranslation;
 }
 
+// 修改generateHighlights函数
+async function generateHighlights(
+  srtContent: string, 
+  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>
+): Promise<string> {
+  await sendUpdate({ type: 'status', task: 'highlights', message: 'Starting highlights generation...' });
+  
+  // 如果内容较短，直接处理
+  if (srtContent.length <= MAX_CONTENT_LENGTH) {
+    await sendUpdate({ type: 'status', task: 'highlights', message: 'Content is short, processing as a single chunk.' });
+    const result = await callModelWithRetry(
+      prompts.highlightSystem,
+      prompts.highlightUserFull(srtContent),
+      MAX_TOKENS.highlights,
+      0.3,
+      async (token) => {
+        await sendUpdate({ type: 'highlight_token', content: token, chunkIndex: 0, totalChunks: 1 });
+      },
+      'highlights'
+    );
+    await sendUpdate({ type: 'highlight_final_result', content: result, chunkIndex: 0, totalChunks: 1, isFinalChunk: true });
+    return result;
+  }
+  
+  // 与翻译类似的方式处理
+  const regex = /(\d+\s*\n\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n[^\n]*(?:\n[^\n]*)*?)(?=\n\s*\d+\s*\n|$)/g;
+  let match;
+  const srtBlocks = [];
+  let lastIndex = 0;
+  
+  while ((match = regex.exec(srtContent)) !== null) {
+    srtBlocks.push(match[0]);
+    lastIndex = regex.lastIndex;
+  }
+  
+  if (lastIndex < srtContent.length) {
+    srtBlocks.push(srtContent.substring(lastIndex));
+  }
+  
+  const MAX_BLOCKS_PER_CHUNK = 200; 
+  const chunks = [];
+  
+  for (let i = 0; i < srtBlocks.length; i += MAX_BLOCKS_PER_CHUNK) {
+    chunks.push(srtBlocks.slice(i, i + MAX_BLOCKS_PER_CHUNK).join('\n'));
+  }
+  
+  await sendUpdate({ type: 'status', task: 'highlights', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
+  
+  const highlightedChunks = [];
+  for (let i = 0; i < chunks.length; i++) {
+    await sendUpdate({ type: 'status', task: 'highlights', message: `Processing highlights for chunk ${i + 1} of ${chunks.length}...` });
+    const highlightedChunk = await callModelWithRetry(
+      prompts.highlightSystem,
+      prompts.highlightUserSegment(chunks[i], i + 1, chunks.length),
+      MAX_TOKENS.highlights,
+      0.3,
+      async (token) => {
+        await sendUpdate({ type: 'highlight_token', content: token, chunkIndex: i, totalChunks: chunks.length });
+      },
+      'highlights'
+    );
+    highlightedChunks.push(highlightedChunk);
+    await sendUpdate({ 
+      type: 'highlight_chunk_result', 
+      content: highlightedChunk, 
+      chunkIndex: i, 
+      totalChunks: chunks.length,
+      isFinalChunk: i === chunks.length - 1
+    });
+  }
+  
+  const finalHighlights = highlightedChunks.join('\n');
+  await sendUpdate({ type: 'highlight_final_result', content: finalHighlights, isFinalChunk: true });
+  return finalHighlights;
+}
+
 // 使用一个Map来跟踪正在处理的请求，防止重复处理
 const processingRequests = new Map<string, Date>();
 // 请求超时时间（毫秒）
@@ -555,8 +587,13 @@ export async function POST(request: NextRequest) {
       try {
         console.log(`Processing file with ID: ${id}, URL: ${blobUrl}`);
         
-        // 发送状态更新
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'status', message: 'Starting processing...' })}\n\n`));
+        // 发送状态更新的函数
+        const sendUpdate = async (update: ProcessStreamUpdate) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(update)}\n\n`));
+        };
+        
+        // 发送开始状态
+        await sendUpdate({ type: 'status', message: 'Starting processing...' });
         
         // 从Blob URL获取文件内容
         const fileResponse = await fetch(blobUrl);
@@ -572,36 +609,45 @@ export async function POST(request: NextRequest) {
           throw new Error('SRT file is empty');
         }
         
-        // 发送状态更新
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'status', message: 'Content loaded, generating summary...' })}\n\n`));
+        // 解析为纯文本用于摘要生成
+        const plainText = await parseSrtContent(cleanSrtContent);
         
-        // 在实际系统中，这里应该调用AI服务来处理内容
-        // 为了演示，我们创建一个简单的示例结果
-        const summary = await generateSummary(cleanSrtContent);
-        const translation = await generateTranslation(cleanSrtContent);
-        const fullTextHighlights = await generateHighlights(cleanSrtContent);
+        // 发送状态更新
+        await sendUpdate({ type: 'status', message: 'Content loaded, generating summary...' });
+        
+        // 生成摘要
+        const summary = await generateSummary(plainText, sendUpdate);
+        
+        // 生成翻译
+        const translation = await generateTranslation(cleanSrtContent, sendUpdate);
+        
+        // 生成高亮
+        const highlights = await generateHighlights(cleanSrtContent, sendUpdate);
         
         // 保存处理结果到数据库
-        await saveAnalysisResults({
-          podcastId: id,
-          summary,
-          translation,
-          highlights: fullTextHighlights
-        });
+        console.log(`准备保存分析结果，podcastId: ${id}, 类型: ${typeof id}`);
+        try {
+          await saveAnalysisResults({
+            podcastId: id,
+            summary,
+            translation,
+            highlights
+          });
+          console.log(`分析结果保存成功，podcastId: ${id}`);
+        } catch (dbError) {
+          console.error('保存分析结果到数据库失败:', dbError);
+          // 即使数据库保存失败，我们也继续返回结果
+        }
         
         // 发送全部完成事件
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: 'all_done',
-              finalResults: {
-                summary,
-                translation,
-                highlights: fullTextHighlights
-              }
-            })}\n\n`
-          )
-        );
+        await sendUpdate({
+          type: 'all_done',
+          finalResults: {
+            summary,
+            translation,
+            highlights
+          }
+        });
         
         // 完成流
         controller.close();
@@ -629,56 +675,4 @@ export async function POST(request: NextRequest) {
       'Connection': 'keep-alive'
     }
   });
-}
-
-// 模拟摘要生成函数
-async function generateSummary(content: string): Promise<string> {
-  // 在实际应用中，这应该调用OpenRouter或其他AI服务
-  // 这里只是简单模拟
-  await new Promise(resolve => setTimeout(resolve, 1000)); // 模拟延迟
-  return `## Summary
-
-This is a simulated summary of the transcript.
-
-The transcript appears to be about various topics including technology, science, and current events.
-
-### Key points:
-
-1. Introduction to the topic of discussion
-2. Several interesting perspectives shared by the participants
-3. Conclusion with insights about future implications
-
-*Note: This is a placeholder summary that would be replaced with actual AI-generated content in production.*`;
-}
-
-// 模拟翻译生成函数
-async function generateTranslation(content: string): Promise<string> {
-  // 在实际应用中，这应该调用翻译服务
-  await new Promise(resolve => setTimeout(resolve, 800)); // 模拟延迟
-  return `这是一个模拟的字幕翻译。
-
-在实际应用中，这里会包含完整的中文翻译内容。
-
-翻译涵盖了原始字幕的全部内容，包括所有对话和描述。`;
-}
-
-// 模拟高亮生成函数
-async function generateHighlights(content: string): Promise<string> {
-  // 在实际应用中，这应该调用AI服务
-  await new Promise(resolve => setTimeout(resolve, 1200)); // 模拟延迟
-  
-  // 从内容中提取一些片段并添加高亮
-  const lines = content.split('\n');
-  const textLines = lines.filter(line => 
-    !line.match(/^\d+$/) && // 过滤序号行 
-    !line.match(/^\d\d:\d\d:\d\d/) && // 过滤时间码行
-    line.trim().length > 0 // 过滤空行
-  );
-  
-  // 只保留部分内容，添加高亮
-  const sampleText = textLines.slice(0, Math.min(20, textLines.length)).join('\n');
-  
-  return `${sampleText.replace(/\b(important|key|main|critical|essential)\b/gi, '**$1**')}
-
-*Note: In a real application, the actual transcript would be shown here with important phrases highlighted.*`;
 } 
