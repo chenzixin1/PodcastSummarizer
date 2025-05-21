@@ -1,4 +1,5 @@
 import { sql } from '@vercel/postgres';
+import { v4 as uuidv4 } from 'uuid';
 
 // 播客类型
 export interface Podcast {
@@ -28,10 +29,10 @@ export interface DbResult {
 // 数据库表初始化函数
 export async function initDatabase(): Promise<DbResult> {
   try {
-    // 创建播客表
+    // 创建播客表 - 使用TEXT类型来存储nanoid
     await sql`
       CREATE TABLE IF NOT EXISTS podcasts (
-        id VARCHAR(36) PRIMARY KEY,
+        id TEXT PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
         original_filename VARCHAR(255) NOT NULL,
         file_size VARCHAR(50) NOT NULL,
@@ -41,10 +42,10 @@ export async function initDatabase(): Promise<DbResult> {
       )
     `;
 
-    // 创建分析结果表
+    // 创建分析结果表 - 使用TEXT类型来存储nanoid
     await sql`
       CREATE TABLE IF NOT EXISTS analysis_results (
-        podcast_id VARCHAR(36) REFERENCES podcasts(id),
+        podcast_id TEXT REFERENCES podcasts(id),
         summary TEXT,
         translation TEXT,
         highlights TEXT,
