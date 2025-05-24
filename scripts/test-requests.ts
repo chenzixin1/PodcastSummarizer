@@ -44,7 +44,55 @@ import { parse } from 'url';
 import fetch from 'node-fetch';
 import * as fs from 'fs';
 import * as path from 'path';
-import requestTracker from '../__tests__/utils/requestTracker';
+
+// Simple request tracker implementation (replaces the deleted module)
+const requestTracker = {
+  requests: [] as Array<{url: string, method: string, body: string, timestamp: number}>,
+  
+  trackRequest(url: string, method: string, body: string) {
+    this.requests.push({
+      url,
+      method,
+      body,
+      timestamp: Date.now()
+    });
+  },
+  
+  clearRequestTracker() {
+    this.requests = [];
+  },
+  
+  getStats() {
+    const totalRequests = this.requests.length;
+    const uniqueRequests = new Set(this.requests.map(r => `${r.method}:${r.url}:${r.body}`)).size;
+    const duplicateCount = totalRequests - uniqueRequests;
+    const duplicatePercent = totalRequests > 0 ? Math.round((duplicateCount / totalRequests) * 100) : 0;
+    
+    return {
+      totalRequests,
+      uniqueRequests,
+      duplicateCount,
+      duplicatePercent
+    };
+  },
+  
+  analyzeRequestPatterns() {
+    const urlCounts = new Map<string, number>();
+    
+    this.requests.forEach(req => {
+      const key = `${req.method}:${req.url}`;
+      urlCounts.set(key, (urlCounts.get(key) || 0) + 1);
+    });
+    
+    const problematicUrls = Array.from(urlCounts.entries())
+      .filter(([_, count]) => count > 1)
+      .map(([url, _]) => url);
+    
+    return {
+      problematicUrls
+    };
+  }
+};
 
 // 配置项
 const CONFIG = {
