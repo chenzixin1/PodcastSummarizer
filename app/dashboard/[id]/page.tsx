@@ -73,6 +73,39 @@ export default function DashboardPage() {
   console.log(`[DEBUG] Dashboard initializing for ID: ${id}`);
   logDebug(`Dashboard initializing for ID: ${id}`);
 
+  // Add ID validation at the beginning
+  if (!id || id === 'undefined' || id === 'null') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+        <div className="text-center max-w-md p-8 bg-slate-800 rounded-lg shadow-xl">
+          <h1 className="text-2xl font-bold text-red-400 mb-4">Invalid File ID</h1>
+          <p className="text-slate-300 mb-6">
+            The file ID in the URL is invalid or missing. This usually happens when:
+          </p>
+          <ul className="text-left text-sm text-slate-400 mb-6 space-y-2">
+            <li>• You navigated to an incomplete URL</li>
+            <li>• The file upload process was interrupted</li>
+            <li>• You're using an old or broken bookmark</li>
+          </ul>
+          <div className="space-y-3">
+            <Link 
+              href="/upload" 
+              className="block w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              Upload New File
+            </Link>
+            <Link 
+              href="/history" 
+              className="block w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              View File History
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const [activeView, setActiveView] = useState<ViewMode>('summary');
   const [data, setData] = useState<ProcessedData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
