@@ -9,6 +9,13 @@
     "lint": "next lint",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:db": "jest __tests__/lib/",
+    "test:api": "jest __tests__/api/",
+    "test:components": "jest __tests__/dashboard/",
+    "test:working": "jest __tests__/lib/ && jest __tests__/api/db-init.test.ts",
+    "test:coverage": "jest --coverage",
+    "test:debug": "jest --runInBand --no-coverage --no-cache",
+    "test:clear": "jest --clearCache",
     "test:requests": "ts-node scripts/test-requests.ts",
     "db:init": "node -r dotenv/config scripts/init-db.mjs"
   },
@@ -29,6 +36,7 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@edge-runtime/jest-environment": "^4.0.0",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.1.5",

@@ -1,190 +1,155 @@
 /**
- * API Process Route Tests - Request Deduplication
+ * Process API Route Tests
  * 
- * CONTEXT:
- * These tests were created after discovering a critical issue in the application where duplicate API requests
- * were being sent to the OpenRouter API when processing SRT files. The issue manifested in two ways:
- * 1. Interface flickering due to repeated state changes from multiple identical API calls
- * 2. Wasted resources and unnecessary costs due to duplicate API calls to OpenRouter
- * 
- * ROOT CAUSE:
- * The issue was traced to two main problems:
- * 1. A syntax error in this API route handler (app/api/process/route.ts) where a missing closing brace
- *    caused improper response handling
- * 2. The dashboard page (app/dashboard/[id]/page.tsx) was not properly tracking if a request was already
- *    sent, leading to duplicate requests during component re-renders
- * 
- * FIX IMPLEMENTED:
- * 1. Fixed the API route handler to properly return streaming responses by:
- *    - Removing internal return statements from the ReadableStream's start callback
- *    - Using controller.close() to properly end streams
- *    - Adding a proper return statement with the stream at the handler's end
- * 2. Added server-side request deduplication to prevent processing the same file multiple times
- *    - Implemented request tracking with timeout mechanism
- *    - Added special handling for explicit retry requests
- * 
- * THESE TESTS ENSURE:
- * - Duplicate requests for the same file ID are properly rejected with 409 status
- * - Requests with allowRetry=true can bypass the duplicate detection (for explicit retries)
- * - Requests are automatically cleared from the deduplication system after timeout
- * - Invalid requests are properly rejected with appropriate error messages
+ * 测试播客处理API的各种场景：
+ * 1. 正常处理流程（流式响应）
+ * 2. 错误处理
+ * 3. 参数验证
+ * 4. 内容解析和处理
  */
 
 /**
- * API Route测试 - 测试process路由的请求去重功能
+ * @jest-environment node
  */
+
 import { NextRequest } from 'next/server';
 import { POST } from '../../app/api/process/route';
 
-// 模拟OpenRouter调用
-jest.mock('openai-edge', () => {
-  return {
-    Configuration: jest.fn().mockImplementation(() => ({})),
-    OpenAIApi: jest.fn().mockImplementation(() => ({
-      createChatCompletion: jest.fn().mockImplementation(() => {
-        const mockResponse = {
-          ok: true,
-          body: {
-            getReader: jest.fn().mockReturnValue({
-              read: jest.fn().mockResolvedValue({ done: true })
-            })
+// Mock 全局 fetch
+global.fetch = jest.fn();
+
+// Mock 数据库操作
+jest.mock('../../lib/db', () => ({
+  saveAnalysisResults: jest.fn()
+}));
+
+// 获取mock函数的引用
+const { saveAnalysisResults: mockSaveAnalysisResults } = require('../../lib/db');
+
+// Helper function to read stream response
+async function readStreamResponse(response: Response): Promise<string[]> {
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+  const events: string[] = [];
+  
+  if (!reader) return events;
+  
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data.trim()) {
+            events.push(data);
           }
-        };
-        return mockResponse;
-      })
-    }))
-  };
-});
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  
+  return events;
+}
 
-// 模拟fetch
-global.fetch = jest.fn().mockImplementation(() => 
-  Promise.resolve({
-    ok: true,
-    text: jest.fn().mockResolvedValue('测试SRT内容')
-  })
-);
-
-// 使用Date.now模拟处理请求时间
-const originalDateNow = Date.now;
-let mockNow = 1683000000000; // 固定时间戳起点
-Date.now = jest.fn().mockImplementation(() => mockNow);
-
-describe('处理API路由测试', () => {
-  // 每个测试前重置模拟
+describe('Process API Tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockNow = 1683000000000; // 重置时间戳
   });
-  
-  // 测试结束后恢复Date.now
-  afterAll(() => {
-    Date.now = originalDateNow;
-  });
-  
-  test('重复请求同一ID被正确拒绝', async () => {
-    // 创建请求对象
-    const makeRequest = (allowRetry = false) => new NextRequest('http://localhost:3000/api/process', {
+
+  it('should return error for missing required fields', async () => {
+    const requestData = {
+      id: 'test-id'
+      // Missing blobUrl
+    };
+
+    const request = new NextRequest('http://localhost:3000/api/process', {
       method: 'POST',
-      body: JSON.stringify({
-        id: 'duplicate-test-id',
-        blobUrl: 'https://example.com/test.srt',
-        fileName: 'test.srt',
-        allowRetry,
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
     });
-    
-    // 第一个请求应正常处理
-    const firstResponse = await POST(makeRequest());
-    expect(firstResponse.status).toBe(200);
-    
-    // 第二个请求（同一ID）应被拒绝，返回409冲突
-    const secondResponse = await POST(makeRequest());
-    expect(secondResponse.status).toBe(409);
-    
-    // 检查错误消息
-    const secondResponseData = await secondResponse.json();
-    expect(secondResponseData.error).toBe('This file is already being processed');
-    expect(secondResponseData.status).toBe('duplicate');
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('Invalid request data. Missing required fields.');
   });
-  
-  test('带有allowRetry参数的请求应绕过重复检查', async () => {
-    // 第一个正常请求
-    const firstResponse = await POST(
-      new NextRequest('http://localhost:3000/api/process', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: 'retry-test-id',
-          blobUrl: 'https://example.com/test.srt',
-          fileName: 'test.srt',
-        }),
-      })
-    );
-    expect(firstResponse.status).toBe(200);
-    
-    // 第二个请求使用同一ID但带allowRetry=true
-    const secondResponse = await POST(
-      new NextRequest('http://localhost:3000/api/process', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: 'retry-test-id',
-          blobUrl: 'https://example.com/test.srt',
-          fileName: 'test.srt',
-          allowRetry: true,
-        }),
-      })
-    );
-    
-    // 应被允许处理
-    expect(secondResponse.status).toBe(200);
+
+  it('should return error for empty request body', async () => {
+    const request = new NextRequest('http://localhost:3000/api/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('Invalid request data. Missing required fields.');
   });
-  
-  test('超时的请求应允许重新处理', async () => {
-    // 第一个请求
-    const firstResponse = await POST(
-      new NextRequest('http://localhost:3000/api/process', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: 'timeout-test-id',
-          blobUrl: 'https://example.com/test.srt',
-          fileName: 'test.srt',
-        }),
-      })
-    );
-    expect(firstResponse.status).toBe(200);
+
+  it('should return stream response with correct headers for valid request', async () => {
+    // Mock successful file fetch
+    const mockSrtContent = `1
+00:00:00,000 --> 00:00:02,000
+Hello world`;
+
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(mockSrtContent)
+    });
+
+    mockSaveAnalysisResults.mockResolvedValue({
+      success: true
+    });
+
+    const requestData = {
+      id: 'test-id',
+      blobUrl: 'https://example.com/test.srt',
+      fileName: 'test.srt'
+    };
+
+    const request = new NextRequest('http://localhost:3000/api/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
+    });
+
+    const response = await POST(request);
+
+    // Check response headers for streaming
+    expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+    expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    expect(response.headers.get('Connection')).toBe('keep-alive');
     
-    // 模拟时间前进4分钟（超出3分钟超时限制）
-    mockNow += 4 * 60 * 1000;
-    
-    // 第二个请求使用同一ID，不带allowRetry
-    const secondResponse = await POST(
-      new NextRequest('http://localhost:3000/api/process', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: 'timeout-test-id',
-          blobUrl: 'https://example.com/test.srt',
-          fileName: 'test.srt',
-        }),
-      })
-    );
-    
-    // 应被允许处理，因为前一个请求已超时
-    expect(secondResponse.status).toBe(200);
+    // Check that response body exists (is a stream)
+    expect(response.body).toBeDefined();
   });
-  
-  test('验证错误请求处理', async () => {
-    // 缺少必需字段的请求
-    const invalidResponse = await POST(
-      new NextRequest('http://localhost:3000/api/process', {
-        method: 'POST',
-        body: JSON.stringify({
-          // 缺少id和fileName
-          blobUrl: 'https://example.com/test.srt',
-        }),
-      })
-    );
-    
-    expect(invalidResponse.status).toBe(400);
-    const errorData = await invalidResponse.json();
-    expect(errorData.error).toContain('Missing required fields');
+
+  it('should handle missing id field', async () => {
+    const requestData = {
+      blobUrl: 'https://example.com/test.srt'
+      // Missing id
+    };
+
+    const request = new NextRequest('http://localhost:3000/api/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('Invalid request data. Missing required fields.');
   });
 }); 

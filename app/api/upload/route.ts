@@ -6,19 +6,28 @@ import { savePodcast } from '../../../lib/db';
 export const runtime = 'edge';
 
 export async function POST(request: NextRequest) {
-  if (request.method !== 'POST') {
-    return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
-  }
-
   const formData = await request.formData();
   const file = formData.get('file') as File | null;
 
   if (!file) {
-    return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+    return NextResponse.json({ 
+      success: false, 
+      error: 'No file uploaded' 
+    }, { status: 400 });
+  }
+
+  if (file.size === 0) {
+    return NextResponse.json({ 
+      success: false, 
+      error: 'File is empty' 
+    }, { status: 400 });
   }
 
   if (file.type !== 'application/x-subrip' && !file.name.endsWith('.srt')) {
-    return NextResponse.json({ error: 'Invalid file type. Only .srt files are allowed.' }, { status: 400 });
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Invalid file type. Only .srt files are allowed.' 
+    }, { status: 400 });
   }
 
   try {
@@ -57,15 +66,21 @@ export async function POST(request: NextRequest) {
 
     if (!dbResult.success) {
       console.error('Error saving to database:', dbResult.error);
-      // 即使数据库保存失败，我们也继续返回ID和URL，这样仍然可以在客户端缓存处理
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Failed to save podcast' 
+      }, { status: 500 });
     }
 
     // 为向后兼容，仍然返回所有信息，让客户端可以缓存在localStorage中
     return NextResponse.json({ 
-      id, 
-      blobUrl,
-      fileName: file.name,
-      fileSize
+      success: true,
+      data: {
+        id, 
+        blobUrl,
+        fileName: file.name,
+        fileSize
+      }
     }, { status: 200 });
   } catch (error) {
     console.error('Error uploading file:', error);
@@ -73,6 +88,9 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error) {
       errorMessage = error.message;
     }
-    return NextResponse.json({ error: 'Failed to upload file.', details: errorMessage }, { status: 500 });
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Failed to upload file' 
+    }, { status: 500 });
   }
 } 
