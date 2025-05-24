@@ -1,0 +1,107 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# API Testing Guidelines
+
+## Overview
+This project uses Jest for comprehensive API endpoint testing with a focus on type safety, error handling, and mock isolation.
+
+## Test Structure
+
+### Test Files Location
+All API tests are located in `__tests__/api/` with the following structure:
+- [__tests__/api/upload.test.ts](mdc:__tests__/api/upload.test.ts) - File upload API tests
+- [__tests__/api/podcasts.test.ts](mdc:__tests__/api/podcasts.test.ts) - Podcast listing API tests  
+- [__tests__/api/process.test.ts](mdc:__tests__/api/process.test.ts) - Podcast processing API tests
+- [__tests__/api/db-init.test.ts](mdc:__tests__/api/db-init.test.ts) - Database initialization API tests
+
+### Jest Configuration
+The Jest setup is configured in [jest.setup.js](mdc:jest.setup.js) with:
+- NextRequest/NextResponse mocking for API route testing
+- Global fetch mocking for external API calls
+- FormData and File API mocks for upload testing
+- Database function mocking patterns
+
+## API Route Testing Patterns
+
+### Mock Configuration
+```typescript
+// Mock external dependencies before importing API routes
+jest.mock('../../lib/db', () => ({
+  functionName: jest.fn()
+}));
+
+// Get mock references and configure in beforeEach
+const mockFunction = jest.fn();
+beforeEach(() => {
+  jest.clearAllMocks();
+  require('../../lib/db').functionName = mockFunction;
+});
+```
+
+### Request Construction
+```typescript
+// For JSON APIs
+const request = new NextRequest('http://localhost:3000/api/endpoint', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(requestData)
+});
+
+// For FormData APIs (uploads)
+const formData = new FormData();
+formData.append('file', file);
+const request = new NextRequest('http://localhost:3000/api/upload', {
+  method: 'POST',
+  body: formData
+});
+```
+
+### Response Testing
+```typescript
+const response = await APIFunction(request);
+const data = await response.json();
+
+expect(response.status).toBe(200);
+expect(data.success).toBe(true);
+expect(data.data).toEqual(expectedData);
+```
+
+## Error Handling Standards
+
+### All API responses should follow this format:
+- **Success**: `{ success: true, data: ... }`
+- **Error**: `{ success: false, error: "message" }`
+- **Server Error**: `{ success: false, error: "message", details: "..." }`
+
+### Test Coverage Requirements
+1. **Happy Path**: Normal operation with valid inputs
+2. **Validation**: Invalid/missing parameters
+3. **Error Handling**: Database errors, external API failures
+4. **Edge Cases**: Empty data, boundary conditions
+
+## Streaming API Testing
+For Server-Sent Events APIs like [app/api/process/route.ts](mdc:app/api/process/route.ts):
+- Focus on parameter validation and error responses
+- Test response headers for streaming endpoints
+- Avoid complex stream content testing in unit tests
+
+## Mock Best Practices
+1. Always use `jest.clearAllMocks()` in `beforeEach`
+2. Mock at the module level, not function level
+3. Provide realistic mock return values
+4. Test both success and failure scenarios for mocked functions
+
+## Running Tests
+```bash
+# Run all API tests
+./scripts/test.sh api
+
+# Run specific API test
+npm test __tests__/api/upload.test.ts
+
+# Check test status
+./scripts/test.sh status
+```

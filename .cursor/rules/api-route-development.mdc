@@ -1,0 +1,170 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# API Route Development Guidelines
+
+## Overview
+This project follows Next.js App Router conventions for API routes with TypeScript, error handling, and database integration.
+
+## API Routes Structure
+
+### Current API Endpoints
+- [app/api/upload/route.ts](mdc:app/api/upload/route.ts) - File upload handling
+- [app/api/podcasts/route.ts](mdc:app/api/podcasts/route.ts) - Podcast listing with pagination
+- [app/api/process/route.ts](mdc:app/api/process/route.ts) - Podcast processing with streaming
+- [app/api/db-init/route.ts](mdc:app/api/db-init/route.ts) - Database initialization
+
+### Database Integration
+All database operations use functions from [lib/db.ts](mdc:lib/db.ts):
+```typescript
+import { savePodcast, getAllPodcasts, saveAnalysisResults } from '../../../lib/db';
+```
+
+## API Route Conventions
+
+### HTTP Method Handling
+Use named exports for HTTP methods - Next.js handles routing automatically:
+```typescript
+export async function GET(request: NextRequest) { }
+export async function POST(request: NextRequest) { }
+```
+
+**❌ Avoid**: Manual method checking `if (request.method !== 'POST')`
+
+### Response Format Standards
+All API responses must follow consistent format:
+
+#### Success Response
+```typescript
+return NextResponse.json({ 
+  success: true, 
+  data: result 
+}, { status: 200 });
+```
+
+#### Error Response
+```typescript
+return NextResponse.json({ 
+  success: false, 
+  error: 'Error message' 
+}, { status: 400 });
+```
+
+#### Server Error Response
+```typescript
+return NextResponse.json({ 
+  success: false, 
+  error: 'Internal server error',
+  details: error.message 
+}, { status: 500 });
+```
+
+### Input Validation Pattern
+```typescript
+export async function POST(request: NextRequest) {
+  // Parse request data
+  const requestData = await request.json();
+  
+  // Validate required fields
+  if (!requestData.id || !requestData.requiredField) {
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Missing required fields' 
+    }, { status: 400 });
+  }
+  
+  // Process request...
+}
+```
+
+### File Upload Handling
+For file uploads, use FormData pattern from [app/api/upload/route.ts](mdc:app/api/upload/route.ts):
+```typescript
+const formData = await request.formData();
+const file = formData.get('file') as File | null;
+
+if (!file) {
+  return NextResponse.json({ 
+    success: false, 
+    error: 'No file uploaded' 
+  }, { status: 400 });
+}
+
+// Validate file type and size
+if (file.size === 0) {
+  return NextResponse.json({ 
+    success: false, 
+    error: 'File is empty' 
+  }, { status: 400 });
+}
+```
+
+### Streaming Responses
+For long-running operations, use Server-Sent Events pattern:
+```typescript
+const stream = new ReadableStream({
+  async start(controller) {
+    const encoder = new TextEncoder();
+    
+    const sendUpdate = async (update) => {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(update)}\n\n`));
+    };
+    
+    // Process and send updates...
+    controller.close();
+  }
+});
+
+return new Response(stream, {
+  headers: {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  }
+});
+```
+
+### Database Error Handling
+```typescript
+try {
+  const result = await databaseFunction();
+  
+  if (!result.success) {
+    return NextResponse.json({ 
+      success: false, 
+      error: result.error 
+    }, { status: 500 });
+  }
+  
+  return NextResponse.json({ 
+    success: true, 
+    data: result.data 
+  });
+} catch (error) {
+  console.error('Database error:', error);
+  return NextResponse.json({ 
+    success: false, 
+    error: 'Internal server error',
+    details: error.message 
+  }, { status: 500 });
+}
+```
+
+## Environment Configuration
+API routes may require environment variables:
+- Database connection: `POSTGRES_URL`
+- Blob storage: `BLOB_READ_WRITE_TOKEN`
+- AI services: `OPENROUTER_API_KEY`
+
+Use fallback patterns for optional services as shown in [app/api/upload/route.ts](mdc:app/api/upload/route.ts).
+
+## Testing Integration
+Every new API route should have corresponding tests in `__tests__/api/`:
+- Unit tests for all endpoints
+- Error scenario coverage
+- Mock external dependencies
+- Validate response formats
+
+See [API Testing Guidelines](mdc:.cursor/rules/api-testing-guidelines.mdc) for detailed testing patterns.
