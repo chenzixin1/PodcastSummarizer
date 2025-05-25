@@ -636,7 +636,7 @@ export async function POST(request: NextRequest) {
           console.log(`分析结果保存成功，podcastId: ${id}`);
         } catch (dbError) {
           console.error('保存分析结果到数据库失败:', dbError);
-          // 即使数据库保存失败，我们也继续返回结果
+          // 即使数据库保存失败，我们也继续返回结果给用户
         }
         
         // 发送全部完成事件
