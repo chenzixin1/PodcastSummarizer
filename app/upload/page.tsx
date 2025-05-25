@@ -56,16 +56,9 @@ export default function UploadPage() {
       // Extract data from the nested response structure
       const { id, fileName, fileSize, blobUrl } = result.data;
       
-      // 为了向后兼容，仍然保存到localStorage
-      localStorage.setItem(`srtfile-${id}-name`, fileName || file.name);
-      localStorage.setItem(`srtfile-${id}-size`, fileSize || `${(file.size / 1024).toFixed(2)} KB`);
-      localStorage.setItem(`srtfile-${id}-url`, blobUrl || '');
-      localStorage.setItem(`srtfile-${id}-date`, new Date().toISOString());
-      localStorage.setItem(`srtfile-${id}-processed`, 'false'); // 标记为未处理状态
-      localStorage.setItem(`srtfile-${id}-isPublic`, isPublic.toString()); // 保存公开状态
-
-      // 上传成功后立即跳转到dashboard页面，让用户在那里看到流式处理结果
-      console.log('File successfully uploaded! Redirecting to dashboard...');
+      console.log('File upload successful, redirecting to dashboard');
+      
+      // 上传成功后直接跳转到dashboard页面
       router.push(`/dashboard/${id}`);
     } catch (err) {
       console.error('Upload error:', err);
