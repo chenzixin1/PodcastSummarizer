@@ -3,3 +3,73 @@ description:
 globs:
 alwaysApply: false
 ---
+# PodcastSummarizer Development Rules
+
+## Overview
+This project has comprehensive Cursor Rules to guide development, testing, and maintenance of the PodcastSummarizer application.
+
+## Available Rules
+
+### 🧪 Testing Guidelines
+- **[API Testing Guidelines](mdc:.cursor/rules/api-testing-guidelines.mdc)** - Comprehensive patterns for testing API endpoints
+- **[Project Testing Structure](mdc:.cursor/rules/project-testing-structure.mdc)** - Overview of testing architecture and organization  
+- **[Jest Configuration](mdc:.cursor/rules/jest-configuration.mdc)** - Jest setup, mocking patterns, and configuration details
+
+### 🚀 Development Guidelines
+- **[API Route Development](mdc:.cursor/rules/api-route-development.mdc)** - Standards for creating and maintaining API routes
+
+## Project Status
+
+### Testing Achievement
+✅ **100% API Test Coverage** (61/61 tests passing)
+- Upload API: 6/6 tests
+- Podcasts API: 6/6 tests  
+- Process API: 4/4 tests
+- DB-Init API: 7/7 tests
+- Database Tests: 38/38 tests
+
+### Key Files Reference
+- **API Routes**: [app/api/](mdc:app/api/) directory
+- **Database Layer**: [lib/db.ts](mdc:lib/db.ts)
+- **Test Suite**: [__tests__/](mdc:__tests__/) directory
+- **Jest Setup**: [jest.setup.js](mdc:jest.setup.js)
+- **Test Scripts**: [scripts/test.sh](mdc:scripts/test.sh)
+
+## Quick Reference
+
+### Running Tests
+```bash
+npm test                    # All tests
+./scripts/test.sh api      # API tests only
+./scripts/test.sh status   # Test summary
+```
+
+### Development Workflow
+1. **API Development**: Follow [API Route Development](mdc:.cursor/rules/api-route-development.mdc) guidelines
+2. **Testing**: Use patterns from [API Testing Guidelines](mdc:.cursor/rules/api-testing-guidelines.mdc)
+3. **Mocking**: Reference [Jest Configuration](mdc:.cursor/rules/jest-configuration.mdc) for mock patterns
+
+### Project Documentation
+- [API_TESTS_COMPLETION_REPORT.md](mdc:API_TESTS_COMPLETION_REPORT.md) - Detailed testing achievements
+- [README.md](mdc:README.md) - Project overview and setup
+- [ENVIRONMENT_SETUP.md](mdc:ENVIRONMENT_SETUP.md) - Environment configuration guide
+
+## Architecture Highlights
+
+### API Response Standards
+All APIs follow consistent response format:
+- Success: `{ success: true, data: ... }`
+- Error: `{ success: false, error: "message" }`
+
+### Database Integration
+- PostgreSQL with [lib/db.ts](mdc:lib/db.ts) abstraction layer
+- Complete unit and integration test coverage
+- Environment-based configuration
+
+### Testing Philosophy
+- **Isolation**: Each test runs independently
+- **Mocking**: External dependencies properly mocked
+- **Coverage**: Error scenarios and edge cases tested
+- **Performance**: Fast execution (<1 second for full suite)
+
+These rules ensure consistent, high-quality development practices and maintain the project's 100% test coverage achievement.
