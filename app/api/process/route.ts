@@ -570,7 +570,7 @@ function parseJSON(text: string): any {
 
 export async function POST(request: NextRequest) {
   console.log('Process API called');
-  
+
   // 解析请求数据
   const requestData = await request.json();
   
@@ -579,6 +579,20 @@ export async function POST(request: NextRequest) {
   }
   
   const { id, blobUrl, fileName, allowRetry = false } = requestData;
+
+  // Prevent duplicate processing for the same ID unless explicitly allowed
+  if (processingRequests.has(id) && !allowRetry) {
+    return NextResponse.json(
+      { error: 'Processing already in progress' },
+      { status: 429 }
+    );
+  }
+
+  processingRequests.set(id, new Date());
+  const cleanup = () => {
+    processingRequests.delete(id);
+  };
+  const timeoutId = setTimeout(cleanup, REQUEST_TIMEOUT);
   
   // 设置响应流
   const encoder = new TextEncoder();
@@ -651,6 +665,8 @@ export async function POST(request: NextRequest) {
         
         // 完成流
         controller.close();
+        cleanup();
+        clearTimeout(timeoutId);
       } catch (error) {
         console.error('Error in process stream:', error);
         controller.enqueue(
@@ -663,6 +679,8 @@ export async function POST(request: NextRequest) {
           )
         );
         controller.close();
+        cleanup();
+        clearTimeout(timeoutId);
       }
     }
   });
