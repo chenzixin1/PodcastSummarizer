@@ -3,10 +3,10 @@ import { getAnalysisResults, getPodcast } from '../../../../lib/db';
 
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  context: { params: { id: string } }
 ) {
   try {
-    const { id } = await context.params;
+    const { id } = context.params;
     
     if (!id) {
       return NextResponse.json({ error: 'Missing ID parameter' }, { status: 400 });
