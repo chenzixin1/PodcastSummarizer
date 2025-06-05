@@ -3,3 +3,260 @@ description:
 globs:
 alwaysApply: false
 ---
+# Jest Configuration and Mocking
+
+## Overview
+The Jest configuration in this project is optimized for Next.js API route testing, TypeScript support, and comprehensive mocking of external dependencies.
+
+## Configuration Files
+
+### Main Jest Config ([jest.config.js](mdc:jest.config.js))
+```javascript
+const config = {
+  testEnvironment: 'node',           // Node environment for API tests
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  testMatch: ['**/__tests__/**/*.test.ts'],
+  transform: {
+    '^.+\\.(ts|tsx)$': 'ts-jest'    // TypeScript transformation
+  },
+  moduleNameMapping: {               // Path mapping for imports
+    '^@/(.*)$': '<rootDir>/$1'
+  }
+}
+```
+
+### Test Environment Setup ([jest.setup.js](mdc:jest.setup.js))
+Provides comprehensive mocking for:
+- Next.js API components
+- Web APIs (File, FormData, fetch)
+- Browser APIs (localStorage, DOM)
+- Database and external services
+
+## Next.js API Mocking
+
+### NextRequest/NextResponse Mock
+```javascript
+jest.mock('next/server', () => ({
+  NextRequest: jest.requireActual('next/server').NextRequest,
+  NextResponse: {
+    json: (data, options = {}) => ({
+      status: options.status || 200,
+      headers: new Map(),
+      json: () => Promise.resolve(data),
+      ok: status >= 200 && status < 300
+    })
+  }
+}));
+```
+
+### Key Benefits:
+- Preserves actual NextRequest functionality
+- Provides testable NextResponse.json method
+- Supports proper HTTP status codes
+- Enables header testing for streaming responses
+
+## Web API Mocking
+
+### File and FormData APIs
+```javascript
+// File API Mock
+global.File = class MockFile {
+  constructor(chunks, filename, options = {}) {
+    this.name = filename;
+    this.size = chunks.reduce((size, chunk) => size + chunk.length, 0);
+    this.type = options.type || '';
+  }
+};
+
+// FormData Mock  
+global.FormData = class MockFormData {
+  constructor() {
+    this._data = new Map();
+  }
+  append(key, value) { this._data.set(key, value); }
+  get(key) { return this._data.get(key); }
+};
+```
+
+### Fetch and Streaming APIs
+```javascript
+// Global fetch mock
+global.fetch = jest.fn();
+
+// ReadableStream mock for streaming APIs
+global.ReadableStream = class MockReadableStream {
+  constructor({ start }) {
+    this.controller = {
+      enqueue: jest.fn(),
+      close: jest.fn(),
+    };
+    start(this.controller);
+  }
+};
+```
+
+## Database Mocking Patterns
+
+### Module-Level Mocking
+```typescript
+// In test files - mock before importing
+jest.mock('../../lib/db', () => ({
+  savePodcast: jest.fn(),
+  getAllPodcasts: jest.fn(),
+  getPodcast: jest.fn()
+}));
+
+// Get mock references
+const mockSavePodcast = jest.fn();
+const mockGetAllPodcasts = jest.fn();
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  // Reset implementations
+  require('../../lib/db').savePodcast = mockSavePodcast;
+  require('../../lib/db').getAllPodcasts = mockGetAllPodcasts;
+});
+```
+
+### Mock Return Value Patterns
+```typescript
+// Success response pattern
+mockFunction.mockResolvedValue({
+  success: true,
+  data: expectedData
+});
+
+// Error response pattern  
+mockFunction.mockResolvedValue({
+  success: false,
+  error: 'Error message'
+});
+
+// Exception pattern
+mockFunction.mockRejectedValue(new Error('Connection failed'));
+```
+
+## External Service Mocking
+
+### Blob Storage (Vercel Blob)
+```typescript
+jest.mock('@vercel/blob', () => ({
+  put: jest.fn().mockResolvedValue({
+    url: 'https://mock-blob-url.example.com/file.srt'
+  })
+}));
+```
+
+### AI Services (OpenRouter)
+```typescript
+// Mock in individual tests
+global.fetch = jest.fn().mockResolvedValue({
+  ok: true,
+  json: () => Promise.resolve({
+    choices: [{ message: { content: 'Mock AI response' } }]
+  })
+});
+```
+
+### ID Generation (nanoid)
+```typescript
+jest.mock('nanoid', () => ({
+  nanoid: jest.fn().mockReturnValue('mock-id-12345')
+}));
+```
+
+## Test Environment Configuration
+
+### Node.js Environment
+Uses `testEnvironment: 'node'` for API route testing:
+- Provides Node.js globals (Buffer, process, etc.)
+- Removes browser-specific APIs by default
+- Optimized for server-side testing
+
+### TypeScript Support
+Configured with `ts-jest` transformer:
+- Full TypeScript compilation during testing
+- Type checking in test files
+- Support for TypeScript path mapping
+
+### Module Resolution
+```javascript
+moduleNameMapping: {
+  '^@/(.*)$': '<rootDir>/$1',
+  // Handles Next.js absolute imports
+}
+```
+
+## Common Mock Patterns
+
+### API Route Request Testing
+```typescript
+// Standard request construction pattern
+const request = new NextRequest('http://localhost:3000/api/endpoint', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(requestData)
+});
+
+const response = await APIFunction(request);
+const data = await response.json();
+```
+
+### Error Scenario Testing
+```typescript
+// Test database failures
+mockDatabaseFunction.mockRejectedValue(new Error('DB Error'));
+
+// Test invalid responses
+mockDatabaseFunction.mockResolvedValue({
+  success: false,
+  error: 'Validation failed'
+});
+```
+
+### Mock Reset Best Practices
+```typescript
+beforeEach(() => {
+  jest.clearAllMocks();
+  // Always clear mocks between tests for isolation
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+  // Restore original implementations if needed
+});
+```
+
+## Debugging Mock Issues
+
+### Common Problems and Solutions
+
+1. **Mock not applied**: Ensure mock is defined before import
+2. **Mock conflicts**: Use `jest.requireActual()` for partial mocks
+3. **Async issues**: Use `mockResolvedValue`/`mockRejectedValue`
+4. **Type errors**: Add proper TypeScript mock types
+
+### Mock Verification
+```typescript
+// Verify mock calls
+expect(mockFunction).toHaveBeenCalledWith(expectedArgs);
+expect(mockFunction).toHaveBeenCalledTimes(1);
+
+// Verify mock implementations
+expect(mockFunction.mock.results[0].value).resolves.toBe(expectedValue);
+```
+
+## Performance Optimization
+
+### Fast Test Execution
+- Minimal setup overhead with efficient mocks
+- Isolated test environments prevent side effects
+- Parallel test execution support
+- Smart mock caching and reuse
+
+### Memory Management
+- Proper mock cleanup between tests
+- Efficient mock object creation
+- Minimal external dependency loading
+
+This configuration enables fast, reliable, and comprehensive testing of the entire API surface with proper isolation and realistic mocking patterns.

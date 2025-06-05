@@ -33,6 +33,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useParams } from 'next/navigation';
 import DashboardPage from '../../app/dashboard/[id]/page';
+import '@testing-library/jest-dom';
 
 // 模拟useParams返回的ID
 jest.mock('next/navigation', () => ({
@@ -45,7 +46,7 @@ global.fetch = mockFetch;
 
 // 创建模拟ReadableStream
 const createMockStream = () => {
-  let onRead;
+  let onRead: ((value: { done: boolean; value: Uint8Array }) => void) | undefined;
   const mockReader = {
     read: jest.fn().mockImplementation(() => 
       new Promise(resolve => {

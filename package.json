@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "jest",
+    "test": "npm run type-check && jest",
     "test:watch": "jest --watch",
     "test:db": "jest __tests__/lib/",
     "test:api": "jest __tests__/api/",
@@ -17,6 +17,8 @@
     "test:debug": "jest --runInBand --no-coverage --no-cache",
     "test:clear": "jest --clearCache",
     "test:requests": "ts-node scripts/test-requests.ts",
+    "type-check": "tsc --noEmit",
+    "test:full": "npm run type-check && npm run test:coverage",
     "db:init": "node -r dotenv/config scripts/init-db.mjs"
   },
   "dependencies": {

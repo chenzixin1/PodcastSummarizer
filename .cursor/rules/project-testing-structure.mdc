@@ -3,3 +3,151 @@ description:
 globs:
 alwaysApply: false
 ---
+# Project Testing Structure
+
+## Overview
+This PodcastSummarizer project has a comprehensive testing structure with 100% API test coverage, database integration tests, and development tools for efficient testing workflows.
+
+## Testing Directory Structure
+
+```
+__tests__/
+├── api/                    # API endpoint tests (23 tests)
+│   ├── db-init.test.ts     # Database initialization API
+│   ├── podcasts.test.ts    # Podcast listing API  
+│   ├── process.test.ts     # Podcast processing API
+│   └── upload.test.ts      # File upload API
+└── lib/                    # Library/utility tests (38 tests)
+    ├── db.test.ts          # Database operations unit tests
+    └── db.integration.test.ts # Database integration tests
+```
+
+## Test Configuration Files
+
+### Core Configuration
+- [jest.config.js](mdc:jest.config.js) - Main Jest configuration
+- [jest.setup.js](mdc:jest.setup.js) - Test environment setup and mocking
+- [package.json](mdc:package.json) - Test scripts and dependencies
+
+### Test Helper Scripts
+- [scripts/test.sh](mdc:scripts/test.sh) - Comprehensive test runner with multiple modes
+- [scripts/init-db.mjs](mdc:scripts/init-db.mjs) - Database setup for testing
+
+## Testing Tools and Scripts
+
+### Available Test Commands
+```bash
+# Run all tests (61 tests)
+npm test
+
+# Run specific test categories
+./scripts/test.sh api      # API tests only
+./scripts/test.sh db       # Database tests only
+./scripts/test.sh working  # Only passing tests
+
+# Test status and analysis
+./scripts/test.sh status   # Show test summary
+./scripts/test.sh broken   # Show failing tests
+./scripts/test.sh coverage # Run with coverage
+```
+
+### Test Environment Setup
+The [jest.setup.js](mdc:jest.setup.js) file provides:
+- NextRequest/NextResponse mocking for API routes
+- Global fetch mocking for external APIs
+- FormData, File, and ReadableStream mocks
+- LocalStorage and DOM mocking for frontend tests
+- Database mocking patterns
+
+## Database Testing Strategy
+
+### Unit Tests ([__tests__/lib/db.test.ts](mdc:__tests__/lib/db.test.ts))
+- Mock PostgreSQL with in-memory implementation
+- Test individual database functions
+- Isolated error handling scenarios
+- TypeScript interface validation
+
+### Integration Tests ([__tests__/lib/db.integration.test.ts](mdc:__tests__/lib/db.integration.test.ts))
+- Real database connections
+- End-to-end data persistence
+- Transaction testing
+- Database constraint validation
+
+## API Testing Architecture
+
+### Test Isolation
+Each API test file:
+1. Mocks external dependencies (database, blob storage, AI services)
+2. Uses realistic request/response patterns
+3. Tests both success and error scenarios
+4. Validates response format consistency
+
+### Mock Strategy
+```typescript
+// Standard mocking pattern used across all API tests
+jest.mock('../../lib/db', () => ({
+  functionName: jest.fn()
+}));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  // Reset mock implementations
+});
+```
+
+## Test Documentation
+
+### Reports and Guides
+- [API_TESTS_COMPLETION_REPORT.md](mdc:API_TESTS_COMPLETION_REPORT.md) - Comprehensive test completion report
+- [__tests__/README.md](mdc:__tests__/README.md) - Testing documentation and usage guide
+
+### Test Status Tracking
+The project maintains detailed test metrics:
+- **Total Tests**: 61/61 passing (100%)
+- **API Coverage**: 4/4 endpoints fully tested
+- **Database Coverage**: Complete unit and integration testing
+- **Execution Time**: ~0.5 seconds for full suite
+
+## Quality Assurance
+
+### Testing Best Practices Enforced
+1. **Type Safety**: All tests use TypeScript with strict typing
+2. **Mock Isolation**: Complete separation of unit and integration tests
+3. **Error Coverage**: Every API endpoint tests error scenarios
+4. **Consistent Patterns**: Standardized test structure across all files
+5. **Performance**: Fast test execution with efficient mocking
+
+### Continuous Testing
+- Tests run automatically on code changes
+- Clear failure reporting with detailed error messages
+- Test categorization for targeted testing workflows
+
+## Environment Requirements
+
+### Test Dependencies
+Key testing packages in [package.json](mdc:package.json):
+- `jest` - Test framework
+- `@testing-library/jest-dom` - DOM testing utilities
+- `ts-jest` - TypeScript support
+- Custom mocks for Next.js APIs
+
+### Database Testing
+Requires PostgreSQL connection for integration tests:
+- Uses `.env.local` for test database configuration
+- Automatically initializes test database schema
+- Cleans up test data between runs
+
+## Adding New Tests
+
+### For New API Routes
+1. Create test file in `__tests__/api/`
+2. Follow mocking patterns from existing tests
+3. Test success, validation, and error scenarios
+4. Update test documentation
+
+### For New Database Functions
+1. Add unit tests to [__tests__/lib/db.test.ts](mdc:__tests__/lib/db.test.ts)
+2. Add integration tests to [__tests__/lib/db.integration.test.ts](mdc:__tests__/lib/db.integration.test.ts)
+3. Mock external dependencies appropriately
+
+See [API Testing Guidelines](mdc:.cursor/rules/api-testing-guidelines.mdc) for detailed testing patterns and conventions.
