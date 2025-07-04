@@ -36,9 +36,14 @@ export async function POST(request: NextRequest) {
     const fileSize = `${(file.size / 1024).toFixed(2)} KB`;
     const title = `Transcript Analysis: ${file.name.split('.')[0]}`;
 
+    // 读取 isPublic 字段
+    const isPublicRaw = formData.get('isPublic');
+    const isPublic = String(isPublicRaw) === 'true';
+
     console.log('Attempting to upload file:', filename);
     console.log('File type:', file.type);
     console.log('File size:', file.size);
+    console.log('isPublic:', isPublic);
 
     // 检查Blob存储令牌是否配置
     let blobUrl = '#mock-blob-url';
@@ -56,12 +61,12 @@ export async function POST(request: NextRequest) {
 
     // 保存到数据库
     const dbResult = await savePodcast({
-        id, 
+      id,
       title,
       originalFileName: file.name,
       fileSize,
       blobUrl,
-      isPublic: false // 默认不公开
+      isPublic
     });
 
     if (!dbResult.success) {
@@ -84,10 +89,6 @@ export async function POST(request: NextRequest) {
     }, { status: 200 });
   } catch (error) {
     console.error('Error uploading file:', error);
-    let errorMessage = 'Internal Server Error';
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    }
     return NextResponse.json({ 
       success: false, 
       error: 'Failed to upload file' 
