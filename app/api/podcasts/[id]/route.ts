@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updatePodcastPublicStatus } from '../../../../lib/db';
 
-export async function PATCH(request: NextRequest, context: { params: { id: string } }) {
+export async function PATCH(request: NextRequest, context: any) {
   const { id } = context.params;
   try {
     const body = await request.json();
