@@ -61,11 +61,6 @@ export default function PublicPodcastSummaryPage() {
       </header>
       <main className="container mx-auto p-6">
         <h2 className="text-2xl font-bold mb-6">All Public Podcast Summaries</h2>
-        <div className="flex justify-end mb-6">
-          <Link href="/upload" className="inline-block bg-sky-600 hover:bg-sky-700 text-white font-bold text-lg py-3 px-8 rounded-lg shadow-lg transition">
-            + Upload SRT
-          </Link>
-        </div>
         {error && (
           <div className="bg-red-800/30 text-red-400 p-4 rounded-lg mb-6">
             <p className="font-medium">Error loading data</p>
@@ -77,11 +72,8 @@ export default function PublicPodcastSummaryPage() {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500"></div>
           </div>
         ) : files.length === 0 ? (
-          <div className="bg-slate-800/50 rounded-lg p-8 text-center flex flex-col items-center">
+          <div className="bg-slate-800/50 rounded-lg p-8 text-center">
             <p className="text-slate-400 mb-4">No public podcast summaries available.</p>
-            <Link href="/upload" className="mt-4 inline-block bg-sky-600 hover:bg-sky-700 text-white font-bold text-lg py-3 px-8 rounded-lg shadow-lg transition">
-              + Upload SRT
-            </Link>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
