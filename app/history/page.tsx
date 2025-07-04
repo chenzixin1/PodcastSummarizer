@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 
 interface FileRecord {
@@ -24,13 +24,8 @@ export default function HistoryPage() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
 
-  useEffect(() => {
-    // 加载文件
-    loadFiles();
-  }, [page]);
-
-  // 从数据库加载文件，并与localStorage中的缓存合并
-  const loadFiles = async () => {
+  // 从数据库加载文件，并与localStorage中的缓存合并 (use useCallback to fix hook dependency issues)
+  const loadFiles = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
@@ -42,7 +37,7 @@ export default function HistoryPage() {
       }
       
       const result = await response.json();
-      const dbRecords: FileRecord[] = result.data.map((item: any) => ({
+      const dbRecords: FileRecord[] = result.data.map((item: { id: string; originalFileName: string; fileSize: string; blobUrl: string; isProcessed: boolean; createdAt: string; processedAt?: string; isPublic?: boolean; }) => ({
         id: item.id,
         name: item.originalFileName,
         size: item.fileSize,
@@ -50,7 +45,7 @@ export default function HistoryPage() {
         uploadDate: item.createdAt,
         processed: item.isProcessed,
         processedAt: item.processedAt,
-        isPublic: item.isPublic
+        isPublic: item.isPublic || false
       }));
       
       // 检查是否还有更多数据
@@ -114,7 +109,12 @@ export default function HistoryPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [page]);
+
+  useEffect(() => {
+    // 加载文件
+    loadFiles();
+  }, [page, loadFiles]);
   
   // 从localStorage加载数据的备用函数
   const loadLocalFiles = () => {
@@ -193,6 +193,25 @@ export default function HistoryPage() {
     } else {
       setSortBy(field);
       setSortDirection('desc'); // 默认降序
+    }
+  };
+
+  // 新增：切换公开状态
+  const togglePublic = async (id: string, current: boolean) => {
+    try {
+      const response = await fetch(`/api/podcasts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isPublic: !current }),
+      });
+      const result = await response.json();
+      if (result.success) {
+        setFiles(files => files.map(f => f.id === id ? { ...f, isPublic: !current } : f));
+      } else {
+        alert('Failed to update public status: ' + (result.error || 'Unknown error'));
+      }
+    } catch (e) {
+      alert('Network error while updating public status');
     }
   };
 
@@ -282,34 +301,35 @@ export default function HistoryPage() {
             <div className="grid grid-cols-1 gap-4">
               {filteredAndSortedFiles.map((file) => (
                 <div key={file.id} className="bg-slate-800/50 rounded-lg p-4 hover:bg-slate-800 transition-colors">
-                  <Link href={`/dashboard/${file.id}`} className="block">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-medium text-sky-400 mb-1 truncate" title={file.name}>
-                          {file.name}
-                        </h3>
-                        <div className="flex gap-4 text-xs text-slate-400 flex-wrap">
-                          <span>{file.size}</span>
-                          <span>ID: {file.id.substring(0, 6)}...</span>
-                          {file.isPublic && (
-                            <span className="text-green-400">Public</span>
-                          )}
-                          {file.processed && (
-                            <span className="text-emerald-400">✓ Processed</span>
-                          )}
-                          {!file.processed && (
-                            <span className="text-amber-400">⟳ Processing</span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-500 mt-1">
-                          Uploaded: {new Date(file.uploadDate).toLocaleString()}
-                        </div>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="font-medium text-sky-400 mb-1 truncate" title={file.name}>
+                        {file.name}
+                      </h3>
+                      <div className="flex gap-4 text-xs text-slate-400 flex-wrap items-center">
+                        <span>{file.size}</span>
+                        <span>ID: {file.id.substring(0, 6)}...</span>
+                        <button
+                          onClick={() => togglePublic(file.id, file.isPublic)}
+                          className={`px-2 py-1 rounded text-xs font-medium ${file.isPublic ? 'bg-green-700 text-green-200' : 'bg-slate-700 text-slate-300'} hover:bg-sky-700 transition`}
+                        >
+                          {file.isPublic ? '公开中' : '设为公开'}
+                        </button>
+                        {file.processed && (
+                          <span className="text-emerald-400">✓ Processed</span>
+                        )}
+                        {!file.processed && (
+                          <span className="text-amber-400">⟳ Processing</span>
+                        )}
                       </div>
-                      <div className="bg-slate-700 rounded-md px-3 py-1 text-xs">
-                        View
+                      <div className="text-xs text-slate-500 mt-1">
+                        Uploaded: {new Date(file.uploadDate).toLocaleString()}
                       </div>
                     </div>
-                  </Link>
+                    <div className="bg-slate-700 rounded-md px-3 py-1 text-xs">
+                      <Link href={`/dashboard/${file.id}`}>View</Link>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
