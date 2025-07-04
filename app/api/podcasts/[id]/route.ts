@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updatePodcastPublicStatus } from '../../../../lib/db';
 
-export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
-  const { id } = params;
+export async function PATCH(request: NextRequest, context: { params: { id: string } }) {
+  const { id } = context.params;
   try {
     const body = await request.json();
     if (typeof body.isPublic !== 'boolean') {
