@@ -40,10 +40,7 @@ export async function POST(request: NextRequest) {
     const isPublicRaw = formData.get('isPublic');
     const isPublic = String(isPublicRaw) === 'true';
 
-    console.log('Attempting to upload file:', filename);
-    console.log('File type:', file.type);
-    console.log('File size:', file.size);
-    console.log('isPublic:', isPublic);
+    console.log('[UPLOAD] Start upload:', { id, filename, fileSize, title, isPublic });
 
     // 检查Blob存储令牌是否配置
     let blobUrl = '#mock-blob-url';
@@ -54,9 +51,9 @@ export async function POST(request: NextRequest) {
         access: 'public',
       });
       blobUrl = blob.url;
-      console.log('File uploaded successfully, URL:', blob.url);
+      console.log('[UPLOAD] File uploaded to blob:', blobUrl);
     } else {
-      console.warn('BLOB_READ_WRITE_TOKEN not configured, using mock storage');
+      console.warn('[UPLOAD] BLOB_READ_WRITE_TOKEN not configured, using mock storage');
     }
 
     // 保存到数据库
@@ -68,12 +65,14 @@ export async function POST(request: NextRequest) {
       blobUrl,
       isPublic
     });
+    console.log('[UPLOAD] savePodcast result:', dbResult);
 
     if (!dbResult.success) {
-      console.error('Error saving to database:', dbResult.error);
+      console.error('[UPLOAD] Error saving to database:', dbResult.error);
       return NextResponse.json({ 
         success: false, 
-        error: 'Failed to save podcast' 
+        error: 'Failed to save podcast',
+        details: dbResult.error
       }, { status: 500 });
     }
 
@@ -88,10 +87,11 @@ export async function POST(request: NextRequest) {
       }
     }, { status: 200 });
   } catch (error) {
-    console.error('Error uploading file:', error);
+    console.error('[UPLOAD] Error uploading file:', error);
     return NextResponse.json({ 
       success: false, 
-      error: 'Failed to upload file' 
+      error: 'Failed to upload file',
+      details: error instanceof Error ? error.message : String(error)
     }, { status: 500 });
   }
 } 
