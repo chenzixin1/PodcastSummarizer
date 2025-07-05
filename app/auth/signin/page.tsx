@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { signIn, getSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 export default function SignInPage() {
@@ -11,6 +11,8 @@ export default function SignInPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get('callbackUrl') || '/my';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,16 +24,16 @@ export default function SignInPage() {
         email,
         password,
         redirect: false,
+        callbackUrl,
       });
 
       if (result?.error) {
         setError('Invalid email or password');
+      } else if (result?.url) {
+        window.location.href = result.url;
       } else {
-        // 登录成功，重定向到上传页面或返回页面
-        const session = await getSession();
-        if (session) {
-          router.push('/upload');
-        }
+        // fallback
+        router.push(callbackUrl);
       }
     } catch (error) {
       setError('An error occurred during sign in');
@@ -46,7 +48,7 @@ export default function SignInPage() {
     
     try {
       const result = await signIn('google', {
-        callbackUrl: '/upload',
+        callbackUrl,
         redirect: false,
       });
       
