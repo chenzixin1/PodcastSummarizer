@@ -1,22 +1,22 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
-import { StagewiseToolbar } from "@stagewise/toolbar-next";
-import { ReactPlugin } from "@stagewise-plugins/react";
+import SessionWrapper from '../components/SessionWrapper';
 
-const geistSans = Geist({
+const geistSans = localFont({
+  src: "./fonts/GeistVF.woff2",
   variable: "--font-geist-sans",
-  subsets: ["latin"],
+  weight: "100 900",
 });
-
-const geistMono = Geist_Mono({
+const geistMono = localFont({
+  src: "./fonts/GeistMonoVF.woff2",
   variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: "100 900",
 });
 
 export const metadata: Metadata = {
-  title: "PodSum.cc - Podcast Summarizer for Closed Captions",
-  description: "AI-powered tool that generates concise summaries, highlights, and translations from podcast transcripts and closed captions. Save time and easily digest podcast content.",
+  title: "PodSum.cc - AI Podcast Summarizer",
+  description: "Upload your SRT files and get AI-powered summaries, translations, and highlights",
 };
 
 export default function RootLayout({
@@ -29,8 +29,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <StagewiseToolbar config={{ plugins: [ReactPlugin] }} />
-        {children}
+        <SessionWrapper>
+          {children}
+        </SessionWrapper>
       </body>
     </html>
   );

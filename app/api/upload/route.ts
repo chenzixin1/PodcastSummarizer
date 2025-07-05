@@ -2,10 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 import { savePodcast } from '../../../lib/db';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../../lib/auth';
 
 export const runtime = 'edge';
 
 export async function POST(request: NextRequest) {
+  // 验证用户认证
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Authentication required' 
+    }, { status: 401 });
+  }
+
   const formData = await request.formData();
   const file = formData.get('file') as File | null;
 
@@ -40,7 +51,10 @@ export async function POST(request: NextRequest) {
     const isPublicRaw = formData.get('isPublic');
     const isPublic = String(isPublicRaw) === 'true';
 
-    console.log('[UPLOAD] Start upload:', { id, filename, fileSize, title, isPublic });
+    // 获取用户ID
+    const userId = session.user.id;
+
+    console.log('[UPLOAD] Start upload:', { id, filename, fileSize, title, isPublic, userId });
 
     // 检查Blob存储令牌是否配置
     let blobUrl = '#mock-blob-url';
@@ -56,14 +70,15 @@ export async function POST(request: NextRequest) {
       console.warn('[UPLOAD] BLOB_READ_WRITE_TOKEN not configured, using mock storage');
     }
 
-    // 保存到数据库
+    // 保存到数据库，包含用户ID
     const dbResult = await savePodcast({
       id,
       title,
       originalFileName: file.name,
       fileSize,
       blobUrl,
-      isPublic
+      isPublic,
+      userId // 添加用户ID
     });
     console.log('[UPLOAD] savePodcast result:', dbResult);
 
@@ -83,7 +98,8 @@ export async function POST(request: NextRequest) {
         id, 
         blobUrl,
         fileName: file.name,
-        fileSize
+        fileSize,
+        userId
       }
     }, { status: 200 });
   } catch (error) {

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAnalysisResults, getPodcast } from '../../../../lib/db';
+import { getAnalysisResults, getPodcast, verifyPodcastOwnership } from '../../../../lib/db';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../../../lib/auth';
 
 export async function GET(
   request: NextRequest,
@@ -21,6 +23,24 @@ export async function GET(
       return NextResponse.json({ error: 'Podcast not found' }, { status: 404 });
     }
 
+    const podcast = podcastResult.data as any;
+    
+    // 检查访问权限
+    const session = await getServerSession(authOptions);
+    
+    // 如果播客不是公开的，需要验证用户权限
+    if (!podcast.isPublic) {
+      if (!session?.user?.id) {
+        return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      }
+      
+      // 验证用户是否是播客的所有者
+      const ownershipResult = await verifyPodcastOwnership(id, session.user.id);
+      if (!ownershipResult.success) {
+        return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+      }
+    }
+
     // 获取分析结果
     const analysisResult = await getAnalysisResults(id);
     if (!analysisResult.success) {
@@ -31,7 +51,8 @@ export async function GET(
         data: {
           podcast: podcastResult.data,
           analysis: null,
-          isProcessed: false
+          isProcessed: false,
+          canEdit: session?.user?.id === podcast.userId // 是否可以编辑
         }
       });
     }
@@ -42,7 +63,8 @@ export async function GET(
       data: {
         podcast: podcastResult.data,
         analysis: analysisResult.data,
-        isProcessed: true
+        isProcessed: true,
+        canEdit: session?.user?.id === podcast.userId // 是否可以编辑
       }
     });
 

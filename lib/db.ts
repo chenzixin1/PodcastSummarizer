@@ -8,6 +8,16 @@ export interface Podcast {
   fileSize: string;
   blobUrl: string;
   isPublic: boolean;
+  userId?: string;
+}
+
+// 用户类型
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+  createdAt: string;
 }
 
 // 分析结果类型
@@ -28,20 +38,34 @@ export interface DbResult {
 // 数据库表初始化函数
 export async function initDatabase(): Promise<DbResult> {
   try {
-    // 创建播客表 - 使用TEXT类型来存储nanoid
+    console.log('🔄 开始初始化数据库表...');
+    
+    // 创建 users 表
     await sql`
-      CREATE TABLE IF NOT EXISTS podcasts (
+      CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        original_filename VARCHAR(255) NOT NULL,
-        file_size VARCHAR(50) NOT NULL,
-        blob_url TEXT,
-        is_public BOOLEAN DEFAULT FALSE,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        name TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `;
 
-    // 创建分析结果表 - 使用TEXT类型来存储nanoid
+    // 创建 podcasts 表（添加 user_id 字段）
+    await sql`
+      CREATE TABLE IF NOT EXISTS podcasts (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        original_filename TEXT NOT NULL,
+        file_size TEXT NOT NULL,
+        blob_url TEXT,
+        is_public BOOLEAN DEFAULT FALSE,
+        user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+
+    // 创建 analysis_results 表
     await sql`
       CREATE TABLE IF NOT EXISTS analysis_results (
         podcast_id TEXT REFERENCES podcasts(id),
@@ -66,16 +90,17 @@ export async function savePodcast(podcast: Podcast): Promise<DbResult> {
   try {
     const result = await sql`
       INSERT INTO podcasts 
-        (id, title, original_filename, file_size, blob_url, is_public)
+        (id, title, original_filename, file_size, blob_url, is_public, user_id)
       VALUES 
-        (${podcast.id}, ${podcast.title}, ${podcast.originalFileName}, ${podcast.fileSize}, ${podcast.blobUrl}, ${podcast.isPublic})
+        (${podcast.id}, ${podcast.title}, ${podcast.originalFileName}, ${podcast.fileSize}, ${podcast.blobUrl}, ${podcast.isPublic}, ${podcast.userId || null})
       ON CONFLICT (id) 
       DO UPDATE SET
         title = ${podcast.title}, 
         original_filename = ${podcast.originalFileName},
         file_size = ${podcast.fileSize},
         blob_url = ${podcast.blobUrl},
-        is_public = ${podcast.isPublic}
+        is_public = ${podcast.isPublic},
+        user_id = ${podcast.userId || null}
       RETURNING id
     `;
     
@@ -196,11 +221,29 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
   }
 }
 
-// 获取用户上传的所有播客信息（通过用户ID，但目前没有用户系统，为将来准备）
+// 获取用户上传的所有播客信息
 export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): Promise<DbResult> {
-  // 这个函数为未来扩展准备，目前没有用户系统
-  // 暂时返回全部播客
-  return getAllPodcasts(page, pageSize, true);
+  try {
+    const query = sql`
+      SELECT 
+        p.id, p.title, p.original_filename as "originalFileName", 
+        p.file_size as "fileSize", p.blob_url as "blobUrl", 
+        p.is_public as "isPublic", p.created_at as "createdAt",
+        p.user_id as "userId",
+        CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed"
+      FROM podcasts p
+      LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
+      WHERE p.user_id = ${userId}
+      ORDER BY p.created_at DESC 
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `;
+    
+    const result = await query;
+    return { success: true, data: result.rows };
+  } catch (error) {
+    console.error('获取用户播客信息失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 // 删除播客及其分析结果
@@ -240,6 +283,77 @@ export async function updatePodcastPublicStatus(id: string, isPublic: boolean): 
     return { success: true, data: { id: result.rows[0].id, isPublic } };
   } catch (error) {
     console.error('更新播客公开状态失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// 创建用户
+export async function createUser(user: Omit<User, 'createdAt'>): Promise<DbResult> {
+  try {
+    const result = await sql`
+      INSERT INTO users (id, email, password_hash, name)
+      VALUES (${user.id}, ${user.email}, ${user.passwordHash}, ${user.name})
+      RETURNING id, email, name, created_at
+    `;
+    
+    return { success: true, data: result.rows[0] };
+  } catch (error) {
+    console.error('创建用户失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// 根据邮箱获取用户
+export async function getUserByEmail(email: string): Promise<DbResult> {
+  try {
+    const result = await sql`
+      SELECT id, email, password_hash, name, created_at
+      FROM users
+      WHERE email = ${email}
+    `;
+    
+    if (result.rows.length === 0) {
+      return { success: false, error: 'User not found' };
+    }
+    
+    return { success: true, data: result.rows[0] };
+  } catch (error) {
+    console.error('获取用户信息失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// 根据ID获取用户
+export async function getUserById(id: string): Promise<DbResult> {
+  try {
+    const result = await sql`
+      SELECT id, email, name, created_at
+      FROM users
+      WHERE id = ${id}
+    `;
+    
+    if (result.rows.length === 0) {
+      return { success: false, error: 'User not found' };
+    }
+    
+    return { success: true, data: result.rows[0] };
+  } catch (error) {
+    console.error('获取用户信息失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// 验证播客所有权
+export async function verifyPodcastOwnership(podcastId: string, userId: string): Promise<DbResult> {
+  try {
+    const result = await sql`
+      SELECT id FROM podcasts
+      WHERE id = ${podcastId} AND user_id = ${userId}
+    `;
+    
+    return { success: result.rows.length > 0, data: result.rows[0] };
+  } catch (error) {
+    console.error('验证播客所有权失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 } 
