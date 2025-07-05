@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { initDatabase } from '../../../lib/db';
 
 export const runtime = 'edge';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     // 先尝试删除表（如果存在）
     try {

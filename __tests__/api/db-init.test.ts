@@ -48,7 +48,7 @@ describe('Database Initialization API Tests', () => {
     const url = new URL('http://localhost:3000/api/db-init');
     const request = new NextRequest(url);
     
-    const response = await GET(request);
+    const response = await GET();
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -67,7 +67,7 @@ describe('Database Initialization API Tests', () => {
     const url = new URL('http://localhost:3000/api/db-init');
     const request = new NextRequest(url);
     
-    const response = await GET(request);
+    const response = await GET();
     const data = await response.json();
 
     expect(response.status).toBe(500);
@@ -82,7 +82,7 @@ describe('Database Initialization API Tests', () => {
     const url = new URL('http://localhost:3000/api/db-init');
     const request = new NextRequest(url);
     
-    const response = await GET(request);
+    const response = await GET();
     const data = await response.json();
 
     expect(response.status).toBe(500);
@@ -98,7 +98,7 @@ describe('Database Initialization API Tests', () => {
     const url = new URL('http://localhost:3000/api/db-init');
     const request = new NextRequest(url);
     
-    const response = await GET(request);
+    const response = await GET();
     const data = await response.json();
 
     expect(response.status).toBe(500);
@@ -130,7 +130,7 @@ describe('Database Initialization API Tests', () => {
     const url = new URL('http://localhost:3000/api/db-init');
     const request = new NextRequest(url);
     
-    const response = await GET(request);
+    const response = await GET();
     const data = await response.json();
 
     // 应该仍然成功，因为DROP失败不影响后续初始化
@@ -157,7 +157,7 @@ describe('Database Initialization API Tests', () => {
     const url = new URL('http://localhost:3000/api/db-init');
     const request = new NextRequest(url);
     
-    const response = await GET(request);
+    const response = await GET();
     const data = await response.json();
 
     expect(response.status).toBe(500);
@@ -173,7 +173,7 @@ describe('Database Initialization API Tests', () => {
     const url = new URL('http://localhost:3000/api/db-init');
     const request = new NextRequest(url);
     
-    const response = await GET(request);
+    const response = await GET();
     const data = await response.json();
 
     const afterTime = new Date();

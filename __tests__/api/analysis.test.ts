@@ -46,7 +46,7 @@ describe('/api/analysis/[id] API Route', () => {
       });
 
       const mockRequest = new NextRequest('http://localhost/api/analysis/test-podcast-123');
-      const context = { params: { id: mockId } };
+      const context = { params: Promise.resolve({ id: mockId }) };
 
       const response = await GET(mockRequest, context);
       const data = await response.json();
@@ -76,7 +76,7 @@ describe('/api/analysis/[id] API Route', () => {
       });
 
       const mockRequest = new NextRequest('http://localhost/api/analysis/test-podcast-123');
-      const context = { params: { id: mockId } };
+      const context = { params: Promise.resolve({ id: mockId }) };
 
       const response = await GET(mockRequest, context);
       const data = await response.json();
@@ -96,7 +96,7 @@ describe('/api/analysis/[id] API Route', () => {
       });
 
       const mockRequest = new NextRequest('http://localhost/api/analysis/test-podcast-123');
-      const context = { params: { id: mockId } };
+      const context = { params: Promise.resolve({ id: mockId }) };
 
       const response = await GET(mockRequest, context);
       const data = await response.json();
@@ -107,7 +107,7 @@ describe('/api/analysis/[id] API Route', () => {
 
     it('should return 400 when ID is missing', async () => {
       const mockRequest = new NextRequest('http://localhost/api/analysis/');
-      const context = { params: { id: '' } };
+      const context = { params: Promise.resolve({ id: '' }) };
 
       const response = await GET(mockRequest, context);
       const data = await response.json();
@@ -121,7 +121,7 @@ describe('/api/analysis/[id] API Route', () => {
       getPodcast.mockRejectedValue(new Error('Database connection failed'));
 
       const mockRequest = new NextRequest('http://localhost/api/analysis/test-podcast-123');
-      const context = { params: { id: mockId } };
+      const context = { params: Promise.resolve({ id: mockId }) };
 
       const response = await GET(mockRequest, context);
       const data = await response.json();

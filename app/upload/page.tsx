@@ -1,4 +1,6 @@
-'use client';
+"use client";
+
+import { NextRequest, NextResponse } from 'next/server';
 
 import { useState, ChangeEvent, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
@@ -54,7 +56,7 @@ export default function UploadPage() {
       setUploadProgress(100);
       
       // Extract data from the nested response structure
-      const { id, fileName, fileSize, blobUrl } = result.data;
+      const { id } = result.data;
       
       console.log('File upload successful, redirecting to dashboard');
       

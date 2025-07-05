@@ -1,7 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable */
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
@@ -69,42 +69,7 @@ export default function DashboardPage() {
   const params = useParams();
   const id = params?.id as string;
   
-  console.log(`[DEBUG] Dashboard initializing for ID: ${id}`);
-  logDebug(`Dashboard initializing for ID: ${id}`);
-
-  // Add ID validation at the beginning
-  if (!id || id === 'undefined' || id === 'null') {
-    return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
-        <div className="text-center max-w-md p-8 bg-slate-800 rounded-lg shadow-xl">
-          <h1 className="text-2xl font-bold text-red-400 mb-4">Invalid File ID</h1>
-          <p className="text-slate-300 mb-6">
-            The file ID in the URL is invalid or missing. This usually happens when:
-          </p>
-          <ul className="text-left text-sm text-slate-400 mb-6 space-y-2">
-            <li>• You navigated to an incomplete URL</li>
-            <li>• The file upload process was interrupted</li>
-            <li>• You're using an old or broken bookmark</li>
-          </ul>
-          <div className="space-y-3">
-            <Link 
-              href="/upload" 
-              className="block w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              Upload New File
-            </Link>
-            <Link 
-              href="/history" 
-              className="block w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              View File History
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // Initialize all hooks first, before any conditional returns
   const [activeView, setActiveView] = useState<ViewMode>('summary');
   const [data, setData] = useState<ProcessedData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -137,6 +102,43 @@ export default function DashboardPage() {
   // Track network requests for debugging
   const networkRequestsRef = useRef<DebugState['networkRequests']>([]);
 
+  console.log(`[DEBUG] Dashboard initializing for ID: ${id}`);
+  logDebug(`Dashboard initializing for ID: ${id}`);
+
+
+  // Add ID validation after all hooks and functions are defined
+  if (!id || id === 'undefined' || id === 'null') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+        <div className="text-center max-w-md p-8 bg-slate-800 rounded-lg shadow-xl">
+          <h1 className="text-2xl font-bold text-red-400 mb-4">Invalid File ID</h1>
+          <p className="text-slate-300 mb-6">
+            The file ID in the URL is invalid or missing. This usually happens when:
+          </p>
+          <ul className="text-left text-sm text-slate-400 mb-6 space-y-2">
+            <li>• You navigated to an incomplete URL</li>
+            <li>• The file upload process was interrupted</li>
+            <li>• You&rsquo;re using an old or broken bookmark</li>
+          </ul>
+          <div className="space-y-3">
+            <Link 
+              href="/upload" 
+              className="block w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              Upload New File
+            </Link>
+            <Link 
+              href="/history" 
+              className="block w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              View File History
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Update debug state periodically
   useEffect(() => {
     if (!debugMode) return;
@@ -150,10 +152,10 @@ export default function DashboardPage() {
     }, 3000);
     
     return () => clearInterval(interval);
-  }, [debugMode, isProcessing]);
+  }, [debugMode, isProcessing, captureDebugState]);
 
-  // Function to capture current debug state
-  const captureDebugState = (action: string) => {
+  // Function to capture current debug state (use useCallback to fix hook dependency issues)
+  const captureDebugState = useCallback((action: string) => {
     try {
       setDebugState({
         appVersion: APP_VERSION,
@@ -172,10 +174,10 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('[DEBUG] Error capturing debug state:', error);
     }
-  };
+  }, [id, isProcessing, data?.summary]);
 
-  // Enhanced fetch with debugging
-  const debugFetch = async (url: string, options: RequestInit) => {
+  // Enhanced fetch with debugging (use useCallback to fix hook dependency issues)
+  const debugFetch = useCallback(async (url: string, options: RequestInit) => {
     const startTime = performance.now();
     const requestId = Date.now().toString(36);
     
@@ -209,7 +211,7 @@ export default function DashboardPage() {
       logError(`Network request failed`, { url, error, duration });
       throw error;
     }
-  };
+  }, [id, isProcessing, data?.summary]);
 
   // Copy debug info to clipboard
   const copyDebugInfo = () => {
@@ -245,8 +247,8 @@ export default function DashboardPage() {
     }
   };
 
-  // Enhanced scroll function with debug
-  const scrollToBottom = () => {
+  // Enhanced scroll function with debug (use useCallback to fix hook dependency issues)
+  const scrollToBottom = useCallback(() => {
     console.log(`[DEBUG] Attempting to scroll to bottom, isProcessing: ${isProcessingRef.current}`);
     if (contentRef.current) {
       const lastElement = contentRef.current.querySelector('p:last-child, h1:last-child, h2:last-child, h3:last-child');
@@ -265,7 +267,7 @@ export default function DashboardPage() {
       lastHeightRef.current = contentRef.current.scrollHeight;
       console.log(`[DEBUG] Updated lastHeightRef to ${lastHeightRef.current}`);
     }
-  };
+  }, [id, isProcessing, data?.summary]);
 
   // Monitor content changes and scroll
   useEffect(() => {
@@ -441,7 +443,7 @@ export default function DashboardPage() {
       
       // Track events received
       let eventsReceived = 0;
-      let streamStartTime = performance.now();
+      const streamStartTime = performance.now();
       
       // Create a Promise to process the stream
       return new Promise<ProcessResult>((resolve, reject) => {

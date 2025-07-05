@@ -229,7 +229,7 @@ describe('Database Operations Tests', () => {
 
       expect(result.success).toBe(true);
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].isPublic).toBe(true);
+      expect((result.data as any[])[0].isPublic).toBe(true);
     });
 
     test('should include private podcasts when requested', async () => {
