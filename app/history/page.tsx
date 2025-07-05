@@ -223,14 +223,14 @@ export default function HistoryPage() {
           <nav className="flex items-center space-x-2 text-xl">
             <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
             <span className="text-slate-400">/</span>
-            <span className="text-white font-medium">History</span>
+            <span className="text-white font-medium">My Podcast Summaries</span>
           </nav>
         </div>
       </header>
       
       <main className="container mx-auto p-6">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold">Your Uploaded Files</h2>
+          <h2 className="text-2xl font-bold">My Podcast Summaries</h2>
           <Link href="/upload" className="bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-6 rounded-md flex items-center">
             <span className="mr-1">+</span> Upload New File
           </Link>
