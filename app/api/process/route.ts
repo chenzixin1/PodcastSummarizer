@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
-import { Configuration, OpenAIApi } from 'openai-edge';
 import { prompts } from '../../../lib/prompts';
 import { modelConfig } from '../../../lib/modelConfig';
 import { saveAnalysisResults } from '../../../lib/db';
@@ -28,16 +27,7 @@ export interface ProcessStreamUpdate {
   processingErrors?: string[]; // Add this for all_done or error types
 }
 
-// 初始化OpenAI客户端，使用OpenRouter
-const config = new Configuration({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  basePath: 'https://openrouter.ai/api/v1',
-});
-const openai = new OpenAIApi(config);
 
-// Define site info for OpenRouter
-const SITE_URL = process.env.VERCEL_URL || 'http://localhost:3000';
-const APP_TITLE = 'PodSum.cc';
 
 // 添加计数器用于记录API调用次数
 const openRouterCallCounter = {
@@ -89,8 +79,6 @@ function chunkContent(content: string, maxLength: number): string[] {
   return chunks;
 }
 
-// Define development mode flag
-const IS_DEV = process.env.NODE_ENV === 'development';
 
 // API call handler with retry functionality
 async function callModelWithRetry(
@@ -553,10 +541,6 @@ async function generateHighlights(
   return finalHighlights;
 }
 
-// 使用一个Map来跟踪正在处理的请求，防止重复处理
-const processingRequests = new Map<string, Date>();
-// 请求超时时间（毫秒）
-const REQUEST_TIMEOUT = 3 * 60 * 1000; // 3分钟
 
 // For the parseJSON function - line 527
 function parseJSON(text: string): any {
@@ -578,7 +562,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request data. Missing required fields.' }, { status: 400 });
   }
   
-  const { id, blobUrl, fileName, allowRetry = false } = requestData;
+  const { id, blobUrl } = requestData;
   
   // 设置响应流
   const encoder = new TextEncoder();

@@ -1,5 +1,4 @@
 import { sql } from '@vercel/postgres';
-import { v4 as uuidv4 } from 'uuid';
 
 // 播客类型
 export interface Podcast {
@@ -23,7 +22,7 @@ export interface AnalysisResult {
 export interface DbResult {
   success: boolean;
   error?: string;
-  data?: any;
+  data?: unknown;
 }
 
 // 数据库表初始化函数

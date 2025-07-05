@@ -30,7 +30,7 @@ const clientErrors: Array<{
   message: string;
   source?: string;
   timestamp: string;
-  details?: any;
+  details?: unknown;
 }> = [];
 
 // Initialize debugging
@@ -48,7 +48,7 @@ if (typeof window !== 'undefined') {
 /**
  * Log a debug message
  */
-export function logDebug(message: string, details?: any): void {
+export function logDebug(message: string, details?: unknown): void {
   if (!DEBUG_ENABLED) return;
   
   const logEntry = {
@@ -67,7 +67,7 @@ export function logDebug(message: string, details?: any): void {
 /**
  * Log an error with details
  */
-export function logError(message: string, error?: any): void {
+export function logError(message: string, error?: unknown): void {
   const errorDetails = error instanceof Error 
     ? { name: error.name, message: error.message, stack: error.stack }
     : error;
@@ -90,7 +90,7 @@ export function logError(message: string, error?: any): void {
 /**
  * Log performance information
  */
-export function logPerformance(operation: string, durationMs: number, metadata?: any): void {
+export function logPerformance(operation: string, durationMs: number, metadata?: unknown): void {
   if (!DEBUG_ENABLED) return;
   
   const logEntry = {
@@ -110,7 +110,7 @@ export function logPerformance(operation: string, durationMs: number, metadata?:
 /**
  * Track user interactions for debugging
  */
-export function logUserAction(action: string, details?: any): void {
+export function logUserAction(action: string, details?: unknown): void {
   if (!DEBUG_ENABLED) return;
   
   const logEntry = {
@@ -130,7 +130,7 @@ export function logUserAction(action: string, details?: any): void {
 /**
  * Get browser and system information for debugging
  */
-export function getBrowserInfo(): Record<string, any> {
+export function getBrowserInfo(): Record<string, unknown> {
   if (typeof window === 'undefined') {
     return { environment: 'server' };
   }
@@ -161,14 +161,14 @@ export function getBrowserInfo(): Record<string, any> {
 /**
  * Get all accumulated client errors
  */
-export function getClientErrors(): Array<any> {
+export function getClientErrors(): Array<{ message: string; source?: string; timestamp: string; details?: unknown; error?: unknown; url?: string; }> {
   return [...clientErrors];
 }
 
 /**
  * Send log to the server debug endpoint
  */
-async function sendToServer(type: string, data: any): Promise<void> {
+async function sendToServer(type: string, data: unknown): Promise<void> {
   try {
     // Only send logs every 5 seconds to avoid overwhelming the server
     if (type !== 'error' && type !== 'user-action') {
