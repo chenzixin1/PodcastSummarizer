@@ -53,7 +53,12 @@ export default function PublicPodcastSummaryPage() {
     <div className="min-h-screen bg-slate-900 text-white">
       <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
         <div className="container mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-semibold text-sky-400">PodSum.cc / Public Podcast Summary</h1>
+          {/* Breadcrumb Navigation */}
+          <nav className="flex items-center space-x-2 text-base">
+            <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
+            <span className="text-slate-400">/</span>
+            <span className="text-white font-medium">Public Podcast Summary</span>
+          </nav>
           <Link href="/upload" className="bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-6 rounded-md ml-4">
             + Upload SRT
           </Link>
