@@ -31,7 +31,7 @@ export default function HistoryPage() {
     
     try {
       // 从API获取数据库中的数据
-      const response = await fetch(`/api/podcasts?page=${page}&pageSize=20`);
+      const response = await fetch(`/api/podcasts?page=${page}&pageSize=20&includePrivate=true`);
       if (!response.ok) {
         throw new Error('Failed to fetch podcast list');
       }
