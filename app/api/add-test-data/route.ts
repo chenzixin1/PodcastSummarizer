@@ -9,8 +9,8 @@ export async function POST(request: NextRequest) {
     // 创建测试用户
     const userId = nanoid();
     await sql`
-      INSERT INTO users (id, email, name, created_at)
-      VALUES (${userId}, 'test@example.com', 'Test User', NOW())
+      INSERT INTO users (id, email, name, password_hash, created_at)
+      VALUES (${userId}, 'test@example.com', 'Test User', 'dummy_hash', NOW())
       ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
     `;
     
