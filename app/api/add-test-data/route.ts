@@ -56,17 +56,15 @@ export async function POST(request: NextRequest) {
     // 创建分析结果
     await sql`
       INSERT INTO analysis_results (
-        id, podcast_id, summary, highlights, translations, created_at
+        podcast_id, summary, highlights, translation
       )
       VALUES (
-        ${nanoid()},
         ${podcastId},
         'This podcast discusses the latest developments in artificial intelligence and machine learning technologies. The conversation covers various applications of AI in different industries and explores how these technologies are transforming our daily lives.',
         '["AI and technology overview", "Machine learning applications", "Industry transformation", "Future of artificial intelligence"]',
-        '{"zh": "这个播客讨论了人工智能和机器学习技术的最新发展。对话涵盖了人工智能在不同行业的各种应用，并探讨了这些技术如何改变我们的日常生活。"}',
-        NOW()
+        '{"zh": "这个播客讨论了人工智能和机器学习技术的最新发展。对话涵盖了人工智能在不同行业的各种应用，并探讨了这些技术如何改变我们的日常生活。"}'
       )
-      ON CONFLICT (id) DO NOTHING
+      ON CONFLICT (podcast_id) DO NOTHING
     `;
     
     return NextResponse.json({
