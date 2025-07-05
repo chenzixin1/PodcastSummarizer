@@ -60,7 +60,7 @@ export default function PublicPodcastSummaryPage() {
             <span className="text-white font-medium">Public Podcast Summary</span>
           </nav>
           <div className="flex items-center gap-3">
-            <Link href="/history" className="bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-6 rounded-md">
+            <Link href="/my" className="bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-6 rounded-md">
               My Summaries
             </Link>
             <Link href="/upload" className="bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-6 rounded-md">
