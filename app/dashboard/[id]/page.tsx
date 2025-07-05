@@ -139,21 +139,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Update debug state periodically
-  useEffect(() => {
-    if (!debugMode) return;
-    
-    captureDebugState('init');
-    
-    const interval = setInterval(() => {
-      if (debugMode) {
-        captureDebugState('interval');
-      }
-    }, 3000);
-    
-    return () => clearInterval(interval);
-  }, [debugMode, isProcessing, captureDebugState]);
-
   // Function to capture current debug state (use useCallback to fix hook dependency issues)
   const captureDebugState = useCallback((action: string) => {
     try {
@@ -175,6 +160,21 @@ export default function DashboardPage() {
       console.error('[DEBUG] Error capturing debug state:', error);
     }
   }, [id, isProcessing, data?.summary]);
+
+  // Update debug state periodically
+  useEffect(() => {
+    if (!debugMode) return;
+    
+    captureDebugState('init');
+    
+    const interval = setInterval(() => {
+      if (debugMode) {
+        captureDebugState('interval');
+      }
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [debugMode, isProcessing, captureDebugState]);
 
   // Enhanced fetch with debugging (use useCallback to fix hook dependency issues)
   const debugFetch = useCallback(async (url: string, options: RequestInit) => {
@@ -757,7 +757,12 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-slate-900 text-white flex flex-col">
         <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
           <div className="container mx-auto flex justify-between items-center">
-            <h1 className="text-xl font-semibold text-sky-400">SRT Processor / Dashboard</h1>
+            {/* Breadcrumb Navigation */}
+            <nav className="flex items-center space-x-2 text-base">
+              <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
+              <span className="text-slate-400">/</span>
+              <span className="text-white font-medium truncate max-w-xs" title={data?.title || ''}>{data?.title || ''}</span>
+            </nav>
             <div className="flex items-center gap-2">
               <button 
                 onClick={() => setDebugMode(!debugMode)}
