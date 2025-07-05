@@ -220,7 +220,7 @@ export default function HistoryPage() {
       <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
         <div className="container mx-auto">
           {/* Breadcrumb Navigation */}
-          <nav className="flex items-center space-x-2 text-lg">
+          <nav className="flex items-center space-x-2 text-xl">
             <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
             <span className="text-slate-400">/</span>
             <span className="text-white font-medium">History</span>
