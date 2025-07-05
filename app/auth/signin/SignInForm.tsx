@@ -10,6 +10,8 @@ export default function SignInForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loginStatus, setLoginStatus] = useState<'idle' | 'success' | 'failed'>('idle');
+  const [debugInfo, setDebugInfo] = useState<any>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/my';
@@ -18,8 +20,11 @@ export default function SignInForm() {
     e.preventDefault();
     setError('');
     setIsLoading(true);
+    setLoginStatus('idle');
+    setDebugInfo(null);
 
     try {
+      console.log('开始登录，callbackUrl:', callbackUrl);
       const result = await signIn('credentials', {
         email,
         password,
@@ -27,15 +32,37 @@ export default function SignInForm() {
         callbackUrl,
       });
 
+      console.log('登录结果:', result);
+      setDebugInfo(result);
+
       if (result?.error) {
         setError('Invalid email or password');
+        setLoginStatus('failed');
+        console.log('登录失败:', result.error);
       } else if (result?.url) {
-        window.location.href = result.url;
+        setLoginStatus('success');
+        console.log('登录成功，准备跳转到:', result.url);
+        // 延迟3秒显示成功状态，然后跳转
+        setTimeout(() => {
+          window.location.href = result.url;
+        }, 3000);
+      } else if (result?.ok) {
+        setLoginStatus('success');
+        console.log('登录成功，准备跳转到:', callbackUrl);
+        // 延迟3秒显示成功状态，然后跳转
+        setTimeout(() => {
+          router.push(callbackUrl);
+        }, 3000);
       } else {
-        router.push(callbackUrl);
+        setError('Unknown login result');
+        setLoginStatus('failed');
+        console.log('未知登录结果:', result);
       }
     } catch (error) {
+      console.error('登录异常:', error);
       setError('An error occurred during sign in');
+      setLoginStatus('failed');
+      setDebugInfo({ error: String(error) });
     } finally {
       setIsLoading(false);
     }
@@ -44,22 +71,124 @@ export default function SignInForm() {
   const handleGoogleSignIn = async () => {
     setError('');
     setIsLoading(true);
+    setLoginStatus('idle');
+    setDebugInfo(null);
+    
     try {
+      console.log('开始Google登录，callbackUrl:', callbackUrl);
       const result = await signIn('google', {
         callbackUrl,
         redirect: false,
       });
+      
+      console.log('Google登录结果:', result);
+      setDebugInfo(result);
+      
       if (result?.error) {
         setError('Failed to sign in with Google');
+        setLoginStatus('failed');
       } else if (result?.url) {
-        window.location.href = result.url;
+        setLoginStatus('success');
+        console.log('Google登录成功，准备跳转到:', result.url);
+        setTimeout(() => {
+          window.location.href = result.url;
+        }, 3000);
+      } else {
+        setError('Unknown Google login result');
+        setLoginStatus('failed');
       }
     } catch (error) {
+      console.error('Google登录异常:', error);
       setError('An error occurred during Google sign in');
+      setLoginStatus('failed');
+      setDebugInfo({ error: String(error) });
     } finally {
       setIsLoading(false);
     }
   };
+
+  // 显示登录状态页面
+  if (loginStatus === 'success') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+        <div className="max-w-md w-full space-y-8 p-8 text-center">
+          <div className="bg-green-900/50 border border-green-500 text-green-200 px-6 py-8 rounded-xl">
+            <div className="text-6xl mb-4">✅</div>
+            <h2 className="text-2xl font-bold mb-4">登录成功！</h2>
+            <p className="mb-4">正在跳转到: <span className="text-green-400 font-mono">{callbackUrl}</span></p>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500 mx-auto mb-4"></div>
+            <p className="text-sm text-green-300">3秒后自动跳转...</p>
+          </div>
+          
+          {debugInfo && (
+            <div className="bg-slate-800 p-4 rounded-lg text-left">
+              <h3 className="text-sm font-bold mb-2 text-slate-300">调试信息:</h3>
+              <pre className="text-xs text-slate-400 overflow-auto">
+                {JSON.stringify(debugInfo, null, 2)}
+              </pre>
+            </div>
+          )}
+          
+          <div className="space-y-2">
+            <button
+              onClick={() => router.push(callbackUrl)}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+            >
+              立即跳转
+            </button>
+            <Link 
+              href="/"
+              className="block text-sm text-slate-400 hover:text-green-400"
+            >
+              返回首页
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loginStatus === 'failed') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+        <div className="max-w-md w-full space-y-8 p-8 text-center">
+          <div className="bg-red-900/50 border border-red-500 text-red-200 px-6 py-8 rounded-xl">
+            <div className="text-6xl mb-4">❌</div>
+            <h2 className="text-2xl font-bold mb-4">登录失败</h2>
+            <p className="mb-4 text-red-300">{error}</p>
+          </div>
+          
+          {debugInfo && (
+            <div className="bg-slate-800 p-4 rounded-lg text-left">
+              <h3 className="text-sm font-bold mb-2 text-slate-300">调试信息:</h3>
+              <pre className="text-xs text-slate-400 overflow-auto">
+                {JSON.stringify(debugInfo, null, 2)}
+              </pre>
+            </div>
+          )}
+          
+          <div className="space-y-2">
+            <button
+              onClick={() => {
+                setLoginStatus('idle');
+                setError('');
+                setDebugInfo(null);
+              }}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+            >
+              重新尝试登录
+            </button>
+            <Link 
+              href="/"
+              className="block text-sm text-slate-400 hover:text-red-400"
+            >
+              返回首页
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
@@ -75,6 +204,13 @@ export default function SignInForm() {
               create a new account
             </Link>
           </p>
+          
+          {/* 显示当前callbackUrl */}
+          <div className="mt-4 p-3 bg-slate-800 rounded-lg">
+            <p className="text-xs text-slate-400">
+              登录后将跳转到: <span className="text-sky-400 font-mono break-all">{callbackUrl}</span>
+            </p>
+          </div>
         </div>
 
         {error && (
