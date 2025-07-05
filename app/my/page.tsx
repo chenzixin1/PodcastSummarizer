@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 interface FileRecord {
   id: string;
@@ -17,6 +18,7 @@ interface FileRecord {
 
 export default function MyPage() {
   const { data: session, status } = useSession();
+  const router = useRouter();
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,36 +41,12 @@ export default function MyPage() {
   }
 
   if (status === 'unauthenticated') {
-    return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
-        <div className="bg-slate-800/50 backdrop-blur-md p-8 rounded-xl shadow-2xl w-full max-w-md text-center">
-          <h1 className="text-3xl font-bold text-sky-400 mb-4">Login Required</h1>
-          <p className="text-slate-300 mb-6">
-            You need to sign in to view your podcast summaries.
-          </p>
-          <div className="space-y-3">
-            <Link 
-              href="/auth/signin"
-              className="block w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              Sign In
-            </Link>
-            <Link 
-              href="/auth/signup"
-              className="block w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              Create Account
-            </Link>
-            <Link 
-              href="/"
-              className="block text-sm text-slate-400 hover:text-sky-400"
-            >
-              ← Back to home
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
+    if (typeof window !== 'undefined') {
+      router.replace(`/auth/signin?callbackUrl=/my`);
+      return null;
+    }
+    // SSR fallback
+    return null;
   }
 
   // 从数据库加载用户的文件
