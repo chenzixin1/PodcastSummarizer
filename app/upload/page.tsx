@@ -1,12 +1,12 @@
 "use client";
 
-import { NextRequest, NextResponse } from 'next/server';
-
-import { useState, ChangeEvent, FormEvent } from 'react';
+import { useState, ChangeEvent, FormEvent, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 
 export default function UploadPage() {
+  const { data: session, status } = useSession();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -14,6 +14,51 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [isPublic, setIsPublic] = useState(false);
   const router = useRouter();
+
+  // 如果用户未登录，显示登录提示
+  if (status === 'loading') {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-gradient-to-br from-slate-900 to-slate-800 text-white">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
+          <p className="text-slate-400">Loading...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (status === 'unauthenticated') {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-gradient-to-br from-slate-900 to-slate-800 text-white">
+        <div className="bg-slate-800/50 backdrop-blur-md p-8 rounded-xl shadow-2xl w-full max-w-md text-center">
+          <h1 className="text-3xl font-bold text-sky-400 mb-4">Login Required</h1>
+          <p className="text-slate-300 mb-6">
+            You need to sign in to upload and process SRT files.
+          </p>
+          <div className="space-y-3">
+            <Link 
+              href="/auth/signin"
+              className="block w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              Sign In
+            </Link>
+            <Link 
+              href="/auth/signup"
+              className="block w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              Create Account
+            </Link>
+            <Link 
+              href="/"
+              className="block text-sm text-slate-400 hover:text-sky-400"
+            >
+              ← Back to home
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -31,6 +76,11 @@ export default function UploadPage() {
       return;
     }
 
+    if (!session?.user?.id) {
+      setError('User session not found. Please sign in again.');
+      return;
+    }
+
     setUploading(true);
     setUploadProgress(0);
     setError(null);
@@ -38,6 +88,7 @@ export default function UploadPage() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('isPublic', isPublic.toString());
+    formData.append('userId', session.user.id); // 添加用户ID
 
     try {
       // 第一步：上传文件
@@ -83,6 +134,14 @@ export default function UploadPage() {
             Back to History
           </Link>
         </div>
+        
+        {/* 显示当前登录用户 */}
+        <div className="mb-4 p-3 bg-slate-700/50 rounded-lg">
+          <p className="text-sm text-slate-300">
+            Signed in as: <span className="text-sky-400 font-medium">{session?.user?.email}</span>
+          </p>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label htmlFor="srtFile" className="block text-sm font-medium text-slate-300 mb-1">
