@@ -5,8 +5,6 @@ import { savePodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 
-export const runtime = 'edge';
-
 export async function POST(request: NextRequest) {
   // 验证用户认证
   const session = await getServerSession(authOptions);
