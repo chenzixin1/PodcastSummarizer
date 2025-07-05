@@ -7,17 +7,31 @@ export async function POST(request: NextRequest) {
   try {
     console.log('Adding test data to database...');
     
-    // 创建测试用户
-    const userId = nanoid();
-    const userResult = await createUser({
-      id: userId,
-      email: 'test@example.com',
-      name: 'Test User',
-      passwordHash: 'dummy_hash'
-    });
+    // 创建测试用户或获取现有用户
+    let userId;
     
-    if (!userResult.success) {
-      console.log('User might already exist, continuing...');
+    // 首先尝试获取现有用户
+    const existingUserResult = await sql`
+      SELECT id FROM users WHERE email = 'test@example.com'
+    `;
+    
+    if (existingUserResult.rows.length > 0) {
+      userId = existingUserResult.rows[0].id;
+      console.log('Using existing user:', userId);
+    } else {
+      // 创建新用户
+      userId = nanoid();
+      const userResult = await createUser({
+        id: userId,
+        email: 'test@example.com',
+        name: 'Test User',
+        passwordHash: 'dummy_hash'
+      });
+      
+      if (!userResult.success) {
+        throw new Error(`Failed to create user: ${userResult.error}`);
+      }
+      console.log('Created new user:', userId);
     }
     
     // 创建测试播客
