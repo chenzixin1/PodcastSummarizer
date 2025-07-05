@@ -44,7 +44,9 @@ export default function SignInForm() {
         console.log('登录成功，准备跳转到:', result.url);
         // 延迟3秒显示成功状态，然后跳转
         setTimeout(() => {
-          window.location.href = result.url;
+          if (result.url) {
+            window.location.href = result.url;
+          }
         }, 3000);
       } else if (result?.ok) {
         setLoginStatus('success');
@@ -91,7 +93,9 @@ export default function SignInForm() {
         setLoginStatus('success');
         console.log('Google登录成功，准备跳转到:', result.url);
         setTimeout(() => {
-          window.location.href = result.url;
+          if (result.url) {
+            window.location.href = result.url;
+          }
         }, 3000);
       } else {
         setError('Unknown Google login result');
