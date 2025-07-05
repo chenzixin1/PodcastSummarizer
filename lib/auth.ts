@@ -8,10 +8,12 @@ import type { NextAuthOptions } from 'next-auth'
 
 export const authOptions: NextAuthOptions = {
   providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
+    ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? [
+      GoogleProvider({
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      })
+    ] : []),
     CredentialsProvider({
       name: 'credentials',
       credentials: {
@@ -62,6 +64,7 @@ export const authOptions: NextAuthOptions = {
   pages: {
     signIn: '/auth/signin',
   },
+  secret: process.env.NEXTAUTH_SECRET || 'development-secret-key',
   callbacks: {
     async signIn({ user, account, profile }: { user: any; account: any; profile?: any }) {
       if (account?.provider === 'google') {
@@ -75,8 +78,8 @@ export const authOptions: NextAuthOptions = {
             // 创建新用户
             const userId = nanoid()
             await sql`
-              INSERT INTO users (id, email, name, created_at)
-              VALUES (${userId}, ${user.email}, ${user.name || user.email}, NOW())
+              INSERT INTO users (id, email, name, password_hash, created_at)
+              VALUES (${userId}, ${user.email}, ${user.name || user.email}, '', NOW())
             `
             user.id = userId
           } else {
