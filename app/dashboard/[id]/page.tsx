@@ -128,7 +128,7 @@ export default function DashboardPage() {
               Upload New File
             </Link>
             <Link 
-              href="/history" 
+              href="/my" 
               className="block w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 px-4 rounded-lg transition-colors"
             >
               View File History
@@ -770,7 +770,7 @@ export default function DashboardPage() {
               >
                 {debugMode ? 'Hide Debug' : 'Debug Mode'}
               </button>
-              <Link href="/history" className="text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-3 rounded-md text-slate-300">
+              <Link href="/my" className="text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-3 rounded-md text-slate-300">
                 View All Files
               </Link>
               {id && <span className="text-xs text-slate-500">ID: {id}</span>}
