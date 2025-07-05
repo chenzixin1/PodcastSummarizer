@@ -34,12 +34,12 @@ export async function POST(request: NextRequest) {
       console.log('Created new user:', userId);
     }
     
-    // 创建测试播客
+    // 创建测试播客（暂时不关联用户）
     const podcastId = nanoid();
     await sql`
       INSERT INTO podcasts (
         id, title, original_filename, file_size, blob_url, 
-        is_public, user_id, created_at
+        is_public, created_at
       )
       VALUES (
         ${podcastId}, 
@@ -48,7 +48,6 @@ export async function POST(request: NextRequest) {
         '1.2 KB', 
         'https://example.com/test-podcast.srt',
         true,
-        ${userId},
         NOW()
       )
       ON CONFLICT (id) DO NOTHING
