@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../../lib/auth';
 import { getAllPodcasts, getUserPodcasts } from '../../../lib/db';
 
 export async function GET(request: NextRequest) {
@@ -12,12 +14,18 @@ export async function GET(request: NextRequest) {
     let result;
     
     if (includePrivate) {
-      // 如果请求包含私有数据，暂时返回错误
-      // TODO: 稍后重新添加认证功能
-      return NextResponse.json(
-        { error: 'Authentication required for private data' }, 
-        { status: 401 }
-      );
+      // 需要认证才能获取私有数据
+      const session = await getServerSession(authOptions);
+      
+      if (!session || !session.user?.id) {
+        return NextResponse.json(
+          { error: 'Authentication required for private data' }, 
+          { status: 401 }
+        );
+      }
+      
+      // 获取当前用户的播客数据
+      result = await getUserPodcasts(session.user.id, page, pageSize);
     } else {
       // 返回公开的播客，不需要认证
       result = await getAllPodcasts(page, pageSize, false);
