@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { nanoid } from 'nanoid';
+import { createUser } from '../../../lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -8,11 +9,16 @@ export async function POST(request: NextRequest) {
     
     // 创建测试用户
     const userId = nanoid();
-    await sql`
-      INSERT INTO users (id, email, name, password_hash, created_at)
-      VALUES (${userId}, 'test@example.com', 'Test User', 'dummy_hash', NOW())
-      ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
-    `;
+    const userResult = await createUser({
+      id: userId,
+      email: 'test@example.com',
+      name: 'Test User',
+      passwordHash: 'dummy_hash'
+    });
+    
+    if (!userResult.success) {
+      console.log('User might already exist, continuing...');
+    }
     
     // 创建测试播客
     const podcastId = nanoid();
