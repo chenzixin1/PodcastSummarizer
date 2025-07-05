@@ -761,7 +761,7 @@ export default function DashboardPage() {
             <nav className="flex items-center space-x-2 text-base">
               <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
               <span className="text-slate-400">/</span>
-              <span className="text-white font-medium truncate max-w-xs" title={data?.title || ''}>{data?.title || ''}</span>
+              <span className="text-white font-medium truncate max-w-md lg:max-w-lg" title={data?.title || ''}>{data?.title || ''}</span>
             </nav>
             <div className="flex items-center gap-2">
               <button 
