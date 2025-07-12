@@ -75,6 +75,7 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLDivElement>(null);
@@ -303,7 +304,7 @@ export default function DashboardPage() {
         console.log('[DEBUG] 数据库API响应:', result);
         
         if (result.success && result.data) {
-          const { podcast, analysis, isProcessed } = result.data;
+          const { podcast, analysis, isProcessed, canEdit } = result.data;
           
           if (isProcessed && analysis) {
             // 数据库中有完整的分析结果
@@ -318,6 +319,7 @@ export default function DashboardPage() {
               processedAt: analysis.processedAt,
             });
             setIsLoading(false);
+            setCanEdit(canEdit); // 新增
             
             const loadTime = performance.now() - startTime;
             logPerformance('dashboard-load-database-data', loadTime, { 
@@ -833,20 +835,22 @@ export default function DashboardPage() {
               </div>
               
               {/* 添加重新处理按钮 */}
-              <div className="mt-6">
-                <button 
-                  onClick={retryProcessing}
-                  className="w-full py-2 bg-sky-600 hover:bg-sky-700 rounded text-white text-sm transition-colors flex items-center justify-center"
-                  disabled={isProcessing}
-                >
-                  {isProcessing ? (
-                    <>
-                      <div className="animate-spin mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-                      处理中...
-                    </>
-                  ) : '重新处理文件'}
-                </button>
-              </div>
+              {canEdit && (
+                <div className="mt-6">
+                  <button 
+                    onClick={retryProcessing}
+                    className="w-full py-2 bg-sky-600 hover:bg-sky-700 rounded text-white text-sm transition-colors flex items-center justify-center"
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <>
+                        <div className="animate-spin mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                        处理中...
+                      </>
+                    ) : '重新处理文件'}
+                  </button>
+                </div>
+              )}
               
               {/* Placeholder for future elements like download original, re-process options, etc. */}
             </aside>

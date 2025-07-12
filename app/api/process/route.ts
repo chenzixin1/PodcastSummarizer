@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prompts } from '../../../lib/prompts';
 import { modelConfig } from '../../../lib/modelConfig';
 import { saveAnalysisResults } from '../../../lib/db';
+import { getPodcast } from '../../../lib/db';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../../../lib/auth';
 
 export const runtime = 'edge';
 
@@ -564,6 +567,21 @@ export async function POST(request: NextRequest) {
   
   const { id, blobUrl } = requestData;
   
+  // ====== 权限校验开始 ======
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
+  const podcastResult = await getPodcast(id);
+  if (!podcastResult.success) {
+    return NextResponse.json({ error: 'Podcast not found' }, { status: 404 });
+  }
+  const podcast = podcastResult.data as any;
+  if (!podcast.userId || podcast.userId !== session.user.id) {
+    return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+  }
+  // ====== 权限校验结束 ======
+
   // 设置响应流
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
