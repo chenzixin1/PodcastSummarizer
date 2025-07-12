@@ -142,7 +142,7 @@ export async function getPodcast(id: string): Promise<DbResult> {
       SELECT 
         id, title, original_filename as "originalFileName", 
         file_size as "fileSize", blob_url as "blobUrl", 
-        is_public as "isPublic", created_at as "createdAt"
+        is_public as "isPublic", user_id as "userId", created_at as "createdAt"
       FROM podcasts 
       WHERE id = ${id}
     `;
