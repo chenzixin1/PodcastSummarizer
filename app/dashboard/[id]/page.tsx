@@ -65,6 +65,13 @@ interface DebugState {
   };
 }
 
+// 声明 window.__PODSUM_DEBUG__ 用于调试
+declare global {
+  interface Window {
+    __PODSUM_DEBUG__?: any;
+  }
+}
+
 export default function DashboardPage() {
   const params = useParams();
   const id = params?.id as string;
@@ -302,6 +309,10 @@ export default function DashboardPage() {
       .then(response => response.json())
       .then(result => {
         console.log('[DEBUG] 数据库API响应:', result);
+        // 调试：打印 canEdit 相关信息
+        if (typeof window !== 'undefined') {
+          window.__PODSUM_DEBUG__ = result;
+        }
         
         if (result.success && result.data) {
           const { podcast, analysis, isProcessed, canEdit } = result.data;
