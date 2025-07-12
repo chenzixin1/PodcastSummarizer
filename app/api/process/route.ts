@@ -7,8 +7,6 @@ import { getPodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 
-export const runtime = 'edge';
-
 // VERCEL DEBUG: Add version number to help track deployments
 const API_VERSION = modelConfig.API_VERSION;
 console.log(`[DEBUG-API] Podcast Summarizer API v${API_VERSION} loading...`);
