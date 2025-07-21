@@ -377,7 +377,7 @@ export default function DashboardPage() {
         setIsLoading(false);
       });
     }
-  }, [id, isProcessing, requestSentRef]);
+  }, [id]); // 只依赖 id，避免无限循环
 
   // Start processing function
   function startProcessing(fileUrl: string, fileName: string) {
