@@ -167,7 +167,7 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('[DEBUG] Error capturing debug state:', error);
     }
-  }, [id, isProcessing, data?.summary]);
+  }, [id]); // 简化依赖，避免无限循环
 
   // Update debug state periodically
   useEffect(() => {
@@ -219,7 +219,7 @@ export default function DashboardPage() {
       logError(`Network request failed`, { url, error, duration });
       throw error;
     }
-  }, [id, isProcessing, data?.summary]);
+  }, []); // 移除所有依赖，避免无限循环
 
   // Copy debug info to clipboard
   const copyDebugInfo = () => {
@@ -275,7 +275,7 @@ export default function DashboardPage() {
       lastHeightRef.current = contentRef.current.scrollHeight;
       console.log(`[DEBUG] Updated lastHeightRef to ${lastHeightRef.current}`);
     }
-  }, [id, isProcessing, data?.summary]);
+  }, []); // 移除所有依赖，避免无限循环
 
   // Monitor content changes and scroll
   useEffect(() => {
@@ -285,7 +285,7 @@ export default function DashboardPage() {
         scrollToBottom();
       });
     }
-  }, [data?.summary, isProcessing]);
+  }, [data?.summary]); // 移除 isProcessing 依赖，避免无限循环
 
   // Main data loading effect - only use database
   useEffect(() => {
