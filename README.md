@@ -102,7 +102,7 @@ The application uses several environment variables to configure the LLM model an
 
 ### Optional Environment Variables (with defaults)
 
-- `OPENROUTER_MODEL`: LLM model to use (default: "google/gemini-2.5-pro-exp-05-09")
+- `OPENROUTER_MODEL`: LLM model to use (default: "google/gemini-2.5-pro")
 - `MAX_CONTENT_LENGTH`: Maximum content length for processing (default: 300000)
 - `MAX_SUMMARY_TOKENS`: Maximum tokens for summary generation (default: 8000)
 - `MAX_TRANSLATION_TOKENS`: Maximum tokens for translation (default: 16000)

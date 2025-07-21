@@ -29,7 +29,7 @@ POSTGRES_PASSWORD=your_db_password
 POSTGRES_DATABASE=your_db_name
 
 # ========== 可选配置 (有默认值) ==========
-OPENROUTER_MODEL=google/gemini-2.5-pro-exp-05-09
+OPENROUTER_MODEL=google/gemini-2.5-pro
 MAX_CONTENT_LENGTH=300000
 MAX_SUMMARY_TOKENS=8000
 MAX_TRANSLATION_TOKENS=16000

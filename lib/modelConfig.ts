@@ -4,7 +4,7 @@ export const modelConfig = {
   API_VERSION: '1.0.1',
   
   // OpenAI/OpenRouter model configuration
-  MODEL: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-pro-exp-05-09',
+  MODEL: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-pro',
   
   // Content processing limits 
   MAX_CONTENT_LENGTH: parseInt(process.env.MAX_CONTENT_LENGTH || '300000', 10),
