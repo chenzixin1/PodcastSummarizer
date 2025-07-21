@@ -312,6 +312,11 @@ export default function DashboardPage() {
         // 调试：打印 canEdit 相关信息
         if (typeof window !== 'undefined') {
           window.__PODSUM_DEBUG__ = result;
+          // 强制在页面显示调试信息
+          console.log('[DEBUG] 完整API响应:', JSON.stringify(result, null, 2));
+          console.log('[DEBUG] canEdit值:', result.data?.canEdit);
+          console.log('[DEBUG] 用户会话:', result.data?.session);
+          console.log('[DEBUG] podcast.userId:', result.data?.podcast?.userId);
         }
         
         if (result.success && result.data) {
@@ -859,6 +864,23 @@ export default function DashboardPage() {
                         处理中...
                       </>
                     ) : '重新处理文件'}
+                  </button>
+                </div>
+              )}
+              
+              {/* Debug Mode 显示调试信息 */}
+              {debugMode && (
+                <div className="mt-6 p-4 bg-slate-700 rounded text-xs text-slate-300">
+                  <h3 className="font-bold mb-2">Debug Info:</h3>
+                  <div>canEdit: {canEdit.toString()}</div>
+                  <div>isLoading: {isLoading.toString()}</div>
+                  <div>isProcessing: {isProcessing.toString()}</div>
+                  <div>hasError: {!!error}</div>
+                  <button 
+                    onClick={() => console.log('window.__PODSUM_DEBUG__:', window.__PODSUM_DEBUG__)}
+                    className="mt-2 px-2 py-1 bg-sky-600 rounded text-xs"
+                  >
+                    Log Debug to Console
                   </button>
                 </div>
               )}
