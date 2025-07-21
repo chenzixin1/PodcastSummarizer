@@ -6,7 +6,7 @@ const nextConfig = {
   },
   env: {
     // LLM Model Configuration
-    OPENROUTER_MODEL: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash-preview',
+    OPENROUTER_MODEL: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-pro-exp-05-09',
     
     // Processing Limits
     MAX_CONTENT_LENGTH: process.env.MAX_CONTENT_LENGTH || '300000',
