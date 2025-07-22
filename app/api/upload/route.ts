@@ -35,12 +35,24 @@ export async function POST(request: NextRequest) {
 
   if (!file && youtubeUrl) {
     try {
-      let transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'zh-Hans' }).catch(() => []);
+      console.log('[UPLOAD] Fetching subtitles from YouTube', youtubeUrl);
+      let transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'zh-Hans' }).catch(err => {
+        console.error('[UPLOAD] zh-Hans subtitle fetch failed:', err);
+        return [];
+      });
       if (!transcript || transcript.length === 0) {
-        transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'en' }).catch(() => []);
+        console.warn('[UPLOAD] zh-Hans subtitles not found, trying English');
+        transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'en' }).catch(err => {
+          console.error('[UPLOAD] en subtitle fetch failed:', err);
+          return [];
+        });
       }
       if (!transcript || transcript.length === 0) {
-        return NextResponse.json({ success: false, error: 'Failed to fetch subtitles from YouTube' }, { status: 400 });
+        console.error('[UPLOAD] No subtitles available for', youtubeUrl);
+        return NextResponse.json(
+          { success: false, error: 'No subtitles found on YouTube for the provided URL.' },
+          { status: 400 }
+        );
       }
 
       const srtContent = transcript
@@ -53,10 +65,18 @@ export async function POST(request: NextRequest) {
         .join('\n');
 
       const videoId = extractVideoId(youtubeUrl);
+      console.log('[UPLOAD] Subtitle fetched, building file for videoId:', videoId);
       file = new File([srtContent], `${videoId}.srt`, { type: 'application/x-subrip' });
     } catch (err) {
       console.error('[UPLOAD] Error fetching YouTube subtitles:', err);
-      return NextResponse.json({ success: false, error: 'Failed to fetch YouTube subtitles' }, { status: 500 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Failed to fetch YouTube subtitles',
+          details: err instanceof Error ? err.message : String(err)
+        },
+        { status: 500 }
+      );
     }
   }
 
