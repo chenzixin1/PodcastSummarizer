@@ -17,6 +17,7 @@
     "test:debug": "jest --runInBand --no-coverage --no-cache",
     "test:clear": "jest --clearCache",
     "test:requests": "ts-node scripts/test-requests.ts",
+    "youtube:fetch": "node scripts/utils/youtube-fetch.mjs",
     "type-check": "tsc --noEmit",
     "test:full": "npm run type-check && npm run test:coverage",
     "db:init": "node -r dotenv/config scripts/init-db.mjs"
@@ -39,7 +40,8 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "youtube-transcript": "^1.2.1"
   },
   "devDependencies": {
     "@edge-runtime/jest-environment": "^4.0.0",

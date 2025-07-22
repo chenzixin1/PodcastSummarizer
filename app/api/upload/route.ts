@@ -4,6 +4,20 @@ import { nanoid } from 'nanoid';
 import { savePodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
+import { YoutubeTranscript } from 'youtube-transcript';
+
+function formatTime(seconds: number): string {
+  const hrs = String(Math.floor(seconds / 3600)).padStart(2, '0');
+  const mins = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+  const secs = String(Math.floor(seconds % 60)).padStart(2, '0');
+  const ms = String(Math.floor((seconds % 1) * 1000)).padStart(3, '0');
+  return `${hrs}:${mins}:${secs},${ms}`;
+}
+
+function extractVideoId(url: string): string {
+  const match = url.match(/(?:v=|be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : url;
+}
 
 export async function POST(request: NextRequest) {
   // 验证用户认证
@@ -16,7 +30,35 @@ export async function POST(request: NextRequest) {
   }
 
   const formData = await request.formData();
-  const file = formData.get('file') as File | null;
+  let file = formData.get('file') as File | null;
+  const youtubeUrl = formData.get('youtubeUrl') as string | null;
+
+  if (!file && youtubeUrl) {
+    try {
+      let transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'zh-Hans' }).catch(() => []);
+      if (!transcript || transcript.length === 0) {
+        transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'en' }).catch(() => []);
+      }
+      if (!transcript || transcript.length === 0) {
+        return NextResponse.json({ success: false, error: 'Failed to fetch subtitles from YouTube' }, { status: 400 });
+      }
+
+      const srtContent = transcript
+        .map((item, idx) => {
+          const start = formatTime(item.offset);
+          const end = formatTime(item.offset + item.duration);
+          const text = item.text.replace(/\n/g, ' ');
+          return `${idx + 1}\n${start} --> ${end}\n${text}\n`;
+        })
+        .join('\n');
+
+      const videoId = extractVideoId(youtubeUrl);
+      file = new File([srtContent], `${videoId}.srt`, { type: 'application/x-subrip' });
+    } catch (err) {
+      console.error('[UPLOAD] Error fetching YouTube subtitles:', err);
+      return NextResponse.json({ success: false, error: 'Failed to fetch YouTube subtitles' }, { status: 500 });
+    }
+  }
 
   if (!file) {
     return NextResponse.json({ 
