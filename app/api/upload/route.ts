@@ -5,6 +5,18 @@ import { savePodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { YoutubeTranscript } from 'youtube-transcript';
+import { Blob } from 'buffer';
+
+function createFileFromText(content: string, filename: string): File {
+  const buffer = Buffer.from(content, 'utf8');
+  if (typeof File !== 'undefined') {
+    return new File([buffer], filename, { type: 'application/x-subrip' });
+  }
+  const blob: any = new Blob([buffer], { type: 'application/x-subrip' });
+  blob.name = filename;
+  blob.size = buffer.length;
+  return blob as File;
+}
 
 function formatTime(seconds: number): string {
   const hrs = String(Math.floor(seconds / 3600)).padStart(2, '0');
@@ -66,7 +78,7 @@ export async function POST(request: NextRequest) {
 
       const videoId = extractVideoId(youtubeUrl);
       console.log('[UPLOAD] Subtitle fetched, building file for videoId:', videoId);
-      file = new File([srtContent], `${videoId}.srt`, { type: 'application/x-subrip' });
+      file = createFileFromText(srtContent, `${videoId}.srt`);
     } catch (err) {
       console.error('[UPLOAD] Error fetching YouTube subtitles:', err);
       return NextResponse.json(
