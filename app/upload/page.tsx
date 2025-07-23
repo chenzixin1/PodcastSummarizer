@@ -8,6 +8,7 @@ import Link from 'next/link';
 export default function UploadPage() {
   const { data: session, status } = useSession();
   const [file, setFile] = useState<File | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState('');
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -45,10 +46,14 @@ export default function UploadPage() {
     }
   };
 
+  const handleYoutubeChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setYoutubeUrl(e.target.value);
+  };
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!file) {
-      setError('Please select a .srt file to upload.');
+    if (!file && !youtubeUrl) {
+      setError('Please select a .srt file or enter a YouTube URL.');
       return;
     }
 
@@ -62,7 +67,12 @@ export default function UploadPage() {
     setError(null);
 
     const formData = new FormData();
-    formData.append('file', file);
+    if (file) {
+      formData.append('file', file);
+    }
+    if (youtubeUrl) {
+      formData.append('youtubeUrl', youtubeUrl);
+    }
     formData.append('isPublic', isPublic.toString());
     formData.append('userId', session.user.id); // 添加用户ID
 
@@ -105,7 +115,7 @@ export default function UploadPage() {
     <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-gradient-to-br from-slate-900 to-slate-800 text-white">
       <div className="bg-slate-800/50 backdrop-blur-md p-8 rounded-xl shadow-2xl w-full max-w-md">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-sky-400">Upload SRT File</h1>
+          <h1 className="text-3xl font-bold text-sky-400">Upload SRT or YouTube</h1>
           <Link href="/my" className="text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-3 rounded-md text-slate-300">
             Back to History
           </Link>
@@ -138,11 +148,27 @@ export default function UploadPage() {
                          disabled:opacity-50 disabled:pointer-events-none"
               disabled={uploading || processing}
             />
-             {file && (
-              <p className="mt-2 text-xs text-slate-400">
-                Selected: {file.name} ({(file.size / 1024).toFixed(2)} KB)
-              </p>
-            )}
+          {file && (
+            <p className="mt-2 text-xs text-slate-400">
+              Selected: {file.name} ({(file.size / 1024).toFixed(2)} KB)
+            </p>
+          )}
+          </div>
+
+          <div>
+            <label htmlFor="youtubeUrl" className="block text-sm font-medium text-slate-300 mb-1">
+              Or YouTube URL
+            </label>
+            <input
+              id="youtubeUrl"
+              name="youtubeUrl"
+              type="url"
+              placeholder="https://www.youtube.com/watch?v=..."
+              value={youtubeUrl}
+              onChange={handleYoutubeChange}
+              className="w-full bg-slate-700 text-slate-200 p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+              disabled={uploading || processing}
+            />
           </div>
           
           <div className="flex items-center">
@@ -187,7 +213,7 @@ export default function UploadPage() {
 
           <button
             type="submit"
-            disabled={uploading || processing || !file}
+            disabled={uploading || processing || (!file && !youtubeUrl)}
             className="w-full bg-sky-600 hover:bg-sky-700 disabled:bg-slate-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-opacity-75 transition duration-150 ease-in-out disabled:cursor-not-allowed"
           >
             {uploading 

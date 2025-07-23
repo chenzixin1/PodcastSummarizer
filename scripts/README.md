@@ -14,7 +14,8 @@ scripts/
 │   └── test-stream.mjs      # 流式处理测试
 │
 ├── 📂 utils/                # 工具脚本
-│   └── update-api-key.mjs   # 更新 API Key 工具
+│   ├── update-api-key.mjs   # 更新 API Key 工具
+│   └── youtube-fetch.mjs    # 下载 YouTube 字幕
 │
 ├── 🧪 test.sh              # 主测试运行脚本 (Jest)
 ├── 🗃️ init-db.mjs           # 数据库初始化脚本
@@ -90,6 +91,12 @@ node scripts/utils/update-api-key.mjs
 - 🔑 更新 OpenRouter API Key
 - 🔄 批量更新环境变量
 - ✅ 验证新 Key 的有效性
+
+#### `utils/youtube-fetch.mjs` - YouTube 字幕下载
+```bash
+npm run youtube:fetch -- <videoUrl> [lang] [outputDir]
+```
+- 📥 下载指定视频的字幕并保存为 `.srt`
 
 ## 🗃️ 数据库脚本
 
@@ -176,6 +183,7 @@ chmod +x scripts/*.sh
 | `testing/test-db-connection.mjs` | ✅ 稳定 | 数据库测试 | ⭐⭐⭐⭐ |
 | `init-db.mjs` | ✅ 稳定 | 数据库初始化 | ⭐⭐⭐⭐⭐ |
 | `test-requests.ts` | 🟡 开发中 | HTTP测试 | ⭐⭐⭐ |
+| `utils/youtube-fetch.mjs` | 🆕 实验中 | 下载字幕 | ⭐⭐⭐ |
 
 ---
 
