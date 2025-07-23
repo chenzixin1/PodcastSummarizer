@@ -4,6 +4,32 @@ import { nanoid } from 'nanoid';
 import { savePodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
+import { YoutubeTranscript } from 'youtube-transcript';
+import { Blob } from 'buffer';
+
+function createFileFromText(content: string, filename: string): File {
+  const buffer = Buffer.from(content, 'utf8');
+  if (typeof File !== 'undefined') {
+    return new File([buffer], filename, { type: 'application/x-subrip' });
+  }
+  const blob: any = new Blob([buffer], { type: 'application/x-subrip' });
+  blob.name = filename;
+  blob.size = buffer.length;
+  return blob as File;
+}
+
+function formatTime(seconds: number): string {
+  const hrs = String(Math.floor(seconds / 3600)).padStart(2, '0');
+  const mins = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+  const secs = String(Math.floor(seconds % 60)).padStart(2, '0');
+  const ms = String(Math.floor((seconds % 1) * 1000)).padStart(3, '0');
+  return `${hrs}:${mins}:${secs},${ms}`;
+}
+
+function extractVideoId(url: string): string {
+  const match = url.match(/(?:v=|be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : url;
+}
 
 export async function POST(request: NextRequest) {
   // 验证用户认证
@@ -16,7 +42,55 @@ export async function POST(request: NextRequest) {
   }
 
   const formData = await request.formData();
-  const file = formData.get('file') as File | null;
+  let file = formData.get('file') as File | null;
+  const youtubeUrl = formData.get('youtubeUrl') as string | null;
+
+  if (!file && youtubeUrl) {
+    try {
+      console.log('[UPLOAD] Fetching subtitles from YouTube', youtubeUrl);
+      let transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'zh-Hans' }).catch(err => {
+        console.error('[UPLOAD] zh-Hans subtitle fetch failed:', err);
+        return [];
+      });
+      if (!transcript || transcript.length === 0) {
+        console.warn('[UPLOAD] zh-Hans subtitles not found, trying English');
+        transcript = await YoutubeTranscript.fetchTranscript(youtubeUrl, { lang: 'en' }).catch(err => {
+          console.error('[UPLOAD] en subtitle fetch failed:', err);
+          return [];
+        });
+      }
+      if (!transcript || transcript.length === 0) {
+        console.error('[UPLOAD] No subtitles available for', youtubeUrl);
+        return NextResponse.json(
+          { success: false, error: 'No subtitles found on YouTube for the provided URL.' },
+          { status: 400 }
+        );
+      }
+
+      const srtContent = transcript
+        .map((item, idx) => {
+          const start = formatTime(item.offset);
+          const end = formatTime(item.offset + item.duration);
+          const text = item.text.replace(/\n/g, ' ');
+          return `${idx + 1}\n${start} --> ${end}\n${text}\n`;
+        })
+        .join('\n');
+
+      const videoId = extractVideoId(youtubeUrl);
+      console.log('[UPLOAD] Subtitle fetched, building file for videoId:', videoId);
+      file = createFileFromText(srtContent, `${videoId}.srt`);
+    } catch (err) {
+      console.error('[UPLOAD] Error fetching YouTube subtitles:', err);
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Failed to fetch YouTube subtitles',
+          details: err instanceof Error ? err.message : String(err)
+        },
+        { status: 500 }
+      );
+    }
+  }
 
   if (!file) {
     return NextResponse.json({ 
