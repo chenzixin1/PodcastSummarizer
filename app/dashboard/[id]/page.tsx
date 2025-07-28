@@ -45,12 +45,15 @@ const safelyParseJSON = (jsonString: string) => {
 };
 
 // Normalize highlight text by ensuring each timestamp starts on a new line
-
 // Supports patterns like "** [00:00:00]**" as well as plain "[00:00:00]"
 const enforceLineBreaks = (text: string) => {
-  return text
-    .replace(/\s*(\*\*\s*)?(\[[0-9]{2}:[0-9]{2}:[0-9]{1,3}\])(\*\*)?/g, '\n$1$2$3')
-    .replace(/^\n+/, '');
+  // Split by timestamps and ensure each timestamp starts on a new line
+  const timestampRegex = /(\*\*\s*)?(\[[0-9]{2}:[0-9]{2}:[0-9]{1,3}\])(\*\*)?/g;
+  let result = text.replace(timestampRegex, (match, boldStart, timestamp, boldEnd) => {
+    return `\n${boldStart || ''}${timestamp}${boldEnd || ''}`;
+  });
+  // Remove leading newlines and trim
+  return result.replace(/^\n+/, '').trim();
 };
 
 // Debug interface to track application state

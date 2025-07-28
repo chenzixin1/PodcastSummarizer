@@ -28,6 +28,7 @@ body {
 /* Markdown 样式 */
 .markdown-body {
   @apply text-slate-200;
+  white-space: pre-wrap;
 }
 
 .markdown-body h1 {
