@@ -44,6 +44,14 @@ const safelyParseJSON = (jsonString: string) => {
   }
 };
 
+// Normalize highlight text by ensuring each timestamp starts on a new line
+// Supports patterns like "** [00:00:00]**" as well as plain "[00:00:00]"
+const enforceLineBreaks = (text: string) => {
+  return text
+    .replace(/\s*(\*\*\s*)?(\[[0-9]{2}:[0-9]{2}:[0-9]{1,3}\])(\*\*)?/g, '\n$1$2$3')
+    .replace(/^\n+/, '');
+};
+
 // Debug interface to track application state
 interface DebugState {
   appVersion: string;
@@ -331,7 +339,7 @@ export default function DashboardPage() {
               originalFileSize: podcast.fileSize,
               summary: analysis.summary || 'Summary not available.',
               translation: analysis.translation || 'Translation not available.',
-              fullTextHighlights: analysis.highlights || 'Highlights not available.',
+              fullTextHighlights: enforceLineBreaks(analysis.highlights || 'Highlights not available.'),
               processedAt: analysis.processedAt,
             });
             setIsLoading(false);
@@ -479,7 +487,7 @@ export default function DashboardPage() {
               return resolve({
                 summary,
                 translation,
-                fullTextHighlights: highlights,
+                fullTextHighlights: enforceLineBreaks(highlights),
                 processedAt: new Date().toISOString()
               });
             }
@@ -556,7 +564,7 @@ export default function DashboardPage() {
                       } : null);
                       break;
                     case 'highlight_final_result':
-                      highlights = eventData.content;
+                      highlights = enforceLineBreaks(eventData.content);
                       setData(prevData => prevData ? {
                         ...prevData,
                         fullTextHighlights: highlights,
@@ -567,7 +575,7 @@ export default function DashboardPage() {
                       if (eventData.finalResults) {
                         summary = eventData.finalResults.summary;
                         translation = eventData.finalResults.translation;
-                        highlights = eventData.finalResults.highlights;
+                        highlights = enforceLineBreaks(eventData.finalResults.highlights);
                         
                         console.log(`[DEBUG] Final results received - summary: ${summary?.length} chars, translation: ${translation?.length} chars`);
                         
