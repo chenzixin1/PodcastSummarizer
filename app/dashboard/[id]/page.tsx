@@ -45,6 +45,7 @@ const safelyParseJSON = (jsonString: string) => {
 };
 
 // Normalize highlight text by ensuring each timestamp starts on a new line
+
 // Supports patterns like "** [00:00:00]**" as well as plain "[00:00:00]"
 const enforceLineBreaks = (text: string) => {
   return text
