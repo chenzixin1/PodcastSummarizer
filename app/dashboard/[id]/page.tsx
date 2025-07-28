@@ -707,13 +707,13 @@ export default function DashboardPage() {
           <div className="p-6 bg-slate-800 rounded-lg">
             <div className="markdown-body streaming-content" ref={contentRef}>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {data.summary}
+                {enforceLineBreaks(data.summary)}
               </ReactMarkdown>
             </div>
           </div>
         );
       case 'translate':
-        return <pre className="p-6 bg-slate-800 rounded-lg text-sm whitespace-pre-wrap overflow-x-auto">{data.translation}</pre>;
+        return <pre className="p-6 bg-slate-800 rounded-lg text-sm whitespace-pre-wrap overflow-x-auto">{enforceLineBreaks(data.translation)}</pre>;
       case 'fullText':
         return (
             <div className="p-6 bg-slate-800 rounded-lg">
