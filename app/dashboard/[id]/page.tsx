@@ -906,7 +906,7 @@ export default function DashboardPage() {
                   <div className="flex space-x-2 sm:space-x-3 flex-wrap gap-y-2">
                       <button onClick={() => setActiveView('summary')} className={getButtonClass('summary')}>Summary</button>
                       <button onClick={() => setActiveView('translate')} className={getButtonClass('translate')}>Translate</button>
-                      <button onClick={() => setActiveView('fullText')} className={getButtonClass('fullText')}>Full Text w/ Highlights</button>
+                      <button onClick={() => setActiveView('fullText')} className={getButtonClass('fullText')}>Full Text</button>
                   </div>
               </div>
               
