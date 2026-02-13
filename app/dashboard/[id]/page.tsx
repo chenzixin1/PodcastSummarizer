@@ -770,42 +770,35 @@ export default function DashboardPage() {
         return (
           <div className="p-4 sm:p-6 lg:p-8">
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
-              {!isSummaryFinal && isProcessing ? (
-                <pre className="streaming-plain">{data.summary || '正在生成摘要...'}</pre>
-              ) : (
-                <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {data.summary}
-                  </ReactMarkdown>
-                </div>
-              )}
+              <div className="markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {data.summary || '正在生成摘要...'}
+                </ReactMarkdown>
+              </div>
             </div>
           </div>
         );
       case 'translate':
         return (
-          <pre
-            ref={setContentElement}
-            onScroll={handleContentScroll}
-            onWheel={handleContentWheel}
-            className="streaming-content dashboard-reading p-4 sm:p-6 lg:p-8 text-[15px] sm:text-base whitespace-pre-wrap overflow-x-auto"
-          >
-            {data.translation}
-          </pre>
+          <div className="p-4 sm:p-6 lg:p-8">
+            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
+              <div className="markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {data.translation || '正在生成翻译...'}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
         );
       case 'fullText':
         return (
             <div className="p-4 sm:p-6 lg:p-8">
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
-                  {!isHighlightsFinal && isProcessing ? (
-                    <pre className="streaming-plain">{data.fullTextHighlights || '正在生成重点内容...'}</pre>
-                  ) : (
-                    <div className="markdown-body">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {data.fullTextHighlights}
-                      </ReactMarkdown>
-                    </div>
-                  )}
+                  <div className="markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {data.fullTextHighlights || '正在生成重点内容...'}
+                    </ReactMarkdown>
+                  </div>
                 </div>
             </div>
         );
