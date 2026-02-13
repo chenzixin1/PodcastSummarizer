@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { getAnalysisResults, getPodcast, verifyPodcastOwnership } from '../../../../lib/db';
 import { enqueueProcessingJob } from '../../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
+import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,6 +48,13 @@ export async function POST(request: NextRequest) {
     if (!enqueueResult.success) {
       return NextResponse.json({ success: false, error: enqueueResult.error || 'Failed to enqueue job' }, { status: 500 });
     }
+
+    after(async () => {
+      const triggerResult = await triggerWorkerProcessing('manual_enqueue', id);
+      if (!triggerResult.success) {
+        console.error('Failed to trigger worker after enqueue:', triggerResult.error);
+      }
+    });
 
     return NextResponse.json({
       success: true,

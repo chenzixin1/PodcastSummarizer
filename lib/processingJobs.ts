@@ -162,7 +162,10 @@ export async function claimNextProcessingJob(workerId: string): Promise<Processi
         SELECT podcast_id
         FROM processing_jobs
         WHERE status = 'queued'
-        ORDER BY updated_at ASC
+           OR (status = 'processing' AND updated_at < NOW() - INTERVAL '10 minutes')
+        ORDER BY
+          CASE WHEN status = 'queued' THEN 0 ELSE 1 END,
+          updated_at ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )

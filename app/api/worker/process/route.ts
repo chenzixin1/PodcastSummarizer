@@ -6,6 +6,12 @@ import {
   failProcessingJob,
   updateProcessingJobProgress,
 } from '../../../../lib/processingJobs';
+import {
+  getCronSecret,
+  getPreferredWorkerSecretForInternalCalls,
+  getWorkerSharedSecrets,
+  isWorkerAuthorizedBySecret,
+} from '../../../../lib/workerAuth';
 
 interface PodcastJobPayload {
   blobUrl: string;
@@ -32,15 +38,15 @@ function getBaseUrl() {
 
 function isAuthorized(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = getCronSecret();
   if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
     return true;
   }
   const workerSecret = request.headers.get('x-worker-secret');
-  if (process.env.PROCESS_WORKER_SECRET && workerSecret === process.env.PROCESS_WORKER_SECRET) {
+  if (isWorkerAuthorizedBySecret(workerSecret)) {
     return true;
   }
-  if (!cronSecret && !process.env.PROCESS_WORKER_SECRET && process.env.NODE_ENV !== 'production') {
+  if (!cronSecret && getWorkerSharedSecrets().length === 0 && process.env.NODE_ENV !== 'production') {
     return true;
   }
   return false;
@@ -95,10 +101,11 @@ export async function POST(request: NextRequest) {
       statusMessage: 'Worker started processing',
     });
 
-    const processSecret = process.env.PROCESS_WORKER_SECRET || (process.env.NODE_ENV !== 'production' ? 'dev-worker' : '');
+    const processSecret =
+      getPreferredWorkerSecretForInternalCalls() || (process.env.NODE_ENV !== 'production' ? 'dev-worker' : '');
     if (!processSecret) {
-      await failProcessingJob(job.podcastId, 'PROCESS_WORKER_SECRET is not configured');
-      return NextResponse.json({ success: false, error: 'Missing PROCESS_WORKER_SECRET' }, { status: 500 });
+      await failProcessingJob(job.podcastId, 'Worker secret is not configured');
+      return NextResponse.json({ success: false, error: 'Missing worker secret' }, { status: 500 });
     }
 
     const response = await fetch(`${getBaseUrl()}/api/process`, {

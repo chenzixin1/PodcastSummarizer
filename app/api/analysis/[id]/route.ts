@@ -1,13 +1,19 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { getAnalysisResults, getPodcast, verifyPodcastOwnership } from '../../../../lib/db';
 import { getProcessingJob } from '../../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
+import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
 
 interface AnalysisData {
   summary?: string | null;
   translation?: string | null;
   highlights?: string | null;
+}
+
+interface ProcessingJobData {
+  status?: string | null;
+  updatedAt?: string | null;
 }
 
 function hasCompleteAnalysis(analysis: AnalysisData | null, processingStatus: string | null): boolean {
@@ -26,6 +32,20 @@ function hasCompleteAnalysis(analysis: AnalysisData | null, processingStatus: st
     return true;
   }
   return processingStatus === 'completed';
+}
+
+function shouldTriggerQueuedWorker(processingJob: ProcessingJobData | null): boolean {
+  if (!processingJob || processingJob.status !== 'queued') {
+    return false;
+  }
+  if (!processingJob.updatedAt) {
+    return true;
+  }
+  const updatedAt = new Date(processingJob.updatedAt).getTime();
+  if (!Number.isFinite(updatedAt)) {
+    return true;
+  }
+  return Date.now() - updatedAt > 8000;
 }
 
 export async function GET(
@@ -69,6 +89,15 @@ export async function GET(
     // 获取分析结果
     const processingJobResult = await getProcessingJob(id);
     const processingJob = processingJobResult.success ? processingJobResult.data : null;
+
+    if (shouldTriggerQueuedWorker(processingJob as ProcessingJobData | null)) {
+      after(async () => {
+        const triggerResult = await triggerWorkerProcessing('analysis_poll', id);
+        if (!triggerResult.success) {
+          console.error('Failed to trigger worker from analysis poll:', triggerResult.error);
+        }
+      });
+    }
 
     const analysisResult = await getAnalysisResults(id);
     if (!analysisResult.success) {

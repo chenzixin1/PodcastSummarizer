@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 import { savePodcast } from '../../../lib/db';
@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { YoutubeTranscript } from 'youtube-transcript';
 import { Blob } from 'buffer';
+import { triggerWorkerProcessing } from '../../../lib/workerTrigger';
 
 function createFileFromText(content: string, filename: string): File {
   const buffer = Buffer.from(content, 'utf8');
@@ -168,6 +169,12 @@ export async function POST(request: NextRequest) {
       console.error('[UPLOAD] enqueueProcessingJob failed:', queueResult.error);
     } else {
       console.log('[UPLOAD] Processing job queued:', queueResult.data?.status);
+      after(async () => {
+        const triggerResult = await triggerWorkerProcessing('upload', id);
+        if (!triggerResult.success) {
+          console.error('[UPLOAD] Failed to trigger worker:', triggerResult.error);
+        }
+      });
     }
 
     // 为向后兼容，仍然返回所有信息，让客户端可以缓存在localStorage中

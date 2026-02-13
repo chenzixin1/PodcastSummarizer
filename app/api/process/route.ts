@@ -6,6 +6,7 @@ import { saveAnalysisResults, saveAnalysisPartialResults } from '../../../lib/db
 import { getPodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
+import { isWorkerAuthorizedBySecret } from '../../../lib/workerAuth';
 
 // VERCEL DEBUG: Add version number to help track deployments
 const API_VERSION = modelConfig.API_VERSION;
@@ -657,9 +658,7 @@ export async function POST(request: NextRequest) {
   // ====== 权限校验开始 ======
   const workerSecret = request.headers.get('x-process-worker-secret');
   const isWorkerRequest = Boolean(
-    (process.env.PROCESS_WORKER_SECRET &&
-      workerSecret &&
-      workerSecret === process.env.PROCESS_WORKER_SECRET) ||
+    isWorkerAuthorizedBySecret(workerSecret) ||
     (process.env.NODE_ENV !== 'production' && workerSecret === 'dev-worker')
   );
 
