@@ -120,11 +120,16 @@ The application uses several environment variables to configure the LLM model an
 
 When uploading a YouTube URL, the backend now does:
 1. Try native/auto YouTube captions with language fallback
-2. If captions are unavailable, download audio, upload audio to Vercel Blob, then call Volcano Engine ASR and convert result to SRT
+2. If captions are unavailable, call Gladia pre-recorded API directly with the YouTube URL and request SRT
+3. If Gladia is unavailable/fails, download audio, upload audio to Vercel Blob, then call Volcano Engine ASR and convert result to SRT
 
 Environment variables for this pipeline:
 
 - `BLOB_READ_WRITE_TOKEN`: Required for storing uploaded SRT and fallback audio on Vercel Blob
+- `GLADIA_API_KEY`: Optional paid fallback provider key (recommended for restricted/no-caption videos)
+- `GLADIA_BASE_URL`: Default `https://api.gladia.io`
+- `GLADIA_MAX_RETRIES`: Default `120`
+- `GLADIA_RETRY_DELAY_MS`: Default `5000`
 - `VOLCANO_ACCESS_KEY`: Volcano/ByteDance ASR key (`x-api-key`)
 - `VOLCANO_RESOURCE_ID`: Default `volc.bigasr.auc`
 - `VOLCANO_SUBMIT_URL`: Default `https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit`
@@ -133,8 +138,12 @@ Environment variables for this pipeline:
 - `VOLCANO_MAX_RETRIES`: Default `60`
 - `VOLCANO_RETRY_DELAY_MS`: Default `5000`
 - `YOUTUBE_PREFERRED_CAPTION_LANGS`: Comma-separated language preference list (default `zh-Hans,zh-CN,zh,zh-Hant,zh-TW,en,en-US`)
+- `YOUTUBE_COOKIES_JSON`: Optional JSON cookie array for ytdl agent (improves restricted-video fallback)
+- `YOUTUBE_COOKIES`: Optional raw cookie header as semicolon-separated `name=value` pairs
+- `YOUTUBE_YTDL_PLAYER_CLIENTS`: Optional comma-separated player clients for ytdl `getInfo`
 - `YOUTUBE_MAX_AUDIO_DURATION_SECONDS`: Max duration allowed for ASR fallback (default `10800`)
 - `YOUTUBE_MAX_AUDIO_BYTES`: Max downloadable audio size (default `157286400`)
+- `YOUTUBE_MAX_FORMAT_ATTEMPTS`: Max candidate audio formats to retry in ytdl fallback (default `4`)
 
 You can set these environment variables:
 1. Through your hosting platform (e.g., Vercel)

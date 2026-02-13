@@ -43,8 +43,14 @@ RETRY_DELAY=1000
 QA_MAX_RETRIEVED_CHUNKS=8
 QA_MAX_TOTAL_CHUNKS=180
 
-# ========== YouTube 无字幕回退（火山引擎 ASR） ==========
-# 建议使用 VOLCANO_ACCESS_KEY，不要把 key 写死到代码
+# ========== YouTube URL 转 SRT 回退链路 ==========
+# 优先: YouTube captions -> Gladia(可选) -> Volcano + 音频下载
+GLADIA_API_KEY=your_gladia_api_key_here
+GLADIA_BASE_URL=https://api.gladia.io
+GLADIA_MAX_RETRIES=120
+GLADIA_RETRY_DELAY_MS=5000
+
+# Volcano 配置（建议使用 VOLCANO_ACCESS_KEY，不要把 key 写死到代码）
 VOLCANO_ACCESS_KEY=your_volcano_access_key_here
 VOLCANO_RESOURCE_ID=volc.bigasr.auc
 VOLCANO_SUBMIT_URL=https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit
@@ -52,9 +58,15 @@ VOLCANO_QUERY_URL=https://openspeech.bytedance.com/api/v3/auc/bigmodel/query
 VOLCANO_ASR_LANG=zh
 VOLCANO_MAX_RETRIES=60
 VOLCANO_RETRY_DELAY_MS=5000
+
+# YouTube fallback tuning
 YOUTUBE_PREFERRED_CAPTION_LANGS=zh-Hans,zh-CN,zh,zh-Hant,zh-TW,en,en-US
+YOUTUBE_COOKIES_JSON=[]
+YOUTUBE_COOKIES=
+YOUTUBE_YTDL_PLAYER_CLIENTS=WEB,WEB_EMBEDDED,ANDROID,TV
 YOUTUBE_MAX_AUDIO_DURATION_SECONDS=10800
 YOUTUBE_MAX_AUDIO_BYTES=157286400
+YOUTUBE_MAX_FORMAT_ATTEMPTS=4
 ```
 
 ## 🔒 安全最佳实践

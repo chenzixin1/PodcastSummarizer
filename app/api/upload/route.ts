@@ -30,8 +30,10 @@ function statusForYoutubeIngestError(error: YoutubeIngestError): number {
       return 429;
     case 'YOUTUBE_LOGIN_REQUIRED':
       return 403;
+    case 'GLADIA_NOT_CONFIGURED':
     case 'VOLCANO_NOT_CONFIGURED':
       return 503;
+    case 'GLADIA_TRANSCRIBE_TIMEOUT':
     case 'VOLCANO_TRANSCRIBE_TIMEOUT':
       return 504;
     default:
@@ -61,7 +63,7 @@ export async function POST(request: NextRequest) {
 
   let youtubeIngestMeta:
     | {
-        source: 'youtube_caption' | 'volcano_asr';
+        source: 'youtube_caption' | 'gladia_asr' | 'volcano_asr';
         selectedLanguage?: string;
         audioBlobUrl?: string;
         videoId: string;

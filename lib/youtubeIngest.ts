@@ -26,6 +26,7 @@ type YtdlLike = {
   getInfo: (url: string, options?: unknown) => Promise<YtdlInfo>;
   filterFormats: (formats: YtdlFormat[], filter: string) => YtdlFormat[];
   downloadFromInfo: (info: YtdlInfo, options?: unknown) => NodeJS.ReadableStream;
+  createAgent?: (cookies?: unknown[], opts?: unknown) => unknown;
 };
 
 interface VolcanoUtterance {
@@ -46,6 +47,42 @@ interface VolcanoQueryPayload {
   result?: VolcanoResultPayload;
 }
 
+interface GladiaSubmitResponse {
+  id?: string;
+  result_url?: string;
+  message?: string;
+  error?: string;
+}
+
+interface GladiaSubtitle {
+  format?: string;
+  subtitles?: string;
+}
+
+interface GladiaUtterance {
+  start?: number;
+  end?: number;
+  text?: string;
+}
+
+interface GladiaTranscriptionPayload {
+  subtitles?: GladiaSubtitle[];
+  utterances?: GladiaUtterance[];
+  full_transcript?: string;
+}
+
+interface GladiaResultPayload {
+  transcription?: GladiaTranscriptionPayload;
+}
+
+interface GladiaPollResponse {
+  id?: string;
+  status?: string;
+  error_code?: number | null;
+  error?: string | { message?: string };
+  result?: GladiaResultPayload;
+}
+
 let cachedYtdl: YtdlLike | null = null;
 
 async function getYtdl(): Promise<YtdlLike> {
@@ -59,7 +96,7 @@ async function getYtdl(): Promise<YtdlLike> {
   return ytdlModule;
 }
 
-export type YoutubeTranscriptSource = 'youtube_caption' | 'volcano_asr';
+export type YoutubeTranscriptSource = 'youtube_caption' | 'gladia_asr' | 'volcano_asr';
 
 export interface YoutubeSrtResult {
   srtContent: string;
@@ -79,6 +116,11 @@ export type YoutubeIngestErrorCode =
   | 'YOUTUBE_CAPTIONS_DISABLED'
   | 'YOUTUBE_CAPTION_EMPTY'
   | 'YOUTUBE_FETCH_FAILED'
+  | 'GLADIA_NOT_CONFIGURED'
+  | 'GLADIA_SUBMIT_FAILED'
+  | 'GLADIA_QUERY_FAILED'
+  | 'GLADIA_TRANSCRIBE_TIMEOUT'
+  | 'GLADIA_TRANSCRIBE_FAILED'
   | 'VOLCANO_NOT_CONFIGURED'
   | 'VOLCANO_SUBMIT_FAILED'
   | 'VOLCANO_QUERY_FAILED'
@@ -130,6 +172,13 @@ interface VolcanoSubmitConfig {
   queryUrl: string;
   resourceId: string;
   lang: string;
+  maxRetries: number;
+  retryDelayMs: number;
+}
+
+interface GladiaConfig {
+  apiKey: string;
+  baseUrl: string;
   maxRetries: number;
   retryDelayMs: number;
 }
@@ -486,6 +535,117 @@ async function streamToBuffer(stream: NodeJS.ReadableStream, maxBytes: number): 
   return Buffer.concat(chunks);
 }
 
+function parseYtdlCookies(): unknown[] {
+  const cookiesJson = (process.env.YOUTUBE_COOKIES_JSON || '').trim();
+  if (cookiesJson) {
+    try {
+      const parsed = JSON.parse(cookiesJson) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Ignore invalid cookie json and fallback to plain cookie string parsing.
+    }
+  }
+
+  const cookieHeader = (process.env.YOUTUBE_COOKIES || '').trim();
+  if (!cookieHeader) {
+    return [];
+  }
+
+  return cookieHeader
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((pair) => {
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx <= 0) {
+        return null;
+      }
+      const name = pair.slice(0, eqIdx).trim();
+      const value = pair.slice(eqIdx + 1).trim();
+      if (!name || !value) {
+        return null;
+      }
+      return {
+        name,
+        value,
+        domain: '.youtube.com',
+        path: '/',
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildYtdlCommonOptions(ytdl: YtdlLike): Record<string, unknown> {
+  const options: Record<string, unknown> = {
+    requestOptions: {
+      headers: {
+        'User-Agent': YOUTUBE_USER_AGENT,
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    },
+  };
+
+  const rawClients = (process.env.YOUTUBE_YTDL_PLAYER_CLIENTS || '').trim();
+  if (rawClients) {
+    const clients = rawClients
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (clients.length > 0) {
+      options.playerClients = clients;
+    }
+  }
+
+  const cookies = parseYtdlCookies();
+  if (cookies.length > 0 && typeof ytdl.createAgent === 'function') {
+    try {
+      options.agent = ytdl.createAgent(cookies);
+    } catch (error) {
+      console.warn('[YOUTUBE_INGEST] Failed to create ytdl agent from cookies:', error);
+    }
+  }
+
+  return options;
+}
+
+function classifyYtdlError(error: unknown): YoutubeIngestError {
+  const detail = error instanceof Error ? error.message : String(error);
+  const normalized = detail.toLowerCase();
+
+  if (
+    normalized.includes('sign in to confirm') ||
+    normalized.includes('login required') ||
+    normalized.includes('video is login required') ||
+    normalized.includes('this video may be inappropriate')
+  ) {
+    return new YoutubeIngestError(
+      'YOUTUBE_LOGIN_REQUIRED',
+      'YouTube requires login verification before audio can be downloaded for ASR.',
+      detail,
+    );
+  }
+
+  if (normalized.includes('too many requests') || normalized.includes('status code: 429')) {
+    return new YoutubeIngestError(
+      'YOUTUBE_RATE_LIMITED',
+      'YouTube temporarily rate-limited audio download requests for this video.',
+      detail,
+    );
+  }
+
+  if (normalized.includes('video unavailable') || normalized.includes('private video') || normalized.includes('members-only')) {
+    return new YoutubeIngestError(
+      'YOUTUBE_VIDEO_UNAVAILABLE',
+      'The YouTube video is unavailable or restricted for server-side download.',
+      detail,
+    );
+  }
+
+  return new YoutubeIngestError('YOUTUBE_AUDIO_DOWNLOAD_FAILED', 'Failed to download YouTube audio for ASR fallback.', detail);
+}
+
 async function downloadYoutubeAudio(youtubeUrl: string): Promise<{
   audioBuffer: Buffer;
   extension: string;
@@ -494,14 +654,43 @@ async function downloadYoutubeAudio(youtubeUrl: string): Promise<{
 }> {
   try {
     const ytdl = await getYtdl();
-    const info = await ytdl.getInfo(youtubeUrl, {
-      requestOptions: {
-        headers: {
-          'User-Agent': YOUTUBE_USER_AGENT,
-          'Accept-Language': 'en-US,en;q=0.9',
+    const commonOptions = buildYtdlCommonOptions(ytdl);
+    const infoAttempts: Array<{ label: string; options: Record<string, unknown> }> = [
+      {
+        label: 'default',
+        options: commonOptions,
+      },
+      {
+        label: 'web_embedded',
+        options: {
+          ...commonOptions,
+          playerClients: ['WEB_EMBEDDED', 'WEB'],
         },
       },
-    });
+      {
+        label: 'android_tv',
+        options: {
+          ...commonOptions,
+          playerClients: ['ANDROID', 'TV', 'WEB'],
+        },
+      },
+    ];
+
+    let info: YtdlInfo | null = null;
+    let infoError: unknown = null;
+    for (const attempt of infoAttempts) {
+      try {
+        info = await ytdl.getInfo(youtubeUrl, attempt.options);
+        break;
+      } catch (error) {
+        infoError = error;
+        console.warn(`[YOUTUBE_INGEST] ytdl.getInfo failed (${attempt.label}):`, error);
+      }
+    }
+
+    if (!info) {
+      throw infoError instanceof Error ? infoError : new Error(String(infoError || 'Failed to get YouTube info'));
+    }
 
     const durationSeconds = Number.parseInt(info.videoDetails.lengthSeconds || '0', 10);
     const maxDurationSeconds = toNumber(process.env.YOUTUBE_MAX_AUDIO_DURATION_SECONDS, 3 * 60 * 60);
@@ -527,7 +716,7 @@ async function downloadYoutubeAudio(youtubeUrl: string): Promise<{
       return score;
     };
 
-    const selectedFormat = [...audioFormats].sort((a, b) => {
+    const candidateFormats = [...audioFormats].sort((a, b) => {
       const rankDiff = formatRank(a) - formatRank(b);
       if (rankDiff !== 0) {
         return rankDiff;
@@ -535,41 +724,107 @@ async function downloadYoutubeAudio(youtubeUrl: string): Promise<{
       const bitrateA = a.audioBitrate || a.bitrate || 0;
       const bitrateB = b.audioBitrate || b.bitrate || 0;
       return bitrateB - bitrateA;
-    })[0];
-
-    const audioStream = ytdl.downloadFromInfo(info, {
-      format: selectedFormat,
-      highWaterMark: 1 << 25,
-      requestOptions: {
-        headers: {
-          'User-Agent': YOUTUBE_USER_AGENT,
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-      },
     });
 
     const maxAudioBytes = toNumber(process.env.YOUTUBE_MAX_AUDIO_BYTES, 150 * 1024 * 1024);
-    const audioBuffer = await streamToBuffer(audioStream, maxAudioBytes);
+    const maxFormatAttempts = Math.max(1, toNumber(process.env.YOUTUBE_MAX_FORMAT_ATTEMPTS, 4));
+    let lastDownloadError: unknown = null;
+    for (const selectedFormat of candidateFormats.slice(0, maxFormatAttempts)) {
+      try {
+        const audioStream = ytdl.downloadFromInfo(info, {
+          ...commonOptions,
+          format: selectedFormat,
+          highWaterMark: 1 << 25,
+        });
 
-    const contentType = (selectedFormat.mimeType || '').split(';')[0] || 'audio/mpeg';
-    const extension = detectAudioExtension(selectedFormat.mimeType, selectedFormat.container);
+        const audioBuffer = await streamToBuffer(audioStream, maxAudioBytes);
+        const contentType = (selectedFormat.mimeType || '').split(';')[0] || 'audio/mpeg';
+        const extension = detectAudioExtension(selectedFormat.mimeType, selectedFormat.container);
 
-    return {
-      audioBuffer,
-      extension,
-      contentType,
-      videoTitle: info.videoDetails.title,
-    };
+        return {
+          audioBuffer,
+          extension,
+          contentType,
+          videoTitle: info.videoDetails.title,
+        };
+      } catch (error) {
+        lastDownloadError = error;
+        console.warn('[YOUTUBE_INGEST] ytdl audio format attempt failed:', error);
+      }
+    }
+
+    throw lastDownloadError instanceof Error ? lastDownloadError : new Error('All ytdl audio format attempts failed.');
   } catch (error) {
     if (error instanceof YoutubeIngestError) {
       throw error;
     }
-    throw new YoutubeIngestError(
-      'YOUTUBE_AUDIO_DOWNLOAD_FAILED',
-      'Failed to download YouTube audio for ASR fallback.',
-      error instanceof Error ? error.message : String(error),
-    );
+    throw classifyYtdlError(error);
   }
+}
+
+function getGladiaConfig(): GladiaConfig {
+  const apiKey = (process.env.GLADIA_API_KEY || process.env.GLADIA_KEY || '').trim();
+  if (!apiKey) {
+    throw new YoutubeIngestError('GLADIA_NOT_CONFIGURED', 'Gladia ASR is not configured. Set GLADIA_API_KEY.');
+  }
+
+  const baseUrlRaw = (process.env.GLADIA_BASE_URL || 'https://api.gladia.io').trim();
+  const baseUrl = baseUrlRaw.replace(/\/+$/, '');
+
+  return {
+    apiKey,
+    baseUrl,
+    maxRetries: toNumber(process.env.GLADIA_MAX_RETRIES, 120),
+    retryDelayMs: toNumber(process.env.GLADIA_RETRY_DELAY_MS, 5000),
+  };
+}
+
+function formatGladiaError(error: GladiaPollResponse['error'], fallback: string): string {
+  if (!error) {
+    return fallback;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return error.message || fallback;
+}
+
+function srtFromGladiaResult(data: GladiaPollResponse): string {
+  const transcription = data.result?.transcription;
+  const subtitles = Array.isArray(transcription?.subtitles) ? transcription?.subtitles : [];
+  const srtSubtitle = subtitles.find((item) => (item.format || '').toLowerCase() === 'srt' && item.subtitles?.trim());
+  if (srtSubtitle?.subtitles?.trim()) {
+    return srtSubtitle.subtitles.trim();
+  }
+
+  const utterances = Array.isArray(transcription?.utterances) ? transcription?.utterances : [];
+  if (utterances.length > 0) {
+    const cues = utterances
+      .map((utt) => {
+        const startSec = Number(utt.start || 0);
+        const endSec = Number(utt.end || startSec + 0.2);
+        const durationSec = Math.max(0.2, endSec - startSec);
+        const text = normalizeTranscribedText(String(utt.text || ''));
+        return { startSec, durationSec, text };
+      })
+      .filter((cue) => cue.text.length > 0);
+    if (cues.length > 0) {
+      return buildSrtFromCues(cues);
+    }
+  }
+
+  const fullText = normalizeTranscribedText(String(transcription?.full_transcript || ''));
+  if (fullText) {
+    return buildSrtFromCues([
+      {
+        startSec: 0,
+        durationSec: Math.max(2, Math.ceil(fullText.length / 10)),
+        text: fullText,
+      },
+    ]);
+  }
+
+  throw new YoutubeIngestError('GLADIA_TRANSCRIBE_FAILED', 'Gladia completed but returned empty subtitle/transcript payload.');
 }
 
 function getVolcanoConfig(): VolcanoSubmitConfig {
@@ -799,6 +1054,80 @@ function srtFromVolcanoResult(data: VolcanoQueryPayload): string {
   return buildSrtFromCues(cues);
 }
 
+async function transcribeWithGladiaFromYoutube(youtubeUrl: string, videoId: string): Promise<Omit<YoutubeSrtResult, 'source' | 'selectedLanguage' | 'availableLanguages'>> {
+  const gladiaConfig = getGladiaConfig();
+  const submitPayload = {
+    audio_url: youtubeUrl,
+    subtitles: true,
+    subtitles_config: {
+      formats: ['srt'],
+    },
+  };
+
+  const submitResponse = await fetch(`${gladiaConfig.baseUrl}/v2/pre-recorded`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-gladia-key': gladiaConfig.apiKey,
+    },
+    body: JSON.stringify(submitPayload),
+  });
+
+  const { text: submitText, data: submitData } = await parseJsonBody<GladiaSubmitResponse>(submitResponse);
+  if (!submitResponse.ok || !submitData?.id) {
+    throw new YoutubeIngestError(
+      'GLADIA_SUBMIT_FAILED',
+      `Gladia submit API failed (${submitResponse.status}).`,
+      submitText || submitData?.error || submitData?.message || submitResponse.statusText,
+    );
+  }
+
+  const queryUrl = submitData.result_url || `${gladiaConfig.baseUrl}/v2/pre-recorded/${submitData.id}`;
+  for (let attempt = 1; attempt <= gladiaConfig.maxRetries; attempt += 1) {
+    const queryResponse = await fetch(queryUrl, {
+      method: 'GET',
+      headers: {
+        'x-gladia-key': gladiaConfig.apiKey,
+      },
+    });
+
+    const { text: queryText, data: queryData } = await parseJsonBody<GladiaPollResponse>(queryResponse);
+    if (!queryResponse.ok) {
+      throw new YoutubeIngestError(
+        'GLADIA_QUERY_FAILED',
+        `Gladia query API failed (${queryResponse.status}).`,
+        queryText || queryResponse.statusText,
+      );
+    }
+
+    const status = (queryData?.status || '').toLowerCase();
+    if (status === 'done') {
+      const srtContent = srtFromGladiaResult(queryData || {});
+      return {
+        srtContent,
+        videoId,
+      };
+    }
+
+    if (status === 'error' || queryData?.error_code) {
+      throw new YoutubeIngestError(
+        'GLADIA_TRANSCRIBE_FAILED',
+        'Gladia transcription failed.',
+        `${formatGladiaError(queryData?.error, 'Unknown Gladia error')}${queryText ? ` | raw=${queryText}` : ''}`,
+      );
+    }
+
+    if (attempt < gladiaConfig.maxRetries) {
+      await wait(gladiaConfig.retryDelayMs);
+    }
+  }
+
+  throw new YoutubeIngestError(
+    'GLADIA_TRANSCRIBE_TIMEOUT',
+    `Gladia transcription did not finish within ${gladiaConfig.maxRetries} retries.`,
+  );
+}
+
 async function transcribeWithVolcanoFromYoutube(youtubeUrl: string, videoId: string): Promise<Omit<YoutubeSrtResult, 'source' | 'selectedLanguage' | 'availableLanguages'>> {
   const volcConfig = getVolcanoConfig();
   const audio = await downloadYoutubeAudio(youtubeUrl);
@@ -854,6 +1183,25 @@ export async function generateSrtFromYoutubeUrl(youtubeUrl: string): Promise<You
       throw captionError;
     }
 
+    let gladiaError: YoutubeIngestError | null = null;
+    try {
+      const gladiaResult = await transcribeWithGladiaFromYoutube(youtubeUrl, videoId);
+      return {
+        ...gladiaResult,
+        source: 'gladia_asr',
+        availableLanguages: [],
+        selectedLanguage: undefined,
+      };
+    } catch (error) {
+      if (error instanceof YoutubeIngestError) {
+        if (error.code !== 'GLADIA_NOT_CONFIGURED') {
+          gladiaError = error;
+        }
+      } else {
+        throw error;
+      }
+    }
+
     try {
       const asrResult = await transcribeWithVolcanoFromYoutube(youtubeUrl, videoId);
 
@@ -868,11 +1216,21 @@ export async function generateSrtFromYoutubeUrl(youtubeUrl: string): Promise<You
         asrError instanceof YoutubeIngestError &&
         asrError.code === 'VOLCANO_NOT_CONFIGURED'
       ) {
+        const fallbackDetails = [
+          `ASR fallback unavailable: ${asrError.message}`,
+          gladiaError ? `gladia_fallback: ${gladiaError.code} ${gladiaError.message}${gladiaError.details ? ` (${gladiaError.details})` : ''}` : null,
+          captionError.details ? `caption_details: ${captionError.details}` : null,
+        ]
+          .filter(Boolean)
+          .join(' | ');
         throw new YoutubeIngestError(
           captionError.code,
           captionError.message,
-          `ASR fallback unavailable: ${asrError.message}${captionError.details ? ` | caption_details: ${captionError.details}` : ''}`,
+          fallbackDetails,
         );
+      }
+      if (asrError instanceof YoutubeIngestError && gladiaError) {
+        asrError.details = `${asrError.details ? `${asrError.details} | ` : ''}gladia_fallback: ${gladiaError.code} ${gladiaError.message}${gladiaError.details ? ` (${gladiaError.details})` : ''}`;
       }
       throw asrError;
     }

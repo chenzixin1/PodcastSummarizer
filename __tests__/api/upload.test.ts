@@ -209,6 +209,35 @@ describe('Upload API Tests', () => {
     );
   });
 
+  it('should process youtube with gladia fallback metadata when captions unavailable', async () => {
+    mockGenerateSrtFromYoutubeUrl.mockResolvedValue({
+      srtContent: '1\n00:00:00,000 --> 00:00:03,000\ngladia transcript',
+      source: 'gladia_asr',
+      videoId: 'I9aGC6Ui3eE',
+      availableLanguages: [],
+    });
+
+    const formData = new FormData();
+    formData.append('youtubeUrl', 'https://www.youtube.com/watch?v=I9aGC6Ui3eE');
+
+    const request = new NextRequest('http://localhost:3000/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.data.youtubeIngest).toEqual(
+      expect.objectContaining({
+        source: 'gladia_asr',
+        videoId: 'I9aGC6Ui3eE',
+      }),
+    );
+  });
+
   it('should return classified youtube ingest error', async () => {
     const { YoutubeIngestError } = require('../../lib/youtubeIngest');
     mockGenerateSrtFromYoutubeUrl.mockRejectedValue(
