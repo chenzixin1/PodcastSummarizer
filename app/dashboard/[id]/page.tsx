@@ -122,6 +122,7 @@ export default function DashboardPage() {
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [pollTick, setPollTick] = useState(0);
+  const [leftPanelHeight, setLeftPanelHeight] = useState<number | undefined>(undefined);
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgress>({
     task: null,
     completed: 0,
@@ -130,6 +131,7 @@ export default function DashboardPage() {
   
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
+  const leftPanelRef = useRef<HTMLElement | null>(null);
   const isProcessingRef = useRef(false);
   const isAutoScrollEnabledRef = useRef(true);
   const viewScrollPositionsRef = useRef<Record<ViewMode, number>>({
@@ -176,6 +178,18 @@ export default function DashboardPage() {
     const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
     isAutoScrollEnabledRef.current = distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
   }, [activeView]);
+
+  const syncLeftPanelHeight = useCallback(() => {
+    const panel = leftPanelRef.current;
+    if (!panel) {
+      setLeftPanelHeight(undefined);
+      return;
+    }
+    const nextHeight = Math.round(panel.getBoundingClientRect().height);
+    if (Number.isFinite(nextHeight) && nextHeight > 0) {
+      setLeftPanelHeight(nextHeight);
+    }
+  }, []);
 
   const handleContentScroll = useCallback(() => {
     const element = contentRef.current;
@@ -379,6 +393,26 @@ export default function DashboardPage() {
       setIsLoading(true);
     }
   }, [id]);
+
+  useEffect(() => {
+    const panel = leftPanelRef.current;
+    if (!panel) {
+      return;
+    }
+
+    syncLeftPanelHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      syncLeftPanelHeight();
+    });
+    observer.observe(panel);
+
+    return () => observer.disconnect();
+  }, [syncLeftPanelHeight, data, debugMode, isProcessing, canEdit]);
 
 
   // Add ID validation after all hooks and functions are defined
@@ -933,9 +967,9 @@ export default function DashboardPage() {
         )}
 
         {data && (
-          <main className="container mx-auto w-full max-w-[1560px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col md:flex-row gap-4 md:gap-6">
+          <main className="container mx-auto w-full max-w-[1800px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col xl:grid xl:grid-cols-[320px_320px_minmax(0,1fr)] gap-4 md:gap-6 xl:items-start">
             {/* Left Sidebar */} 
-            <aside className="w-full md:w-[320px] lg:w-[340px] xl:w-[360px] dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl shadow-2xl self-start md:sticky md:top-24">
+            <aside ref={leftPanelRef} className="w-full dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl shadow-2xl self-start">
               <h2 className="text-lg sm:text-xl font-semibold mb-1 text-sky-300 truncate leading-8" title={data.title}>{data.title}</h2>
               <p className="text-xs text-slate-500 mb-5 tracking-wide">ID: {id}</p>
               
@@ -994,8 +1028,14 @@ export default function DashboardPage() {
               {/* Placeholder for future elements like download original, re-process options, etc. */}
             </aside>
 
+            <FloatingQaAssistant
+              podcastId={id}
+              enabled={isQaAssistantEnabled}
+              panelHeight={leftPanelHeight}
+            />
+
             {/* Right Content Area */} 
-            <section className="w-full min-w-0 md:flex-1">
+            <section className="w-full min-w-0">
               <div className="mb-4 sm:mb-6 space-y-3">
                   <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
@@ -1056,14 +1096,6 @@ export default function DashboardPage() {
         
         {/* Add Debug Status Panel */}
         <DebugStatusPanel />
-
-        <FloatingQaAssistant
-          podcastId={id}
-          enabled={isQaAssistantEnabled}
-          summary={data?.summary}
-          translation={data?.translation}
-          highlights={data?.fullTextHighlights}
-        />
         
         <footer className="p-4 text-center text-xs text-slate-500 tracking-wide">
           SRT Processor Edge Demo v{APP_VERSION}
