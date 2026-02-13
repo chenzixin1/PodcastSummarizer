@@ -233,7 +233,7 @@ export default function FloatingQaAssistant({
       style={shouldMatchHeight ? { height: panelHeight } : undefined}
     >
       <div className="border-b border-[var(--border-soft)] px-4 py-3">
-        <p className="text-base font-semibold tracking-wide text-[var(--accent-strong)]">Podcast Assistant</p>
+        <p className="text-base font-semibold tracking-wide text-[var(--heading)]">Podcast Assistant</p>
         <p className="text-xs text-[var(--text-muted)] mt-1">Ask deeper questions from transcript</p>
       </div>
 
@@ -256,7 +256,7 @@ export default function FloatingQaAssistant({
             <div
               className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${
                 message.role === 'user'
-                  ? 'bg-[var(--accent)] text-white shadow-[0_10px_24px_-18px_rgba(63,122,104,0.85)]'
+                  ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)] shadow-[0_10px_24px_-18px_rgba(63,122,104,0.85)]'
                   : 'bg-[var(--paper-base)] border border-[var(--border-soft)] text-[var(--text-main)]'
               }`}
             >
@@ -280,7 +280,7 @@ export default function FloatingQaAssistant({
           onChange={event => setInput(event.target.value.slice(0, MAX_INPUT_LENGTH))}
           placeholder="输入你的问题，例如：有哪些被忽略但关键的数据？"
           rows={2}
-          className="w-full resize-none rounded-xl border border-[var(--border-medium)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
+          className="w-full resize-none rounded-xl border border-[var(--border-medium)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:border-[var(--btn-primary)] focus:outline-none"
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
@@ -293,7 +293,7 @@ export default function FloatingQaAssistant({
           <button
             type="submit"
             disabled={sending || !input.trim()}
-            className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-[var(--btn-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? '回答中...' : 'Send'}
           </button>

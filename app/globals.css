@@ -6,14 +6,37 @@
   --paper-base: #fffdf8;
   --paper-muted: #f8f1e4;
   --paper-subtle: #f5ecdb;
+  --header-bg: rgba(248, 243, 234, 0.9);
+  --panel-bg: linear-gradient(155deg, rgba(255, 254, 250, 0.97) 0%, rgba(249, 242, 229, 0.96) 100%);
+  --panel-shadow: 0 16px 36px -26px rgba(87, 71, 45, 0.4);
   --border-soft: #ddd2bf;
   --border-medium: #cfc1a8;
   --text-main: #2f2a22;
   --text-secondary: #5f5547;
   --text-muted: #8a7a64;
+  --heading: #2f6656;
+  --heading-soft: #3a6d5c;
+  --link: #2f6656;
+  --link-hover: #255648;
+  --quote-border: #8db6a7;
+  --quote-bg: linear-gradient(90deg, rgba(219, 234, 228, 0.85), rgba(219, 234, 228, 0));
+  --pre-bg: #f6efe2;
+  --pre-border: #d7cbb7;
+  --pre-text: #5f4b34;
+  --code-bg: #f8f0e1;
+  --code-border: #e0d4c0;
+  --code-text: #684f2d;
+  --table-border: #d8ccb8;
+  --table-head-bg: #f6eee0;
+  --scroll-track: rgba(191, 173, 140, 0.2);
+  --scroll-thumb: rgba(126, 158, 144, 0.58);
+  --scroll-thumb-hover: rgba(93, 129, 114, 0.68);
   --accent: #3f7a68;
   --accent-strong: #2f6656;
   --accent-soft: #dbeae4;
+  --btn-primary: #3f7a68;
+  --btn-primary-hover: #2f6656;
+  --btn-primary-text: #ffffff;
   --danger: #a64e4e;
 }
 
@@ -44,10 +67,54 @@ body {
     linear-gradient(180deg, #f8f3ea 0%, #f2ebde 100%);
 }
 
+.dashboard-shell[data-theme='dark'] {
+  --background: #0f1319;
+  --foreground: #f3f4f6;
+  --paper-base: #131922;
+  --paper-muted: #1a222d;
+  --paper-subtle: #151d27;
+  --header-bg: rgba(12, 18, 27, 0.9);
+  --panel-bg: linear-gradient(155deg, rgba(20, 26, 36, 0.98) 0%, rgba(18, 24, 34, 0.98) 100%);
+  --panel-shadow: 0 18px 40px -28px rgba(0, 0, 0, 0.7);
+  --border-soft: #2b3542;
+  --border-medium: #3a4657;
+  --text-main: #f4f5f7;
+  --text-secondary: #e6e8ec;
+  --text-muted: #a8b1be;
+  --heading: #ffffff;
+  --heading-soft: #f0f2f5;
+  --link: #f0f2f6;
+  --link-hover: #ffffff;
+  --quote-border: #8795a9;
+  --quote-bg: linear-gradient(90deg, rgba(95, 108, 129, 0.35), rgba(95, 108, 129, 0));
+  --pre-bg: #141d29;
+  --pre-border: #2d394a;
+  --pre-text: #e9edf4;
+  --code-bg: #182231;
+  --code-border: #303e52;
+  --code-text: #f1f4fa;
+  --table-border: #2d394a;
+  --table-head-bg: #1a2533;
+  --scroll-track: rgba(89, 102, 122, 0.22);
+  --scroll-thumb: rgba(138, 154, 178, 0.56);
+  --scroll-thumb-hover: rgba(164, 180, 204, 0.7);
+  --accent: #d7dce5;
+  --accent-strong: #ffffff;
+  --accent-soft: rgba(170, 182, 198, 0.2);
+  --btn-primary: #4b5a70;
+  --btn-primary-hover: #5b6d87;
+  --btn-primary-text: #ffffff;
+  --danger: #ff8f8f;
+  background:
+    radial-gradient(72rem 42rem at 4% -9%, rgba(113, 126, 148, 0.18), transparent 58%),
+    radial-gradient(64rem 38rem at 100% -12%, rgba(81, 92, 110, 0.22), transparent 62%),
+    linear-gradient(180deg, #0b1118 0%, #0c141e 100%);
+}
+
 .dashboard-panel {
-  background: linear-gradient(155deg, rgba(255, 254, 250, 0.97) 0%, rgba(249, 242, 229, 0.96) 100%);
+  background: var(--panel-bg);
   border: 1px solid var(--border-soft);
-  box-shadow: 0 16px 36px -26px rgba(87, 71, 45, 0.4);
+  box-shadow: var(--panel-shadow);
 }
 
 .dashboard-reading {
@@ -68,7 +135,7 @@ body {
 
 .markdown-body h1 {
   margin: 1.8rem 0 1rem;
-  color: var(--accent-strong);
+  color: var(--heading);
   font-weight: 700;
   font-size: clamp(1.6rem, 1.15rem + 1.3vw, 2.1rem);
   line-height: 1.26;
@@ -77,7 +144,7 @@ body {
 
 .markdown-body h2 {
   margin: 1.5rem 0 0.9rem;
-  color: var(--accent-strong);
+  color: var(--heading);
   font-weight: 700;
   font-size: clamp(1.26rem, 0.95rem + 0.85vw, 1.65rem);
   line-height: 1.34;
@@ -85,7 +152,7 @@ body {
 
 .markdown-body h3 {
   margin: 1.2rem 0 0.75rem;
-  color: #3a6d5c;
+  color: var(--heading-soft);
   font-weight: 600;
   font-size: clamp(1.06rem, 0.9rem + 0.52vw, 1.24rem);
   line-height: 1.42;
@@ -93,7 +160,7 @@ body {
 
 .markdown-body h4 {
   margin: 1rem 0 0.6rem;
-  color: #3a6d5c;
+  color: var(--heading-soft);
   font-size: 1rem;
   font-weight: 600;
   line-height: 1.5;
@@ -127,13 +194,13 @@ body {
 }
 
 .markdown-body a {
-  color: #2f6656;
+  color: var(--link);
   text-underline-offset: 3px;
   text-decoration-thickness: 1.2px;
 }
 
 .markdown-body a:hover {
-  color: #255648;
+  color: var(--link-hover);
   text-decoration: underline;
 }
 
@@ -144,30 +211,31 @@ body {
 
 .markdown-body blockquote {
   margin: 1.2rem 0;
-  border-left: 4px solid #8db6a7;
+  border-left: 4px solid var(--quote-border);
   padding: 0.3rem 0 0.3rem 1rem;
   color: var(--text-secondary);
-  background: linear-gradient(90deg, rgba(219, 234, 228, 0.85), rgba(219, 234, 228, 0));
+  background: var(--quote-bg);
 }
 
 .markdown-body pre {
   margin: 1.2rem 0;
   border-radius: 0.9rem;
-  border: 1px solid #d7cbb7;
-  background: #f6efe2;
+  border: 1px solid var(--pre-border);
+  background: var(--pre-bg);
   padding: 0.95rem 1rem;
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.72;
+  color: var(--pre-text);
 }
 
 .markdown-body code {
-  border: 1px solid #e0d4c0;
+  border: 1px solid var(--code-border);
   border-radius: 0.42rem;
-  background: #f8f0e1;
+  background: var(--code-bg);
   padding: 0.08rem 0.35rem;
-  color: #684f2d;
+  color: var(--code-text);
   font-size: 0.95em;
 }
 
@@ -175,7 +243,7 @@ body {
   border: 0;
   background: transparent;
   padding: 0;
-  color: #5f4b34;
+  color: var(--pre-text);
 }
 
 .markdown-body table {
@@ -188,13 +256,13 @@ body {
 
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid #d8ccb8;
+  border: 1px solid var(--table-border);
   padding: 0.65rem 0.72rem;
   vertical-align: top;
 }
 
 .markdown-body th {
-  background: #f6eee0;
+  background: var(--table-head-bg);
   color: var(--text-main);
 }
 
@@ -220,17 +288,17 @@ body {
 }
 
 .streaming-content::-webkit-scrollbar-track {
-  background: rgba(191, 173, 140, 0.2);
+  background: var(--scroll-track);
   border-radius: 999px;
 }
 
 .streaming-content::-webkit-scrollbar-thumb {
-  background: rgba(126, 158, 144, 0.58);
+  background: var(--scroll-thumb);
   border-radius: 999px;
 }
 
 .streaming-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(93, 129, 114, 0.68);
+  background: var(--scroll-thumb-hover);
 }
 
 .streaming-content p,

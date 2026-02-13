@@ -37,6 +37,7 @@ interface ProcessingJobData {
 
 type ViewMode = 'summary' | 'translate' | 'fullText';
 type ProcessingTask = 'summary' | 'translation' | 'highlights';
+type ThemeMode = 'light' | 'dark';
 
 interface ProcessingProgress {
   task: ProcessingTask | null;
@@ -123,7 +124,8 @@ export default function DashboardPage() {
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [pollTick, setPollTick] = useState(0);
-  const [leftPanelHeight, setLeftPanelHeight] = useState<number | undefined>(undefined);
+  const [contentPanelHeight, setContentPanelHeight] = useState<number | undefined>(undefined);
+  const [themeMode, setThemeMode] = useState<ThemeMode>('light');
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgress>({
     task: null,
     completed: 0,
@@ -132,7 +134,7 @@ export default function DashboardPage() {
   
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
-  const leftPanelRef = useRef<HTMLElement | null>(null);
+  const contentPanelRef = useRef<HTMLDivElement | null>(null);
   const isProcessingRef = useRef(false);
   const isAutoScrollEnabledRef = useRef(true);
   const viewScrollPositionsRef = useRef<Record<ViewMode, number>>({
@@ -180,15 +182,15 @@ export default function DashboardPage() {
     isAutoScrollEnabledRef.current = distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
   }, [activeView]);
 
-  const syncLeftPanelHeight = useCallback(() => {
-    const panel = leftPanelRef.current;
+  const syncContentPanelHeight = useCallback(() => {
+    const panel = contentPanelRef.current;
     if (!panel) {
-      setLeftPanelHeight(undefined);
+      setContentPanelHeight(undefined);
       return;
     }
     const nextHeight = Math.round(panel.getBoundingClientRect().height);
     if (Number.isFinite(nextHeight) && nextHeight > 0) {
-      setLeftPanelHeight(nextHeight);
+      setContentPanelHeight(nextHeight);
     }
   }, []);
 
@@ -373,24 +375,44 @@ export default function DashboardPage() {
   }, [id]);
 
   useEffect(() => {
-    const panel = leftPanelRef.current;
+    const panel = contentPanelRef.current;
     if (!panel) {
       return;
     }
 
-    syncLeftPanelHeight();
+    syncContentPanelHeight();
 
     if (typeof ResizeObserver === 'undefined') {
       return;
     }
 
     const observer = new ResizeObserver(() => {
-      syncLeftPanelHeight();
+      syncContentPanelHeight();
     });
     observer.observe(panel);
 
     return () => observer.disconnect();
-  }, [syncLeftPanelHeight, data, debugMode, isProcessing, canEdit]);
+  }, [syncContentPanelHeight, activeView, data, isProcessing, processingProgress.completed, processingProgress.total]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedTheme = window.localStorage.getItem('podsum-dashboard-theme');
+    if (storedTheme === 'light' || storedTheme === 'dark') {
+      setThemeMode(storedTheme);
+      return;
+    }
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    setThemeMode(prefersDark ? 'dark' : 'light');
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('podsum-dashboard-theme', themeMode);
+  }, [themeMode]);
 
 
   // Add ID validation after all hooks and functions are defined
@@ -410,7 +432,7 @@ export default function DashboardPage() {
           <div className="space-y-3">
             <Link 
               href="/upload" 
-              className="block w-full bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-white font-semibold py-3 px-4 rounded-lg transition-colors"
+              className="block w-full bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] font-semibold py-3 px-4 rounded-lg transition-colors"
             >
               Upload New File
             </Link>
@@ -826,7 +848,7 @@ export default function DashboardPage() {
   const getButtonClass = (view: ViewMode) => 
     `px-3.5 sm:px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide border transition-all duration-200 whitespace-nowrap
      ${activeView === view 
-       ? 'bg-[var(--accent)] text-white border-[#5d8f7f] shadow-[0_12px_30px_-20px_rgba(63,122,104,0.72)]'
+       ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)] border-[var(--border-medium)] shadow-[0_12px_30px_-20px_rgba(63,122,104,0.72)]'
        : 'bg-[var(--paper-base)] text-[var(--text-secondary)] border-[var(--border-soft)] hover:bg-[var(--paper-muted)] hover:text-[var(--text-main)] hover:border-[var(--border-medium)]'}`;
 
   // Add Debug Status Panel component
@@ -885,12 +907,12 @@ export default function DashboardPage() {
   // Modify rendering to wrap in ErrorBoundary and include Debug Panel
   return (
     <ErrorBoundary>
-      <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col">
-        <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[rgba(248,243,234,0.9)] backdrop-blur-xl">
+      <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
+        <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
           <div className="container mx-auto px-3 py-3.5 md:px-4 md:py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
             {/* Breadcrumb Navigation */}
             <nav className="flex items-center space-x-2 text-sm sm:text-base lg:text-xl min-w-0 w-full md:w-auto">
-              <Link href="/" className="inline-flex items-center gap-2 text-[var(--accent-strong)] hover:text-[var(--accent)] transition-colors font-bold shrink-0 tracking-wide">
+              <Link href="/" className="inline-flex items-center gap-2 text-[var(--heading)] hover:text-[var(--text-main)] transition-colors font-bold shrink-0 tracking-wide">
                 <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={22} height={22} />
                 <span>PodSum.cc</span>
               </Link>
@@ -903,6 +925,28 @@ export default function DashboardPage() {
               </span>
             </nav>
             <div className="flex items-center gap-2 flex-wrap justify-end w-full md:w-auto">
+              <div className="inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
+                <button
+                  onClick={() => setThemeMode('light')}
+                  className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
+                    themeMode === 'light'
+                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                  }`}
+                >
+                  Light Mode
+                </button>
+                <button
+                  onClick={() => setThemeMode('dark')}
+                  className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
+                    themeMode === 'dark'
+                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                  }`}
+                >
+                  Dark Mode
+                </button>
+              </div>
               <button 
                 onClick={() => setDebugMode(!debugMode)}
                 className="hidden sm:inline-flex text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 rounded-lg text-[var(--text-secondary)] transition-colors"
@@ -921,7 +965,7 @@ export default function DashboardPage() {
         {!data && !error && isLoading && (
           <div className="flex-grow flex items-center justify-center">
               <div className="text-center rounded-2xl border border-[var(--border-soft)] bg-[var(--paper-base)] px-8 py-8 shadow-[0_18px_40px_-28px_rgba(80,67,44,0.45)]">
-                  <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--accent)] mx-auto mb-4"></div>
+                  <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)] mx-auto mb-4"></div>
                   <p className="text-[var(--text-secondary)] text-sm sm:text-base tracking-wide">Loading transcript data...</p>
               </div>
           </div>
@@ -948,10 +992,10 @@ export default function DashboardPage() {
         )}
 
         {data && (
-          <main className="container mx-auto w-full max-w-[1800px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col xl:grid xl:grid-cols-[320px_320px_minmax(0,1fr)] gap-4 md:gap-6 xl:items-start">
+          <main className="container mx-auto w-full max-w-[1900px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col xl:grid xl:grid-cols-[320px_minmax(0,1fr)_380px] 2xl:grid-cols-[340px_minmax(0,1fr)_420px] gap-4 md:gap-6 xl:items-start">
             {/* Left Sidebar */} 
-            <aside ref={leftPanelRef} className="w-full dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl self-start">
-              <h2 className="text-lg sm:text-xl font-semibold mb-1 text-[var(--accent-strong)] truncate leading-8" title={data.title}>{data.title}</h2>
+            <aside className="w-full dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl self-start">
+              <h2 className="text-lg sm:text-xl font-semibold mb-1 text-[var(--heading)] truncate leading-8" title={data.title}>{data.title}</h2>
               <p className="text-xs text-[var(--text-muted)] mb-5 tracking-wide">ID: {id}</p>
               
               <div className="space-y-4 text-sm">
@@ -976,7 +1020,7 @@ export default function DashboardPage() {
                 <div className="mt-6">
                   <button 
                     onClick={retryProcessing}
-                    className="w-full py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] rounded-xl text-white text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-20px_rgba(63,122,104,0.8)]"
+                    className="w-full py-2.5 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] rounded-xl text-[var(--btn-primary-text)] text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-20px_rgba(63,122,104,0.8)]"
                     disabled={isProcessing}
                   >
                     {isProcessing ? (
@@ -999,7 +1043,7 @@ export default function DashboardPage() {
                   <div>hasError: {!!error}</div>
                   <button 
                     onClick={() => console.log('window.__PODSUM_DEBUG__:', window.__PODSUM_DEBUG__)}
-                    className="mt-2 px-2.5 py-1 bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-white rounded-lg text-xs transition-colors"
+                    className="mt-2 px-2.5 py-1 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] rounded-lg text-xs transition-colors"
                   >
                     Log Debug to Console
                   </button>
@@ -1009,13 +1053,7 @@ export default function DashboardPage() {
               {/* Placeholder for future elements like download original, re-process options, etc. */}
             </aside>
 
-            <FloatingQaAssistant
-              podcastId={id}
-              enabled={isQaAssistantEnabled}
-              panelHeight={leftPanelHeight}
-            />
-
-            {/* Right Content Area */} 
+            {/* Center Content Area */} 
             <section className="w-full min-w-0">
               <div className="mb-4 sm:mb-6 space-y-3">
                   <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1068,10 +1106,27 @@ export default function DashboardPage() {
                 </div>
               )}
               
-              <div className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl overflow-hidden">
+              <div ref={contentPanelRef} className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl overflow-hidden">
                 {renderContent()}
               </div>
             </section>
+
+            <div className="w-full self-start">
+              {isQaAssistantEnabled ? (
+                <FloatingQaAssistant
+                  podcastId={id}
+                  enabled={isQaAssistantEnabled}
+                  panelHeight={contentPanelHeight}
+                />
+              ) : (
+                <aside
+                  className="dashboard-panel w-full min-h-[320px] rounded-2xl overflow-hidden flex flex-col justify-center px-5 text-sm text-[var(--text-secondary)]"
+                  style={typeof contentPanelHeight === 'number' && contentPanelHeight > 0 ? { height: contentPanelHeight } : undefined}
+                >
+                  Copilot 会在当前文件处理完成后启用。
+                </aside>
+              )}
+            </div>
           </main>
         )}
         
