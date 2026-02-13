@@ -11,7 +11,7 @@ import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
 
 // VERCEL DEBUG: Add version number to help track deployments
-const APP_VERSION = '1.0.4'; // Increment version for tracking
+const APP_VERSION = '1.0.5'; // Increment version for tracking
 console.log(`[DEBUG] Podcast Summarizer v${APP_VERSION} loading...`);
 
 // Define types for the processed data
@@ -140,6 +140,8 @@ export default function DashboardPage() {
   const lastHeightRef = useRef(0);
   const requestSentRef = useRef(false);
   const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasResolvedInitialFetchRef = useRef(false);
+  const lastLoadedIdRef = useRef<string | null>(null);
 
   // Debug state
   const [debugMode, setDebugMode] = useState(false);
@@ -363,6 +365,17 @@ export default function DashboardPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!id) {
+      return;
+    }
+    if (lastLoadedIdRef.current !== id) {
+      lastLoadedIdRef.current = id;
+      hasResolvedInitialFetchRef.current = false;
+      setIsLoading(true);
+    }
+  }, [id]);
+
 
   // Add ID validation after all hooks and functions are defined
   if (!id || id === 'undefined' || id === 'null') {
@@ -535,8 +548,15 @@ export default function DashboardPage() {
       logDebug('Dashboard useEffect triggered', { id, isProcessing, requestSent: requestSentRef.current });
       
       const startTime = performance.now();
+      const isInitialLoadForCurrentId = !hasResolvedInitialFetchRef.current;
+      const finishLoadCycle = () => {
+        hasResolvedInitialFetchRef.current = true;
+        setIsLoading(false);
+      };
       
-      setIsLoading(true);
+      if (isInitialLoadForCurrentId) {
+        setIsLoading(true);
+      }
       setError(null);
       
       // Only load from database API
@@ -586,7 +606,7 @@ export default function DashboardPage() {
             setIsProcessing(false);
             isProcessingRef.current = false;
             requestSentRef.current = false;
-            setIsLoading(false);
+            finishLoadCycle();
             setCanEdit(canEdit); // 新增
             
             const loadTime = performance.now() - startTime;
@@ -601,24 +621,31 @@ export default function DashboardPage() {
           } else if (podcast) {
             // 数据库中有播客信息但没有分析结果，需要处理
             console.log('[DEBUG] 数据库中有播客信息但无分析结果，开始处理');
-            const processingData: ProcessedData = {
+            setData(prev => ({
               title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
-              summary: normalizeMarkdownOutput(analysis?.summary || ''),
-              translation: normalizePlainTextOutput(analysis?.translation || ''),
-              fullTextHighlights: normalizeMarkdownOutput(
-                enforceLineBreaks(analysis?.highlights || '')
-              ),
-              processedAt: analysis?.processedAt || undefined,
-            };
-            setData(processingData);
+              summary: analysis?.summary
+                ? normalizeMarkdownOutput(analysis.summary)
+                : prev?.summary || '',
+              translation: analysis?.translation
+                ? normalizePlainTextOutput(analysis.translation)
+                : prev?.translation || '',
+              fullTextHighlights: analysis?.highlights
+                ? normalizeMarkdownOutput(
+                    enforceLineBreaks(analysis.highlights)
+                  )
+                : prev?.fullTextHighlights || '',
+              processedAt: analysis?.processedAt || prev?.processedAt || undefined,
+            }));
             setIsSummaryFinal(false);
             setIsHighlightsFinal(false);
             setProcessingStatus('等待后台处理...');
-            setCopyStatusWithReset('idle');
-            resetProcessingProgress();
-            setIsLoading(false);
+            if (isInitialLoadForCurrentId) {
+              setCopyStatusWithReset('idle');
+              resetProcessingProgress();
+            }
+            finishLoadCycle();
             setCanEdit(canEdit);
             
             if (processingJob) {
@@ -634,19 +661,19 @@ export default function DashboardPage() {
             // 数据库中完全没有该ID的信息
             console.log('[DEBUG] 数据库中没有找到该ID的信息');
             setError('File not found in database. The file may have been deleted or never uploaded.');
-            setIsLoading(false);
+            finishLoadCycle();
           }
         } else {
           // API调用失败
           console.log('[DEBUG] 数据库API调用失败');
           setError(result.error || 'Failed to load file information from database.');
-          setIsLoading(false);
+          finishLoadCycle();
         }
       })
       .catch(error => {
         console.error('[DEBUG] 数据库API调用出错:', error);
         setError('Failed to connect to database: ' + error.message);
-        setIsLoading(false);
+        finishLoadCycle();
       });
     }
   }, [id, pollTick]); // 轮询时刷新状态
@@ -728,7 +755,7 @@ export default function DashboardPage() {
   };
 
   const renderContent = () => {
-    if (isLoading) {
+    if (isLoading && !data) {
       return <div className="text-center p-10 text-slate-400">Loading content...</div>;
     }
     if (error) {
