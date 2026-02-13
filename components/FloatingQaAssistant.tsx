@@ -229,21 +229,21 @@ export default function FloatingQaAssistant({
 
   return (
     <aside
-      className="dashboard-panel w-full min-h-[320px] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+      className="dashboard-panel w-full min-h-[320px] rounded-2xl overflow-hidden flex flex-col"
       style={shouldMatchHeight ? { height: panelHeight } : undefined}
     >
-      <div className="border-b border-slate-700/70 px-4 py-3">
-        <p className="text-base font-semibold tracking-wide text-sky-300">Podcast Assistant</p>
-        <p className="text-xs text-slate-400 mt-1">Ask deeper questions from transcript</p>
+      <div className="border-b border-[var(--border-soft)] px-4 py-3">
+        <p className="text-base font-semibold tracking-wide text-[var(--accent-strong)]">Podcast Assistant</p>
+        <p className="text-xs text-[var(--text-muted)] mt-1">Ask deeper questions from transcript</p>
       </div>
 
       <div ref={messageListRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 space-y-2.5">
         {loadingHistory && (
-          <div className="text-xs text-slate-400">Loading history...</div>
+          <div className="text-xs text-[var(--text-muted)]">Loading history...</div>
         )}
 
         {!loadingHistory && messages.length === 0 && (
-          <div className="rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-2.5 text-xs leading-6 text-slate-300">
+          <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--paper-subtle)] px-3 py-2.5 text-xs leading-6 text-[var(--text-secondary)]">
             处理完成后你可以在这里追问细节。问答会自动保存到数据库，刷新页面后仍可查看。
           </div>
         )}
@@ -256,8 +256,8 @@ export default function FloatingQaAssistant({
             <div
               className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${
                 message.role === 'user'
-                  ? 'bg-sky-500/85 text-white'
-                  : 'bg-slate-900 border border-slate-700/70 text-slate-100'
+                  ? 'bg-[var(--accent)] text-white shadow-[0_10px_24px_-18px_rgba(63,122,104,0.85)]'
+                  : 'bg-[var(--paper-base)] border border-[var(--border-soft)] text-[var(--text-main)]'
               }`}
             >
               {message.role === 'assistant' ? (
@@ -274,13 +274,13 @@ export default function FloatingQaAssistant({
         ))}
       </div>
 
-      <form onSubmit={handleSubmit} className="shrink-0 border-t border-slate-700/70 p-3 bg-slate-950/90">
+      <form onSubmit={handleSubmit} className="shrink-0 border-t border-[var(--border-soft)] p-3 bg-[var(--paper-subtle)]">
         <textarea
           value={input}
           onChange={event => setInput(event.target.value.slice(0, MAX_INPUT_LENGTH))}
           placeholder="输入你的问题，例如：有哪些被忽略但关键的数据？"
           rows={2}
-          className="w-full resize-none rounded-xl border border-slate-600/65 bg-slate-900/90 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
+          className="w-full resize-none rounded-xl border border-[var(--border-medium)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
@@ -289,16 +289,16 @@ export default function FloatingQaAssistant({
           }}
         />
         <div className="mt-2 flex items-center justify-between gap-2">
-          <span className="text-[11px] text-slate-500">{input.length}/{MAX_INPUT_LENGTH}</span>
+          <span className="text-[11px] text-[var(--text-muted)]">{input.length}/{MAX_INPUT_LENGTH}</span>
           <button
             type="submit"
             disabled={sending || !input.trim()}
-            className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? '回答中...' : 'Send'}
           </button>
         </div>
-        {error && <p className="mt-1.5 text-[11px] text-rose-300">{error}</p>}
+        {error && <p className="mt-1.5 text-[11px] text-[var(--danger)]">{error}</p>}
       </form>
     </aside>
   );

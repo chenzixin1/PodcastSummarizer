@@ -1,8 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f3eee3;
+  --foreground: #2f2a22;
+  --paper-base: #fffdf8;
+  --paper-muted: #f8f1e4;
+  --paper-subtle: #f5ecdb;
+  --border-soft: #ddd2bf;
+  --border-medium: #cfc1a8;
+  --text-main: #2f2a22;
+  --text-secondary: #5f5547;
+  --text-muted: #8a7a64;
+  --accent: #3f7a68;
+  --accent-strong: #2f6656;
+  --accent-soft: #dbeae4;
+  --danger: #a64e4e;
 }
 
 @theme inline {
@@ -12,182 +24,215 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
+  background:
+    radial-gradient(85rem 50rem at 5% -8%, rgba(198, 176, 136, 0.16), transparent 60%),
+    radial-gradient(75rem 45rem at 100% -10%, rgba(160, 184, 171, 0.18), transparent 62%),
+    var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   letter-spacing: 0.01em;
-  line-height: 1.65;
+  line-height: 1.68;
 }
 
 .dashboard-shell {
   background:
-    radial-gradient(72rem 40rem at 6% -4%, rgba(56, 189, 248, 0.18), transparent 60%),
-    radial-gradient(62rem 36rem at 98% -6%, rgba(14, 165, 233, 0.12), transparent 62%),
-    linear-gradient(180deg, #090f1f 0%, #091327 46%, #081225 100%);
+    radial-gradient(68rem 40rem at 4% -8%, rgba(198, 176, 136, 0.18), transparent 58%),
+    radial-gradient(60rem 36rem at 100% -12%, rgba(163, 183, 173, 0.14), transparent 62%),
+    linear-gradient(180deg, #f8f3ea 0%, #f2ebde 100%);
 }
 
 .dashboard-panel {
-  background: linear-gradient(165deg, rgba(15, 23, 42, 0.88) 0%, rgba(12, 22, 44, 0.86) 55%, rgba(10, 24, 46, 0.92) 100%);
-  border: 1px solid rgba(71, 85, 105, 0.45);
-  box-shadow: 0 22px 42px -26px rgba(15, 23, 42, 0.9);
+  background: linear-gradient(155deg, rgba(255, 254, 250, 0.97) 0%, rgba(249, 242, 229, 0.96) 100%);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 16px 36px -26px rgba(87, 71, 45, 0.4);
 }
 
 .dashboard-reading {
-  font-size: 1.02rem;
-  line-height: 1.86;
-  letter-spacing: 0.012em;
-  color: rgb(226 232 240 / 97%);
+  font-size: 1.04rem;
+  line-height: 1.94;
+  letter-spacing: 0.01em;
+  color: var(--text-main);
 }
 
-/* Markdown 样式 */
 .markdown-body {
-  @apply text-slate-100;
+  color: var(--text-main);
   font-size: 1.03rem;
-  line-height: 1.9;
-  letter-spacing: 0.012em;
+  line-height: 1.92;
+  letter-spacing: 0.01em;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
 
 .markdown-body h1 {
-  @apply font-bold text-sky-300 mb-4 mt-7;
-  font-size: clamp(1.65rem, 1.1rem + 1.35vw, 2.15rem);
-  line-height: 1.24;
-  letter-spacing: 0.012em;
+  margin: 1.8rem 0 1rem;
+  color: var(--accent-strong);
+  font-weight: 700;
+  font-size: clamp(1.6rem, 1.15rem + 1.3vw, 2.1rem);
+  line-height: 1.26;
+  letter-spacing: 0.01em;
 }
 
 .markdown-body h2 {
-  @apply font-bold text-sky-300 mb-3 mt-6;
-  font-size: clamp(1.28rem, 0.95rem + 0.92vw, 1.7rem);
-  line-height: 1.32;
+  margin: 1.5rem 0 0.9rem;
+  color: var(--accent-strong);
+  font-weight: 700;
+  font-size: clamp(1.26rem, 0.95rem + 0.85vw, 1.65rem);
+  line-height: 1.34;
 }
 
 .markdown-body h3 {
-  @apply font-semibold text-sky-200 mb-3 mt-5;
-  font-size: clamp(1.08rem, 0.9rem + 0.54vw, 1.28rem);
-  line-height: 1.38;
+  margin: 1.2rem 0 0.75rem;
+  color: #3a6d5c;
+  font-weight: 600;
+  font-size: clamp(1.06rem, 0.9rem + 0.52vw, 1.24rem);
+  line-height: 1.42;
 }
 
 .markdown-body h4 {
-  @apply text-base font-semibold text-sky-200 mb-2 mt-4;
-  line-height: 1.45;
+  margin: 1rem 0 0.6rem;
+  color: #3a6d5c;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .markdown-body p {
-  @apply mb-4 text-slate-100;
-}
-
-.markdown-body p + p {
-  margin-top: 0.35rem;
+  margin-bottom: 0.92rem;
+  color: var(--text-main);
 }
 
 .markdown-body ul {
-  @apply list-disc pl-7 mb-4;
+  margin: 0 0 1rem;
+  padding-left: 1.6rem;
+  list-style: disc;
 }
 
 .markdown-body ol {
-  @apply list-decimal pl-7 mb-4;
+  margin: 0 0 1rem;
+  padding-left: 1.6rem;
+  list-style: decimal;
 }
 
 .markdown-body li {
-  @apply mb-2.5 text-slate-100;
-  line-height: 1.82;
+  margin-bottom: 0.56rem;
+  color: var(--text-main);
+  line-height: 1.84;
 }
 
 .markdown-body li::marker {
-  color: rgb(56 189 248 / 90%);
+  color: var(--accent);
 }
 
 .markdown-body a {
-  @apply text-sky-300 hover:text-sky-200 hover:underline;
+  color: #2f6656;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.2px;
+}
+
+.markdown-body a:hover {
+  color: #255648;
+  text-decoration: underline;
 }
 
 .markdown-body strong {
-  @apply font-semibold text-cyan-200;
+  color: #234f41;
+  font-weight: 600;
 }
 
 .markdown-body blockquote {
-  @apply border-l-4 border-sky-500/80 pl-4 py-1 italic my-5 text-slate-200;
-  background: linear-gradient(90deg, rgba(14, 116, 144, 0.2), rgba(14, 116, 144, 0));
+  margin: 1.2rem 0;
+  border-left: 4px solid #8db6a7;
+  padding: 0.3rem 0 0.3rem 1rem;
+  color: var(--text-secondary);
+  background: linear-gradient(90deg, rgba(219, 234, 228, 0.85), rgba(219, 234, 228, 0));
 }
 
 .markdown-body pre {
-  @apply bg-slate-900/75 border border-slate-700/70 p-4 rounded-xl overflow-x-auto my-5;
+  margin: 1.2rem 0;
+  border-radius: 0.9rem;
+  border: 1px solid #d7cbb7;
+  background: #f6efe2;
+  padding: 0.95rem 1rem;
+  overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.72;
 }
 
 .markdown-body code {
-  @apply bg-slate-900/90 border border-slate-700/60 px-1.5 py-0.5 rounded text-amber-200;
+  border: 1px solid #e0d4c0;
+  border-radius: 0.42rem;
+  background: #f8f0e1;
+  padding: 0.08rem 0.35rem;
+  color: #684f2d;
+  font-size: 0.95em;
 }
 
 .markdown-body pre code {
+  border: 0;
   background: transparent;
   padding: 0;
-  border: 0;
+  color: #5f4b34;
 }
 
 .markdown-body table {
-  @apply w-full border-collapse my-5 rounded-lg overflow-hidden;
+  margin: 1.2rem 0;
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 0.7rem;
+  overflow: hidden;
 }
 
-.markdown-body th, .markdown-body td {
-  @apply border border-slate-600/70 p-2.5 align-top;
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #d8ccb8;
+  padding: 0.65rem 0.72rem;
+  vertical-align: top;
 }
 
 .markdown-body th {
-  @apply bg-slate-800/80 text-slate-100;
+  background: #f6eee0;
+  color: var(--text-main);
 }
 
-/* 流式内容容器样式 */
 .streaming-content {
   display: block;
   min-height: 220px;
   max-height: min(74vh, 940px);
   overflow-x: hidden;
   overflow-y: auto;
-  padding-right: 6px;
+  padding-right: 8px;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   font-size: 1.01rem;
-  line-height: 1.84;
-  letter-spacing: 0.012em;
+  line-height: 1.86;
+  letter-spacing: 0.01em;
 }
 
-/* 滚动条样式，使其更美观 */
 .streaming-content::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 .streaming-content::-webkit-scrollbar-track {
-  background: rgba(30, 41, 59, 0.45);
-  border-radius: 3px;
+  background: rgba(191, 173, 140, 0.2);
+  border-radius: 999px;
 }
 
 .streaming-content::-webkit-scrollbar-thumb {
-  background: rgba(125, 211, 252, 0.35);
-  border-radius: 3px;
+  background: rgba(126, 158, 144, 0.58);
+  border-radius: 999px;
 }
 
 .streaming-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(125, 211, 252, 0.6);
+  background: rgba(93, 129, 114, 0.68);
 }
 
-/* 提高内容可读性 */
 .streaming-content p,
 .streaming-content li {
   margin-bottom: 0.88rem;
@@ -195,10 +240,10 @@ body {
 
 .streaming-plain {
   margin: 0;
-  color: rgb(226 232 240 / 96%);
+  color: var(--text-main);
   font-size: 1.01rem;
-  line-height: 1.85;
-  letter-spacing: 0.012em;
+  line-height: 1.86;
+  letter-spacing: 0.01em;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -206,9 +251,9 @@ body {
 }
 
 .qa-markdown {
-  font-size: 0.88rem;
-  line-height: 1.58;
-  color: rgb(226 232 240 / 95%);
+  font-size: 0.91rem;
+  line-height: 1.64;
+  color: var(--text-main);
 }
 
 .qa-markdown p {
@@ -216,42 +261,46 @@ body {
 }
 
 .qa-markdown p + p {
-  margin-top: 0.5rem;
+  margin-top: 0.46rem;
 }
 
 .qa-markdown ul,
 .qa-markdown ol {
-  margin: 0.45rem 0 0 1rem;
+  margin: 0.42rem 0 0 1rem;
 }
 
 .qa-markdown li {
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.16rem;
+}
+
+.qa-markdown a {
+  color: #2f6656;
 }
 
 @media (max-width: 640px) {
   .dashboard-reading {
-    font-size: 0.96rem;
-    line-height: 1.76;
+    font-size: 0.98rem;
+    line-height: 1.82;
     letter-spacing: 0.01em;
   }
 
   .markdown-body {
-    font-size: 0.98rem;
+    font-size: 0.97rem;
     line-height: 1.8;
   }
 
   .markdown-body h1 {
-    font-size: 1.45rem;
-    line-height: 1.28;
+    font-size: 1.42rem;
+    line-height: 1.3;
   }
 
   .markdown-body h2 {
-    font-size: 1.25rem;
-    line-height: 1.34;
+    font-size: 1.21rem;
+    line-height: 1.35;
   }
 
   .markdown-body h3 {
-    font-size: 1.08rem;
+    font-size: 1.05rem;
     line-height: 1.42;
   }
 
@@ -260,7 +309,7 @@ body {
     max-height: min(67vh, 700px);
     font-size: 0.95rem;
     line-height: 1.72;
-    padding-right: 3px;
+    padding-right: 4px;
   }
 
   .streaming-plain {

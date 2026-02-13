@@ -1,9 +1,10 @@
 /* eslint-disable */
 'use client';
 
-import { useState, useEffect, useRef, useCallback, type WheelEvent } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getClientErrors } from '../../../lib/debugUtils';
@@ -201,29 +202,6 @@ export default function DashboardPage() {
     isAutoScrollEnabledRef.current = distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
   }, [activeView]);
 
-  const handleContentWheel = useCallback((event: WheelEvent<HTMLElement>) => {
-    const element = contentRef.current;
-    if (!element) {
-      return;
-    }
-
-    if (element.scrollHeight <= element.clientHeight) {
-      return;
-    }
-
-    const maxScrollTop = element.scrollHeight - element.clientHeight;
-    const modeMultiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
-    const normalizedDeltaY = event.deltaY * modeMultiplier;
-    const boostedDeltaY =
-      Math.sign(normalizedDeltaY) * Math.max(Math.abs(normalizedDeltaY) * 1.35, 22);
-    const nextScrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + boostedDeltaY));
-
-    if (nextScrollTop !== element.scrollTop) {
-      element.scrollTop = nextScrollTop;
-      event.preventDefault();
-    }
-  }, []);
-
   const switchActiveView = (nextView: ViewMode) => {
     if (nextView === activeView) {
       return;
@@ -418,13 +396,13 @@ export default function DashboardPage() {
   // Add ID validation after all hooks and functions are defined
   if (!id || id === 'undefined' || id === 'null') {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
-        <div className="text-center max-w-md p-8 bg-slate-800 rounded-lg shadow-xl">
-          <h1 className="text-2xl font-bold text-red-400 mb-4">Invalid File ID</h1>
-          <p className="text-slate-300 mb-6">
+      <div className="min-h-screen bg-[#f3eee3] text-[var(--text-main)] flex items-center justify-center px-4">
+        <div className="text-center max-w-md p-8 bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-2xl shadow-[0_18px_42px_-30px_rgba(80,67,44,0.55)]">
+          <h1 className="text-2xl font-bold text-[var(--danger)] mb-4">Invalid File ID</h1>
+          <p className="text-[var(--text-secondary)] mb-6">
             The file ID in the URL is invalid or missing. This usually happens when:
           </p>
-          <ul className="text-left text-sm text-slate-400 mb-6 space-y-2">
+          <ul className="text-left text-sm text-[var(--text-muted)] mb-6 space-y-2">
             <li>• You navigated to an incomplete URL</li>
             <li>• The file upload process was interrupted</li>
             <li>• You&rsquo;re using an old or broken bookmark</li>
@@ -432,13 +410,13 @@ export default function DashboardPage() {
           <div className="space-y-3">
             <Link 
               href="/upload" 
-              className="block w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
+              className="block w-full bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-white font-semibold py-3 px-4 rounded-lg transition-colors"
             >
               Upload New File
             </Link>
             <Link 
               href="/my" 
-              className="block w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 px-4 rounded-lg transition-colors"
+              className="block w-full bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] font-semibold py-3 px-4 rounded-lg transition-colors"
             >
               View File History
             </Link>
@@ -794,20 +772,20 @@ export default function DashboardPage() {
 
   const renderContent = () => {
     if (isLoading && !data) {
-      return <div className="text-center p-10 text-slate-400">Loading content...</div>;
+      return <div className="text-center p-10 text-[var(--text-muted)]">Loading content...</div>;
     }
     if (error) {
-      return <div className="text-center p-10 text-red-400">Error: {error}</div>;
+      return <div className="text-center p-10 text-[var(--danger)]">Error: {error}</div>;
     }
     if (!data) {
-      return <div className="text-center p-10 text-slate-400">No data available.</div>;
+      return <div className="text-center p-10 text-[var(--text-muted)]">No data available.</div>;
     }
 
     switch (activeView) {
       case 'summary':
         return (
           <div className="p-4 sm:p-6 lg:p-8">
-            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
+            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
               <div className="markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {data.summary || '正在生成摘要...'}
@@ -819,7 +797,7 @@ export default function DashboardPage() {
       case 'translate':
         return (
           <div className="p-4 sm:p-6 lg:p-8">
-            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
+            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
               <div className="markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {data.translation || '正在生成翻译...'}
@@ -831,7 +809,7 @@ export default function DashboardPage() {
       case 'fullText':
         return (
             <div className="p-4 sm:p-6 lg:p-8">
-            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
+            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
                   <div className="markdown-body">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {data.fullTextHighlights || '正在生成重点内容...'}
@@ -848,47 +826,47 @@ export default function DashboardPage() {
   const getButtonClass = (view: ViewMode) => 
     `px-3.5 sm:px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide border transition-all duration-200 whitespace-nowrap
      ${activeView === view 
-       ? 'bg-sky-500/90 text-white border-sky-300/45 shadow-[0_12px_30px_-14px_rgba(56,189,248,0.9)]' 
-       : 'bg-slate-800/75 text-slate-300 border-slate-600/45 hover:bg-slate-700/80 hover:text-slate-100 hover:border-slate-500/60'}`;
+       ? 'bg-[var(--accent)] text-white border-[#5d8f7f] shadow-[0_12px_30px_-20px_rgba(63,122,104,0.72)]'
+       : 'bg-[var(--paper-base)] text-[var(--text-secondary)] border-[var(--border-soft)] hover:bg-[var(--paper-muted)] hover:text-[var(--text-main)] hover:border-[var(--border-medium)]'}`;
 
   // Add Debug Status Panel component
   const DebugStatusPanel = () => {
     if (!debugMode) return null;
     
     return (
-      <div className="fixed bottom-0 right-0 w-80 max-h-80 overflow-auto bg-slate-950/90 border border-sky-700/55 rounded-tl-xl p-3 text-xs z-50 backdrop-blur-sm">
-        <h3 className="text-sky-400 font-semibold mb-2">Debug Status v{APP_VERSION}</h3>
+      <div className="fixed bottom-0 right-0 w-80 max-h-80 overflow-auto bg-[var(--paper-base)] border border-[var(--border-medium)] rounded-tl-xl p-3 text-xs z-50 shadow-[0_16px_32px_-24px_rgba(80,67,44,0.5)]">
+        <h3 className="text-[var(--accent-strong)] font-semibold mb-2">Debug Status v{APP_VERSION}</h3>
         <div className="space-y-1 mb-2">
-          <div><span className="text-slate-400">ID:</span> <span className="text-white">{id}</span></div>
-          <div><span className="text-slate-400">State:</span> <span className={`${isProcessing ? 'text-yellow-400' : 'text-green-400'}`}>
+          <div><span className="text-[var(--text-muted)]">ID:</span> <span className="text-[var(--text-main)]">{id}</span></div>
+          <div><span className="text-[var(--text-muted)]">State:</span> <span className={`${isProcessing ? 'text-amber-700' : 'text-emerald-700'}`}>
             {isProcessing ? 'PROCESSING' : (data ? 'LOADED' : 'IDLE')}</span></div>
-          <div><span className="text-slate-400">Request Sent:</span> <span className={`${requestSentRef.current ? 'text-yellow-400' : 'text-green-400'}`}>
+          <div><span className="text-[var(--text-muted)]">Request Sent:</span> <span className={`${requestSentRef.current ? 'text-amber-700' : 'text-emerald-700'}`}>
             {requestSentRef.current ? 'YES' : 'NO'}</span></div>
-          {error && <div><span className="text-red-400">Error:</span> <span className="text-white">{error}</span></div>}
+          {error && <div><span className="text-[var(--danger)]">Error:</span> <span className="text-[var(--text-main)]">{error}</span></div>}
         </div>
         
-        <h4 className="text-sky-400 font-semibold mt-2 mb-1">Last Requests:</h4>
+        <h4 className="text-[var(--accent-strong)] font-semibold mt-2 mb-1">Last Requests:</h4>
         <div className="space-y-1 mb-2 max-h-20 overflow-y-auto">
           {debugState.networkRequests.slice(-3).reverse().map((req, i) => (
             <div key={i} className="flex justify-between">
-              <span className="text-slate-400 truncate">{req.url.split('/').pop()}</span>
-              <span className={`${req.status < 300 ? 'text-green-400' : 'text-red-400'}`}>
+              <span className="text-[var(--text-muted)] truncate">{req.url.split('/').pop()}</span>
+              <span className={`${req.status < 300 ? 'text-emerald-700' : 'text-[var(--danger)]'}`}>
                 {req.status} ({req.duration}ms)
               </span>
             </div>
           ))}
         </div>
         
-        <div className="pt-2 border-t border-slate-700 flex space-x-2">
+        <div className="pt-2 border-t border-[var(--border-soft)] flex space-x-2">
           <button 
             onClick={() => captureDebugState('refresh-clicked')} 
-            className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded hover:bg-slate-600"
+            className="text-xs bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] px-2 py-1 rounded hover:bg-[var(--paper-muted)]"
           >
             Refresh
           </button>
           <button 
             onClick={copyDebugInfo}
-            className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded hover:bg-slate-600"
+            className="text-xs bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] px-2 py-1 rounded hover:bg-[var(--paper-muted)]"
           >
             Copy Debug Info
           </button>
@@ -907,15 +885,18 @@ export default function DashboardPage() {
   // Modify rendering to wrap in ErrorBoundary and include Debug Panel
   return (
     <ErrorBoundary>
-      <div className="dashboard-shell min-h-screen text-slate-100 flex flex-col">
-        <header className="sticky top-0 z-20 border-b border-slate-700/55 bg-slate-950/70 backdrop-blur-xl">
+      <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col">
+        <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[rgba(248,243,234,0.9)] backdrop-blur-xl">
           <div className="container mx-auto px-3 py-3.5 md:px-4 md:py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
             {/* Breadcrumb Navigation */}
             <nav className="flex items-center space-x-2 text-sm sm:text-base lg:text-xl min-w-0 w-full md:w-auto">
-              <Link href="/" className="text-sky-300 hover:text-sky-200 transition-colors font-bold shrink-0 tracking-wide">PodSum.cc</Link>
-              <span className="text-slate-400">/</span>
+              <Link href="/" className="inline-flex items-center gap-2 text-[var(--accent-strong)] hover:text-[var(--accent)] transition-colors font-bold shrink-0 tracking-wide">
+                <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={22} height={22} />
+                <span>PodSum.cc</span>
+              </Link>
+              <span className="text-[var(--text-muted)]">/</span>
               <span
-                className="text-slate-100 font-medium truncate max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
+                className="text-[var(--text-main)] font-medium truncate max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
                 title={data?.title || ''}
               >
                 {data?.title || ''}
@@ -924,14 +905,14 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2 flex-wrap justify-end w-full md:w-auto">
               <button 
                 onClick={() => setDebugMode(!debugMode)}
-                className="hidden sm:inline-flex text-xs bg-slate-800/85 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 rounded-lg text-slate-300 transition-colors"
+                className="hidden sm:inline-flex text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 rounded-lg text-[var(--text-secondary)] transition-colors"
               >
                 {debugMode ? 'Hide Debug' : 'Debug Mode'}
               </button>
-              <Link href="/my" className="text-xs bg-slate-800/85 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-3 rounded-lg text-slate-200 transition-colors">
+              <Link href="/my" className="text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-3 rounded-lg text-[var(--text-secondary)] transition-colors">
                 View All Files
               </Link>
-              {id && <span className="hidden md:inline text-xs text-slate-500 font-medium">ID: {id}</span>}
+              {id && <span className="hidden md:inline text-xs text-[var(--text-muted)] font-medium">ID: {id}</span>}
             </div>
           </div>
         </header>
@@ -939,20 +920,20 @@ export default function DashboardPage() {
         {/* 中间内容区域 */}
         {!data && !error && isLoading && (
           <div className="flex-grow flex items-center justify-center">
-              <div className="text-center rounded-2xl border border-slate-700/50 bg-slate-900/55 px-8 py-8 shadow-2xl backdrop-blur-sm">
-                  <div className="animate-spin rounded-full h-12 w-12 border-2 border-slate-500 border-t-sky-400 mx-auto mb-4"></div>
-                  <p className="text-slate-300 text-sm sm:text-base tracking-wide">Loading transcript data...</p>
+              <div className="text-center rounded-2xl border border-[var(--border-soft)] bg-[var(--paper-base)] px-8 py-8 shadow-[0_18px_40px_-28px_rgba(80,67,44,0.45)]">
+                  <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--accent)] mx-auto mb-4"></div>
+                  <p className="text-[var(--text-secondary)] text-sm sm:text-base tracking-wide">Loading transcript data...</p>
               </div>
           </div>
         )}
 
         {error && (
            <div className="flex-grow flex items-center justify-center">
-             <div className="text-red-300 border border-red-700/45 bg-red-950/30 p-6 sm:p-7 rounded-2xl flex flex-col items-center max-w-md shadow-2xl">
+             <div className="text-[var(--danger)] border border-[#d8b7b7] bg-[#fff5f5] p-6 sm:p-7 rounded-2xl flex flex-col items-center max-w-md shadow-[0_18px_42px_-30px_rgba(125,73,73,0.52)]">
                 <p className="mb-4 text-center leading-7">{error}</p>
                 <button 
                   onClick={retryProcessing}
-                  className="px-6 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-white text-sm font-semibold transition-colors"
+                  className="px-6 py-2.5 bg-[var(--danger)] hover:bg-[#8f4343] rounded-xl text-white text-sm font-semibold transition-colors"
                   disabled={isProcessing}
                 >
                   {isProcessing ? (
@@ -969,23 +950,23 @@ export default function DashboardPage() {
         {data && (
           <main className="container mx-auto w-full max-w-[1800px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col xl:grid xl:grid-cols-[320px_320px_minmax(0,1fr)] gap-4 md:gap-6 xl:items-start">
             {/* Left Sidebar */} 
-            <aside ref={leftPanelRef} className="w-full dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl shadow-2xl self-start">
-              <h2 className="text-lg sm:text-xl font-semibold mb-1 text-sky-300 truncate leading-8" title={data.title}>{data.title}</h2>
-              <p className="text-xs text-slate-500 mb-5 tracking-wide">ID: {id}</p>
+            <aside ref={leftPanelRef} className="w-full dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl self-start">
+              <h2 className="text-lg sm:text-xl font-semibold mb-1 text-[var(--accent-strong)] truncate leading-8" title={data.title}>{data.title}</h2>
+              <p className="text-xs text-[var(--text-muted)] mb-5 tracking-wide">ID: {id}</p>
               
               <div className="space-y-4 text-sm">
                 <div>
-                  <span className="font-semibold text-slate-400 tracking-wide">Original File</span> 
-                  <p className="text-slate-200 mt-1 break-words leading-6" title={data.originalFileName}>{data.originalFileName}</p>
+                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Original File</span> 
+                  <p className="text-[var(--text-main)] mt-1 break-words leading-6" title={data.originalFileName}>{data.originalFileName}</p>
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-400 tracking-wide">File Size</span> 
-                  <p className="text-slate-200 mt-1">{data.originalFileSize}</p>
+                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">File Size</span> 
+                  <p className="text-[var(--text-main)] mt-1">{data.originalFileSize}</p>
                 </div>
                 {data.processedAt && (
                   <div>
-                    <span className="font-semibold text-slate-400 tracking-wide">Processed</span> 
-                    <p className="text-slate-200 mt-1">{new Date(data.processedAt).toLocaleString()}</p>
+                    <span className="font-semibold text-[var(--text-muted)] tracking-wide">Processed</span> 
+                    <p className="text-[var(--text-main)] mt-1">{new Date(data.processedAt).toLocaleString()}</p>
                   </div>
                 )}
               </div>
@@ -995,7 +976,7 @@ export default function DashboardPage() {
                 <div className="mt-6">
                   <button 
                     onClick={retryProcessing}
-                    className="w-full py-2.5 bg-sky-500 hover:bg-sky-400 rounded-xl text-white text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-18px_rgba(56,189,248,0.95)]"
+                    className="w-full py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] rounded-xl text-white text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-20px_rgba(63,122,104,0.8)]"
                     disabled={isProcessing}
                   >
                     {isProcessing ? (
@@ -1010,7 +991,7 @@ export default function DashboardPage() {
               
               {/* Debug Mode 显示调试信息 */}
               {debugMode && (
-                <div className="mt-6 p-4 bg-slate-900/60 border border-slate-700/60 rounded-xl text-xs text-slate-300">
+                <div className="mt-6 p-4 bg-[var(--paper-subtle)] border border-[var(--border-soft)] rounded-xl text-xs text-[var(--text-secondary)]">
                   <h3 className="font-bold mb-2 tracking-wide">Debug Info</h3>
                   <div>canEdit: {canEdit.toString()}</div>
                   <div>isLoading: {isLoading.toString()}</div>
@@ -1018,7 +999,7 @@ export default function DashboardPage() {
                   <div>hasError: {!!error}</div>
                   <button 
                     onClick={() => console.log('window.__PODSUM_DEBUG__:', window.__PODSUM_DEBUG__)}
-                    className="mt-2 px-2.5 py-1 bg-sky-600 hover:bg-sky-500 rounded-lg text-xs transition-colors"
+                    className="mt-2 px-2.5 py-1 bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-white rounded-lg text-xs transition-colors"
                   >
                     Log Debug to Console
                   </button>
@@ -1045,19 +1026,19 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={copyCurrentView}
-                      className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 sm:px-3 rounded-lg text-slate-300 transition-colors"
+                      className="text-[11px] sm:text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 sm:px-3 rounded-lg text-[var(--text-secondary)] transition-colors"
                     >
                       {copyStatus === 'copied' ? 'Copied' : (copyStatus === 'failed' ? 'No Content' : 'Copy View')}
                     </button>
                     <button
                       onClick={scrollCurrentViewToTop}
-                      className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 sm:px-3 rounded-lg text-slate-300 transition-colors"
+                      className="text-[11px] sm:text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 sm:px-3 rounded-lg text-[var(--text-secondary)] transition-colors"
                     >
                       Top
                     </button>
                     <button
                       onClick={scrollCurrentViewToBottom}
-                      className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 sm:px-3 rounded-lg text-slate-300 transition-colors"
+                      className="text-[11px] sm:text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 sm:px-3 rounded-lg text-[var(--text-secondary)] transition-colors"
                     >
                       Bottom
                     </button>
@@ -1065,21 +1046,21 @@ export default function DashboardPage() {
               </div>
 
               {isProcessing && (
-                <div className="mb-4 rounded-2xl border border-sky-700/45 bg-slate-900/55 p-3.5 sm:p-4 shadow-xl backdrop-blur-sm">
+                <div className="mb-4 rounded-2xl border border-[#bed3c9] bg-[var(--paper-base)] p-3.5 sm:p-4 shadow-[0_12px_28px_-24px_rgba(73,93,83,0.5)]">
                   <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
-                    <div className="text-sky-200 flex items-center gap-2">
-                      <span className="inline-block h-2 w-2 rounded-full bg-sky-400 animate-pulse"></span>
+                    <div className="text-[var(--text-secondary)] flex items-center gap-2">
+                      <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
                       <span>{processingStatus || '处理中...'}</span>
                     </div>
-                    <span className="text-slate-300 tracking-wide">
+                    <span className="text-[var(--text-muted)] tracking-wide">
                       {processingProgress.task ? TASK_LABELS[processingProgress.task] : 'Preparing'}
                       {processingProgress.total > 0 ? ` · ${processingProgress.completed}/${processingProgress.total}` : ''}
                     </span>
                   </div>
                   {processingProgress.total > 0 && (
-                    <div className="mt-2.5 h-2 w-full rounded-full bg-slate-700/80 overflow-hidden">
+                    <div className="mt-2.5 h-2 w-full rounded-full bg-[#d9d3c7] overflow-hidden">
                       <div
-                        className="h-full bg-gradient-to-r from-sky-500 to-cyan-400 transition-all duration-300 ease-out"
+                        className="h-full bg-gradient-to-r from-[#7ea08f] to-[#3f7a68] transition-all duration-300 ease-out"
                         style={{ width: `${Math.min(100, Math.round((processingProgress.completed / processingProgress.total) * 100))}%` }}
                       />
                     </div>
@@ -1087,7 +1068,7 @@ export default function DashboardPage() {
                 </div>
               )}
               
-              <div className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl shadow-2xl overflow-hidden">
+              <div className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl overflow-hidden">
                 {renderContent()}
               </div>
             </section>
@@ -1097,7 +1078,7 @@ export default function DashboardPage() {
         {/* Add Debug Status Panel */}
         <DebugStatusPanel />
         
-        <footer className="p-4 text-center text-xs text-slate-500 tracking-wide">
+        <footer className="p-4 text-center text-xs text-[var(--text-muted)] tracking-wide">
           SRT Processor Edge Demo v{APP_VERSION}
         </footer>
       </div>
