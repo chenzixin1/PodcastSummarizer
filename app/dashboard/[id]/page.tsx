@@ -1,16 +1,17 @@
 /* eslint-disable */
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type WheelEvent } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getClientErrors } from '../../../lib/debugUtils';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
+import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
 
 // VERCEL DEBUG: Add version number to help track deployments
-const APP_VERSION = '1.0.3'; // Increment version for tracking
+const APP_VERSION = '1.0.4'; // Increment version for tracking
 console.log(`[DEBUG] Podcast Summarizer v${APP_VERSION} loading...`);
 
 // Define types for the processed data
@@ -24,18 +25,13 @@ interface ProcessedData {
   processedAt?: string;
 }
 
-interface StreamingBuffers {
-  summary: string;
-  translation: string;
-  highlights: string;
-}
-
-// Define types for streamed process results
-interface ProcessResult {
-  summary: string;
-  translation: string;
-  fullTextHighlights: string;
-  processedAt: string;
+interface ProcessingJobData {
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  currentTask?: 'summary' | 'translation' | 'highlights' | null;
+  progressCurrent?: number;
+  progressTotal?: number;
+  statusMessage?: string | null;
+  lastError?: string | null;
 }
 
 type ViewMode = 'summary' | 'translate' | 'fullText';
@@ -47,23 +43,13 @@ interface ProcessingProgress {
   total: number;
 }
 
-const STREAM_FLUSH_INTERVAL_MS = 80;
 const COPY_STATUS_RESET_MS = 1500;
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 64;
+const ANALYSIS_POLL_INTERVAL_MS = 5000;
 const TASK_LABELS: Record<ProcessingTask, string> = {
   summary: 'Summary',
   translation: 'Translation',
   highlights: 'Highlights',
-};
-
-// Helper function to safely parse JSON
-const safelyParseJSON = (jsonString: string) => {
-  try {
-    return JSON.parse(jsonString) as any;
-  } catch (error) {
-    console.error('Error parsing JSON:', error);
-    return {};
-  }
 };
 
 // Normalize highlight text by ensuring each timestamp starts on a new line
@@ -135,6 +121,7 @@ export default function DashboardPage() {
   const [isHighlightsFinal, setIsHighlightsFinal] = useState(true);
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [pollTick, setPollTick] = useState(0);
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgress>({
     task: null,
     completed: 0,
@@ -152,13 +139,7 @@ export default function DashboardPage() {
   });
   const lastHeightRef = useRef(0);
   const requestSentRef = useRef(false);
-  const streamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const streamBuffersRef = useRef<StreamingBuffers>({
-    summary: '',
-    translation: '',
-    highlights: '',
-  });
 
   // Debug state
   const [debugMode, setDebugMode] = useState(false);
@@ -183,35 +164,6 @@ export default function DashboardPage() {
   console.log(`[DEBUG] Dashboard initializing for ID: ${id}`);
   logDebug(`Dashboard initializing for ID: ${id}`);
 
-  const flushStreamBuffers = useCallback(() => {
-    if (streamFlushTimerRef.current !== null) {
-      clearTimeout(streamFlushTimerRef.current);
-      streamFlushTimerRef.current = null;
-    }
-    const { summary, translation, highlights } = streamBuffersRef.current;
-    setData(prevData => prevData ? {
-      ...prevData,
-      summary,
-      translation,
-      fullTextHighlights: highlights,
-    } : prevData);
-  }, []);
-
-  const queueStreamFlush = useCallback(() => {
-    if (streamFlushTimerRef.current !== null) {
-      return;
-    }
-    streamFlushTimerRef.current = setTimeout(flushStreamBuffers, STREAM_FLUSH_INTERVAL_MS);
-  }, [flushStreamBuffers]);
-
-  const syncStreamBuffersFromData = useCallback((nextData: ProcessedData) => {
-    streamBuffersRef.current = {
-      summary: nextData.summary,
-      translation: nextData.translation,
-      highlights: nextData.fullTextHighlights,
-    };
-  }, []);
-
   const setContentElement = useCallback((element: HTMLElement | null) => {
     contentRef.current = element;
     if (!element) {
@@ -232,6 +184,25 @@ export default function DashboardPage() {
     const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
     isAutoScrollEnabledRef.current = distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
   }, [activeView]);
+
+  const handleContentWheel = useCallback((event: WheelEvent<HTMLElement>) => {
+    const element = contentRef.current;
+    if (!element) {
+      return;
+    }
+
+    if (element.scrollHeight <= element.clientHeight) {
+      return;
+    }
+
+    const maxScrollTop = element.scrollHeight - element.clientHeight;
+    const nextScrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + event.deltaY));
+
+    if (nextScrollTop !== element.scrollTop) {
+      element.scrollTop = nextScrollTop;
+      event.preventDefault();
+    }
+  }, []);
 
   const switchActiveView = (nextView: ViewMode) => {
     if (nextView === activeView) {
@@ -271,17 +242,6 @@ export default function DashboardPage() {
     [],
   );
 
-  const markTaskComplete = useCallback((task: ProcessingTask) => {
-    setProcessingProgress(prev => {
-      const total = prev.total > 0 ? prev.total : 1;
-      return {
-        task,
-        completed: total,
-        total,
-      };
-    });
-  }, []);
-
   const setCopyStatusWithReset = useCallback((nextStatus: 'idle' | 'copied' | 'failed') => {
     setCopyStatus(nextStatus);
     if (copyStatusTimerRef.current !== null) {
@@ -295,11 +255,108 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const applyProcessingJobState = useCallback((job: ProcessingJobData | null) => {
+    if (!job) {
+      setIsProcessing(false);
+      isProcessingRef.current = false;
+      setProcessingStatus(null);
+      requestSentRef.current = false;
+      resetProcessingProgress();
+      return;
+    }
+
+    if (job.status === 'queued' || job.status === 'processing') {
+      setError(null);
+      setIsProcessing(true);
+      isProcessingRef.current = true;
+      requestSentRef.current = true;
+      setIsSummaryFinal(false);
+      setIsHighlightsFinal(false);
+      setProcessingStatus(job.statusMessage || (job.status === 'queued' ? '已进入后台队列' : '后台处理中...'));
+
+      const task =
+        job.currentTask === 'summary' || job.currentTask === 'translation' || job.currentTask === 'highlights'
+          ? job.currentTask
+          : 'summary';
+      const completed = typeof job.progressCurrent === 'number' ? job.progressCurrent : 0;
+      const total = typeof job.progressTotal === 'number' ? job.progressTotal : 0;
+      setProcessingProgress({
+        task,
+        completed,
+        total,
+      });
+      return;
+    }
+
+    if (job.status === 'failed') {
+      setIsProcessing(false);
+      isProcessingRef.current = false;
+      requestSentRef.current = false;
+      setProcessingStatus(job.statusMessage || null);
+      if (job.lastError) {
+        setError(`后台处理失败: ${job.lastError}`);
+      }
+      resetProcessingProgress();
+      return;
+    }
+
+    setIsProcessing(false);
+    isProcessingRef.current = false;
+    requestSentRef.current = false;
+    setError(null);
+    setProcessingStatus(null);
+    setIsSummaryFinal(true);
+    setIsHighlightsFinal(true);
+    resetProcessingProgress();
+  }, [resetProcessingProgress]);
+
+  const enqueueBackgroundProcessing = useCallback(async (force = false) => {
+    if (!id) return;
+    if (!force && requestSentRef.current) return;
+
+    requestSentRef.current = true;
+    setError(null);
+    setIsProcessing(true);
+    isProcessingRef.current = true;
+    setIsSummaryFinal(false);
+    setIsHighlightsFinal(false);
+    setProcessingStatus(force ? '已提交重新处理任务...' : '已提交后台处理任务...');
+    setProcessingProgress({
+      task: 'summary',
+      completed: 0,
+      total: 0,
+    });
+
+    try {
+      const response = await fetch('/api/process/enqueue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id, force }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Failed to enqueue job (${response.status})`);
+      }
+
+      if (result.data?.job) {
+        applyProcessingJobState(result.data.job as ProcessingJobData);
+      }
+    } catch (enqueueError) {
+      const message = enqueueError instanceof Error ? enqueueError.message : String(enqueueError);
+      setError(`提交后台任务失败: ${message}`);
+      setIsProcessing(false);
+      isProcessingRef.current = false;
+      requestSentRef.current = false;
+      setProcessingStatus(null);
+      resetProcessingProgress();
+    }
+  }, [applyProcessingJobState, id, resetProcessingProgress]);
+
   useEffect(() => {
     return () => {
-      if (streamFlushTimerRef.current !== null) {
-        clearTimeout(streamFlushTimerRef.current);
-      }
       if (copyStatusTimerRef.current !== null) {
         clearTimeout(copyStatusTimerRef.current);
       }
@@ -504,7 +561,7 @@ export default function DashboardPage() {
         }
         
         if (result.success && result.data) {
-          const { podcast, analysis, isProcessed, canEdit } = result.data;
+          const { podcast, analysis, isProcessed, canEdit, processingJob } = result.data;
           
           if (isProcessed && analysis) {
             // 数据库中有完整的分析结果
@@ -521,12 +578,14 @@ export default function DashboardPage() {
               processedAt: analysis.processedAt,
             };
             setData(loadedData);
-            syncStreamBuffersFromData(loadedData);
             setIsSummaryFinal(true);
             setIsHighlightsFinal(true);
             setProcessingStatus(null);
             setCopyStatusWithReset('idle');
             resetProcessingProgress();
+            setIsProcessing(false);
+            isProcessingRef.current = false;
+            requestSentRef.current = false;
             setIsLoading(false);
             setCanEdit(canEdit); // 新增
             
@@ -546,22 +605,30 @@ export default function DashboardPage() {
               title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
-              summary: '',
-              translation: '',
-              fullTextHighlights: '',
+              summary: normalizeMarkdownOutput(analysis?.summary || ''),
+              translation: normalizePlainTextOutput(analysis?.translation || ''),
+              fullTextHighlights: normalizeMarkdownOutput(
+                enforceLineBreaks(analysis?.highlights || '')
+              ),
+              processedAt: analysis?.processedAt || undefined,
             };
             setData(processingData);
-            syncStreamBuffersFromData(processingData);
             setIsSummaryFinal(false);
             setIsHighlightsFinal(false);
-            setProcessingStatus('正在处理中，稍后显示结果...');
+            setProcessingStatus('等待后台处理...');
             setCopyStatusWithReset('idle');
             resetProcessingProgress();
             setIsLoading(false);
+            setCanEdit(canEdit);
             
-            // 开始处理
-            if (podcast.blobUrl && !isProcessing && !requestSentRef.current) {
-              startProcessing(podcast.blobUrl, podcast.originalFileName);
+            if (processingJob) {
+              applyProcessingJobState(processingJob as ProcessingJobData);
+            } else if (canEdit) {
+              enqueueBackgroundProcessing(false);
+            } else {
+              setIsProcessing(false);
+              isProcessingRef.current = false;
+              requestSentRef.current = false;
             }
           } else {
             // 数据库中完全没有该ID的信息
@@ -582,311 +649,19 @@ export default function DashboardPage() {
         setIsLoading(false);
       });
     }
-  }, [id]); // 只依赖 id，避免无限循环
+  }, [id, pollTick]); // 轮询时刷新状态
 
-  // Start processing function
-  function startProcessing(fileUrl: string, fileName: string) {
-    console.log('[DEBUG] 开始API处理请求');
-    logUserAction('start-processing', { id, fileName });
-    
-    // 标记为处理中
-    setIsProcessing(true);
-    setIsSummaryFinal(false);
-    setIsHighlightsFinal(false);
-    setProcessingStatus('正在启动处理流程...');
-    setCopyStatusWithReset('idle');
-    setProcessingProgress({
-      task: 'summary',
-      completed: 0,
-      total: 0,
-    });
-    requestSentRef.current = true;
-    isProcessingRef.current = true;
-    isAutoScrollEnabledRef.current = true;
-    streamBuffersRef.current = {
-      summary: '',
-      translation: '',
-      highlights: '',
-    };
-    
-    // 处理文件
-    console.log(`[DEBUG] 发送处理请求到 /api/process，ID: ${id}`);
-    const apiStartTime = performance.now();
-    
-    debugFetch('/api/process', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        id,
-        blobUrl: fileUrl,
-        fileName,
-        debug: true,
-        appVersion: APP_VERSION
-      }),
-    })
-    .then(response => {
-      console.log(`[DEBUG] API response received, status: ${response.status}, ok: ${response.ok}`);
-      logDebug('API response received', { 
-        status: response.status, 
-        ok: response.ok, 
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries())
-      });
-      
-      if (!response.ok) {
-        return response.text().then(text => {
-          console.error(`[DEBUG] Error response text: ${text}`);
-          let errorMessage = 'Processing failed';
-          try {
-            if (text && (text.startsWith('{') || text.startsWith('['))) {
-              const errorData = safelyParseJSON(text);
-              errorMessage = errorData.error || errorMessage;
-              console.error(`[DEBUG] Parsed error data: ${JSON.stringify(errorData)}`);
-              logError('API error response', { errorData, status: response.status });
-            } else {
-              errorMessage = text || errorMessage;
-              logError('API plain text error', { text, status: response.status });
-            }
-          } catch (e) {
-            console.error('[DEBUG] Error parsing error response:', e, text);
-            logError('Failed to parse error response', { error: e, text });
-            errorMessage = text || errorMessage;
-          }
-          throw new Error(errorMessage);
-        });
-      }
-      
-      // Handle EventStream response
-      const reader = response.body?.getReader();
-      if (!reader) {
-        console.error('[DEBUG] Stream reader not available');
-        logError('Stream reader not available');
-        throw new Error('Stream reader not available');
-      }
-      
-      console.log('[DEBUG] Stream reader created, beginning to process stream');
-      logDebug('Stream processing started');
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let summary = '';
-      let translation = '';
-      let highlights = '';
-      
-      // Track events received
-      let eventsReceived = 0;
-      const streamStartTime = performance.now();
-      
-      // Create a Promise to process the stream
-      return new Promise<ProcessResult>((resolve, reject) => {
-        const streamReader = reader;
-        function processStream() {
-          streamReader.read().then(({ done, value }) => {
-            if (done) {
-              console.log('[DEBUG] Stream processing completed');
-              logDebug('Stream processing completed', { 
-                eventsReceived,
-                processingTime: performance.now() - streamStartTime,
-                summaryLength: summary.length
-              });
-              
-              return resolve({
-                summary,
-                translation,
-                fullTextHighlights: enforceLineBreaks(highlights),
-                processedAt: new Date().toISOString()
-              });
-            }
-            
-            const newChunk = decoder.decode(value, { stream: true });
-            console.log(`[DEBUG] Received chunk of length: ${newChunk.length}`);
-            buffer += newChunk;
-            let eolIndex;
-            
-            while ((eolIndex = buffer.indexOf('\n\n')) >= 0) {
-              const message = buffer.substring(0, eolIndex);
-              buffer = buffer.substring(eolIndex + 2);
-              
-              if (message.startsWith('data: ')) {
-                try {
-                  const jsonData = message.substring(5).trim();
-                  console.log(`[DEBUG] Processing stream event: ${jsonData.substring(0, 50)}...`);
-                  eventsReceived++;
-                  
-                  const eventData = safelyParseJSON(jsonData);
-                  
-                  // Update UI with real-time processing results
-                  switch (eventData.type) {
-                    case 'status':
-                      console.log('[DEBUG] Status update:', eventData.message);
-                      if (
-                        eventData.task === 'summary' ||
-                        eventData.task === 'translation' ||
-                        eventData.task === 'highlights'
-                      ) {
-                        updateProcessingProgress(eventData.task);
-                      }
-                      setProcessingStatus(typeof eventData.message === 'string' ? eventData.message : null);
-                      break;
-                    case 'summary_token':
-                      if (typeof eventData.content !== 'string') {
-                        break;
-                      }
-                      const summaryContent = eventData.content;
-                      summary += summaryContent;
-                      
-                      if (summary.length % 100 === 0) {
-                        console.log(`[DEBUG] Summary accumulating, now at ${summary.length} characters`);
-                      }
+  // 后台处理中时轮询数据库状态（页面只做展示）
+  useEffect(() => {
+    if (!id || !isProcessing) {
+      return;
+    }
+    const interval = setInterval(() => {
+      setPollTick(prev => prev + 1);
+    }, ANALYSIS_POLL_INTERVAL_MS);
 
-                      streamBuffersRef.current.summary = summary;
-                      queueStreamFlush();
-                      break;
-                    case 'translation_token':
-                      if (typeof eventData.content !== 'string') {
-                        break;
-                      }
-                      const translationContent = eventData.content;
-                      translation += translationContent;
-
-                      streamBuffersRef.current.translation = translation;
-                      queueStreamFlush();
-                      break;
-                    case 'highlight_token':
-                      if (typeof eventData.content !== 'string') {
-                        break;
-                      }
-                      const highlightContent = eventData.content;
-                      highlights += highlightContent;
-
-                      streamBuffersRef.current.highlights = highlights;
-                      queueStreamFlush();
-                      break;
-                    case 'summary_chunk_result':
-                      updateProcessingProgress('summary', eventData.chunkIndex, eventData.totalChunks);
-                      break;
-                    case 'translation_chunk_result':
-                      updateProcessingProgress('translation', eventData.chunkIndex, eventData.totalChunks);
-                      break;
-                    case 'highlight_chunk_result':
-                      updateProcessingProgress('highlights', eventData.chunkIndex, eventData.totalChunks);
-                      break;
-                    case 'summary_final_result':
-                      summary = typeof eventData.content === 'string'
-                        ? normalizeMarkdownOutput(eventData.content)
-                        : summary;
-                      streamBuffersRef.current.summary = summary;
-                      flushStreamBuffers();
-                      setIsSummaryFinal(true);
-                      markTaskComplete('summary');
-                      break;
-                    case 'translation_final_result':
-                      translation = typeof eventData.content === 'string'
-                        ? normalizePlainTextOutput(eventData.content)
-                        : translation;
-                      streamBuffersRef.current.translation = translation;
-                      flushStreamBuffers();
-                      markTaskComplete('translation');
-                      break;
-                    case 'highlight_final_result':
-                      if (typeof eventData.content === 'string') {
-                        highlights = normalizeMarkdownOutput(enforceLineBreaks(eventData.content));
-                      }
-                      streamBuffersRef.current.highlights = highlights;
-                      flushStreamBuffers();
-                      setIsHighlightsFinal(true);
-                      markTaskComplete('highlights');
-                      break;
-                    case 'all_done':
-                      console.log('[DEBUG] Received all_done event');
-                      if (eventData.finalResults) {
-                        if (typeof eventData.finalResults.summary === 'string') {
-                          summary = normalizeMarkdownOutput(eventData.finalResults.summary);
-                        }
-                        if (typeof eventData.finalResults.translation === 'string') {
-                          translation = normalizePlainTextOutput(eventData.finalResults.translation);
-                        }
-                        if (typeof eventData.finalResults.highlights === 'string') {
-                          highlights = normalizeMarkdownOutput(enforceLineBreaks(eventData.finalResults.highlights));
-                        }
-                        
-                        console.log(`[DEBUG] Final results received - summary: ${summary?.length} chars, translation: ${translation?.length} chars`);
-                        
-                        streamBuffersRef.current = {
-                          summary,
-                          translation,
-                          highlights,
-                        };
-                        flushStreamBuffers();
-                        setIsSummaryFinal(true);
-                        setIsHighlightsFinal(true);
-                        setProcessingStatus(null);
-                        resetProcessingProgress();
-                      }
-                      break;
-                    case 'error':
-                      const streamErrorMessage = typeof eventData.message === 'string' ? eventData.message : 'Unknown stream error';
-                      console.error('[DEBUG] Process error:', streamErrorMessage);
-                      logError('Process stream error', { message: streamErrorMessage, task: eventData.task });
-                      setError(`处理错误: ${streamErrorMessage}`);
-                      reject(new Error(streamErrorMessage));
-                      break;
-                  }
-                } catch (e) {
-                  console.error('[DEBUG] Failed to parse event JSON:', e);
-                  logError('Failed to parse stream event', { error: e });
-                }
-              }
-            }
-            
-            // Continue processing stream
-            processStream();
-          }).catch(err => {
-            console.error('[DEBUG] Stream processing error:', err);
-            logError('Stream processing error', { error: err });
-            reject(err);
-          });
-        }
-        
-        // Start processing the stream
-        processStream();
-      });
-    })
-    .then((result: ProcessResult) => {
-      console.log('[DEBUG] Processing completed, results available in database');
-      
-      logPerformance('api-processing-complete', performance.now() - apiStartTime, { 
-        id, 
-        resultSizes: {
-          summary: result.summary.length,
-          translation: result.translation.length,
-          highlights: result.fullTextHighlights.length
-        }
-      });
-      
-      isProcessingRef.current = false;
-      setIsProcessing(false);
-      setProcessingStatus(null);
-      requestSentRef.current = false;
-      setIsSummaryFinal(true);
-      setIsHighlightsFinal(true);
-      resetProcessingProgress();
-      flushStreamBuffers();
-    })
-    .catch(error => {
-      console.error('[DEBUG] Processing error:', error);
-      logError('Processing failed', { error: error.message, id });
-      setError(error.message || 'Unknown error occurred during processing');
-      setIsProcessing(false);
-      isProcessingRef.current = false;
-      requestSentRef.current = false;
-      setProcessingStatus(null);
-      setIsSummaryFinal(true);
-      setIsHighlightsFinal(true);
-      resetProcessingProgress();
-    });
-  }
+    return () => clearInterval(interval);
+  }, [id, isProcessing]);
 
   // Retry processing function
   const retryProcessing = () => {
@@ -902,46 +677,7 @@ export default function DashboardPage() {
     console.log('[DEBUG] Starting retry process');
     setError(null);
     requestSentRef.current = false;
-    
-    // 重新从数据库获取文件信息并开始处理
-    debugFetch(`/api/analysis/${id}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    })
-    .then(response => response.json())
-    .then(result => {
-      if (result.success && result.data && result.data.podcast) {
-        const { podcast } = result.data;
-        
-        setData({
-          title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
-          originalFileName: podcast.originalFileName,
-          originalFileSize: podcast.fileSize,
-          summary: '',
-          translation: '',
-          fullTextHighlights: '',
-        });
-        streamBuffersRef.current = {
-          summary: '',
-          translation: '',
-          highlights: '',
-        };
-        setIsSummaryFinal(false);
-        setIsHighlightsFinal(false);
-        setProcessingStatus('正在重新处理...');
-        setCopyStatusWithReset('idle');
-        resetProcessingProgress();
-        
-        startProcessing(podcast.blobUrl, podcast.originalFileName);
-      } else {
-        setError('无法获取文件信息，无法重试');
-      }
-    })
-    .catch(error => {
-      setError('获取文件信息失败: ' + error.message);
-    });
+    enqueueBackgroundProcessing(true);
   };
 
   const getActiveViewContent = useCallback(() => {
@@ -1005,8 +741,8 @@ export default function DashboardPage() {
     switch (activeView) {
       case 'summary':
         return (
-          <div className="p-4 sm:p-6 bg-slate-800 rounded-lg">
-            <div className="streaming-content" ref={setContentElement} onScroll={handleContentScroll}>
+          <div className="p-4 sm:p-6 lg:p-8">
+            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
               {!isSummaryFinal && isProcessing ? (
                 <pre className="streaming-plain">{data.summary || '正在生成摘要...'}</pre>
               ) : (
@@ -1024,15 +760,16 @@ export default function DashboardPage() {
           <pre
             ref={setContentElement}
             onScroll={handleContentScroll}
-            className="streaming-content p-4 sm:p-6 bg-slate-800 rounded-lg text-sm whitespace-pre-wrap overflow-x-auto"
+            onWheel={handleContentWheel}
+            className="streaming-content dashboard-reading p-4 sm:p-6 lg:p-8 text-[15px] sm:text-base whitespace-pre-wrap overflow-x-auto"
           >
             {data.translation}
           </pre>
         );
       case 'fullText':
         return (
-            <div className="p-4 sm:p-6 bg-slate-800 rounded-lg">
-            <div className="streaming-content" ref={setContentElement} onScroll={handleContentScroll}>
+            <div className="p-4 sm:p-6 lg:p-8">
+            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll} onWheel={handleContentWheel}>
                   {!isHighlightsFinal && isProcessing ? (
                     <pre className="streaming-plain">{data.fullTextHighlights || '正在生成重点内容...'}</pre>
                   ) : (
@@ -1051,17 +788,17 @@ export default function DashboardPage() {
   };
 
   const getButtonClass = (view: ViewMode) => 
-    `px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors 
+    `px-3.5 sm:px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide border transition-all duration-200 whitespace-nowrap
      ${activeView === view 
-       ? 'bg-sky-600 text-white' 
-       : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`;
+       ? 'bg-sky-500/90 text-white border-sky-300/45 shadow-[0_12px_30px_-14px_rgba(56,189,248,0.9)]' 
+       : 'bg-slate-800/75 text-slate-300 border-slate-600/45 hover:bg-slate-700/80 hover:text-slate-100 hover:border-slate-500/60'}`;
 
   // Add Debug Status Panel component
   const DebugStatusPanel = () => {
     if (!debugMode) return null;
     
     return (
-      <div className="fixed bottom-0 right-0 w-80 max-h-80 overflow-auto bg-slate-900 border border-sky-700 rounded-tl-md p-3 text-xs z-50 opacity-90">
+      <div className="fixed bottom-0 right-0 w-80 max-h-80 overflow-auto bg-slate-950/90 border border-sky-700/55 rounded-tl-xl p-3 text-xs z-50 backdrop-blur-sm">
         <h3 className="text-sky-400 font-semibold mb-2">Debug Status v{APP_VERSION}</h3>
         <div className="space-y-1 mb-2">
           <div><span className="text-slate-400">ID:</span> <span className="text-white">{id}</span></div>
@@ -1101,19 +838,26 @@ export default function DashboardPage() {
       </div>
     );
   };
+
+  const isQaAssistantEnabled = Boolean(
+    data &&
+    !isProcessing &&
+    isSummaryFinal &&
+    isHighlightsFinal
+  );
   
   // Modify rendering to wrap in ErrorBoundary and include Debug Panel
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-slate-900 text-white flex flex-col">
-        <header className="p-3 md:p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
-          <div className="container mx-auto flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+      <div className="dashboard-shell min-h-screen text-slate-100 flex flex-col">
+        <header className="sticky top-0 z-20 border-b border-slate-700/55 bg-slate-950/70 backdrop-blur-xl">
+          <div className="container mx-auto px-3 py-3.5 md:px-4 md:py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
             {/* Breadcrumb Navigation */}
             <nav className="flex items-center space-x-2 text-sm sm:text-base lg:text-xl min-w-0 w-full md:w-auto">
-              <Link href="/" className="text-sky-400 hover:underline font-semibold shrink-0">PodSum.cc</Link>
+              <Link href="/" className="text-sky-300 hover:text-sky-200 transition-colors font-bold shrink-0 tracking-wide">PodSum.cc</Link>
               <span className="text-slate-400">/</span>
               <span
-                className="text-white font-medium truncate max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
+                className="text-slate-100 font-medium truncate max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
                 title={data?.title || ''}
               >
                 {data?.title || ''}
@@ -1122,14 +866,14 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2 flex-wrap justify-end w-full md:w-auto">
               <button 
                 onClick={() => setDebugMode(!debugMode)}
-                className="hidden sm:inline-flex text-xs bg-slate-700 hover:bg-slate-600 py-1 px-2 rounded-md text-slate-300"
+                className="hidden sm:inline-flex text-xs bg-slate-800/85 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 rounded-lg text-slate-300 transition-colors"
               >
                 {debugMode ? 'Hide Debug' : 'Debug Mode'}
               </button>
-              <Link href="/my" className="text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-3 rounded-md text-slate-300">
+              <Link href="/my" className="text-xs bg-slate-800/85 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-3 rounded-lg text-slate-200 transition-colors">
                 View All Files
               </Link>
-              {id && <span className="hidden md:inline text-xs text-slate-500">ID: {id}</span>}
+              {id && <span className="hidden md:inline text-xs text-slate-500 font-medium">ID: {id}</span>}
             </div>
           </div>
         </header>
@@ -1137,20 +881,20 @@ export default function DashboardPage() {
         {/* 中间内容区域 */}
         {!data && !error && isLoading && (
           <div className="flex-grow flex items-center justify-center">
-              <div className="text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
-                  <p className="text-slate-400">Loading transcript data...</p>
+              <div className="text-center rounded-2xl border border-slate-700/50 bg-slate-900/55 px-8 py-8 shadow-2xl backdrop-blur-sm">
+                  <div className="animate-spin rounded-full h-12 w-12 border-2 border-slate-500 border-t-sky-400 mx-auto mb-4"></div>
+                  <p className="text-slate-300 text-sm sm:text-base tracking-wide">Loading transcript data...</p>
               </div>
           </div>
         )}
 
         {error && (
            <div className="flex-grow flex items-center justify-center">
-             <div className="text-red-400 bg-red-900/30 p-6 rounded-lg flex flex-col items-center max-w-md">
-                <p className="mb-4 text-center">{error}</p>
+             <div className="text-red-300 border border-red-700/45 bg-red-950/30 p-6 sm:p-7 rounded-2xl flex flex-col items-center max-w-md shadow-2xl">
+                <p className="mb-4 text-center leading-7">{error}</p>
                 <button 
                   onClick={retryProcessing}
-                  className="px-6 py-2 bg-red-600 hover:bg-red-700 rounded text-white text-sm font-medium transition-colors"
+                  className="px-6 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-white text-sm font-semibold transition-colors"
                   disabled={isProcessing}
                 >
                   {isProcessing ? (
@@ -1165,25 +909,25 @@ export default function DashboardPage() {
         )}
 
         {data && (
-          <main className="container mx-auto p-3 sm:p-4 md:p-6 flex-grow flex flex-col md:flex-row gap-4 md:gap-6">
+          <main className="container mx-auto w-full max-w-[1560px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col md:flex-row gap-4 md:gap-6">
             {/* Left Sidebar */} 
-            <aside className="w-full md:w-1/3 lg:w-1/4 bg-slate-800 p-4 sm:p-5 md:p-6 rounded-lg shadow-xl self-start">
-              <h2 className="text-xl font-semibold mb-1 text-sky-400 truncate" title={data.title}>{data.title}</h2>
-              <p className="text-xs text-slate-500 mb-4">ID: {id}</p>
+            <aside className="w-full md:w-[320px] lg:w-[340px] xl:w-[360px] dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl shadow-2xl self-start md:sticky md:top-24">
+              <h2 className="text-lg sm:text-xl font-semibold mb-1 text-sky-300 truncate leading-8" title={data.title}>{data.title}</h2>
+              <p className="text-xs text-slate-500 mb-5 tracking-wide">ID: {id}</p>
               
-              <div className="space-y-3 text-sm">
+              <div className="space-y-4 text-sm">
                 <div>
-                  <span className="font-medium text-slate-400">Original File:</span> 
-                  <p className="text-slate-300 truncate" title={data.originalFileName}>{data.originalFileName}</p>
+                  <span className="font-semibold text-slate-400 tracking-wide">Original File</span> 
+                  <p className="text-slate-200 mt-1 break-words leading-6" title={data.originalFileName}>{data.originalFileName}</p>
                 </div>
                 <div>
-                  <span className="font-medium text-slate-400">File Size:</span> 
-                  <p className="text-slate-300">{data.originalFileSize}</p>
+                  <span className="font-semibold text-slate-400 tracking-wide">File Size</span> 
+                  <p className="text-slate-200 mt-1">{data.originalFileSize}</p>
                 </div>
                 {data.processedAt && (
                   <div>
-                    <span className="font-medium text-slate-400">Processed:</span> 
-                    <p className="text-slate-300">{new Date(data.processedAt).toLocaleString()}</p>
+                    <span className="font-semibold text-slate-400 tracking-wide">Processed</span> 
+                    <p className="text-slate-200 mt-1">{new Date(data.processedAt).toLocaleString()}</p>
                   </div>
                 )}
               </div>
@@ -1193,7 +937,7 @@ export default function DashboardPage() {
                 <div className="mt-6">
                   <button 
                     onClick={retryProcessing}
-                    className="w-full py-2 bg-sky-600 hover:bg-sky-700 rounded text-white text-sm transition-colors flex items-center justify-center"
+                    className="w-full py-2.5 bg-sky-500 hover:bg-sky-400 rounded-xl text-white text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-18px_rgba(56,189,248,0.95)]"
                     disabled={isProcessing}
                   >
                     {isProcessing ? (
@@ -1208,15 +952,15 @@ export default function DashboardPage() {
               
               {/* Debug Mode 显示调试信息 */}
               {debugMode && (
-                <div className="mt-6 p-4 bg-slate-700 rounded text-xs text-slate-300">
-                  <h3 className="font-bold mb-2">Debug Info:</h3>
+                <div className="mt-6 p-4 bg-slate-900/60 border border-slate-700/60 rounded-xl text-xs text-slate-300">
+                  <h3 className="font-bold mb-2 tracking-wide">Debug Info</h3>
                   <div>canEdit: {canEdit.toString()}</div>
                   <div>isLoading: {isLoading.toString()}</div>
                   <div>isProcessing: {isProcessing.toString()}</div>
                   <div>hasError: {!!error}</div>
                   <button 
                     onClick={() => console.log('window.__PODSUM_DEBUG__:', window.__PODSUM_DEBUG__)}
-                    className="mt-2 px-2 py-1 bg-sky-600 rounded text-xs"
+                    className="mt-2 px-2.5 py-1 bg-sky-600 hover:bg-sky-500 rounded-lg text-xs transition-colors"
                   >
                     Log Debug to Console
                   </button>
@@ -1227,7 +971,7 @@ export default function DashboardPage() {
             </aside>
 
             {/* Right Content Area */} 
-            <section className="w-full md:w-2/3 lg:w-3/4">
+            <section className="w-full min-w-0 md:flex-1">
               <div className="mb-4 sm:mb-6 space-y-3">
                   <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
@@ -1237,19 +981,19 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={copyCurrentView}
-                      className="text-[11px] sm:text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-2.5 sm:px-3 rounded-md text-slate-300"
+                      className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 sm:px-3 rounded-lg text-slate-300 transition-colors"
                     >
                       {copyStatus === 'copied' ? 'Copied' : (copyStatus === 'failed' ? 'No Content' : 'Copy View')}
                     </button>
                     <button
                       onClick={scrollCurrentViewToTop}
-                      className="text-[11px] sm:text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-2.5 sm:px-3 rounded-md text-slate-300"
+                      className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 sm:px-3 rounded-lg text-slate-300 transition-colors"
                     >
                       Top
                     </button>
                     <button
                       onClick={scrollCurrentViewToBottom}
-                      className="text-[11px] sm:text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-2.5 sm:px-3 rounded-md text-slate-300"
+                      className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-600/45 py-1.5 px-2.5 sm:px-3 rounded-lg text-slate-300 transition-colors"
                     >
                       Bottom
                     </button>
@@ -1257,21 +1001,21 @@ export default function DashboardPage() {
               </div>
 
               {isProcessing && (
-                <div className="mb-4 rounded-lg border border-sky-800/60 bg-slate-800/70 p-3">
+                <div className="mb-4 rounded-2xl border border-sky-700/45 bg-slate-900/55 p-3.5 sm:p-4 shadow-xl backdrop-blur-sm">
                   <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
                     <div className="text-sky-200 flex items-center gap-2">
                       <span className="inline-block h-2 w-2 rounded-full bg-sky-400 animate-pulse"></span>
                       <span>{processingStatus || '处理中...'}</span>
                     </div>
-                    <span className="text-slate-300">
+                    <span className="text-slate-300 tracking-wide">
                       {processingProgress.task ? TASK_LABELS[processingProgress.task] : 'Preparing'}
                       {processingProgress.total > 0 ? ` · ${processingProgress.completed}/${processingProgress.total}` : ''}
                     </span>
                   </div>
                   {processingProgress.total > 0 && (
-                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-700 overflow-hidden">
+                    <div className="mt-2.5 h-2 w-full rounded-full bg-slate-700/80 overflow-hidden">
                       <div
-                        className="h-full bg-sky-500 transition-all duration-300 ease-out"
+                        className="h-full bg-gradient-to-r from-sky-500 to-cyan-400 transition-all duration-300 ease-out"
                         style={{ width: `${Math.min(100, Math.round((processingProgress.completed / processingProgress.total) * 100))}%` }}
                       />
                     </div>
@@ -1279,7 +1023,7 @@ export default function DashboardPage() {
                 </div>
               )}
               
-              <div className="bg-slate-800/50 backdrop-blur-md rounded-lg shadow-xl min-h-[240px] sm:min-h-[300px]">
+              <div className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl shadow-2xl overflow-hidden">
                 {renderContent()}
               </div>
             </section>
@@ -1288,8 +1032,16 @@ export default function DashboardPage() {
         
         {/* Add Debug Status Panel */}
         <DebugStatusPanel />
+
+        <FloatingQaAssistant
+          podcastId={id}
+          enabled={isQaAssistantEnabled}
+          summary={data?.summary}
+          translation={data?.translation}
+          highlights={data?.fullTextHighlights}
+        />
         
-        <footer className="p-4 text-center text-xs text-slate-600">
+        <footer className="p-4 text-center text-xs text-slate-500 tracking-wide">
           SRT Processor Edge Demo v{APP_VERSION}
         </footer>
       </div>

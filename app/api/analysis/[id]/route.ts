@@ -1,7 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAnalysisResults, getPodcast, verifyPodcastOwnership } from '../../../../lib/db';
+import { getProcessingJob } from '../../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
+
+interface AnalysisData {
+  summary?: string | null;
+  translation?: string | null;
+  highlights?: string | null;
+}
+
+function hasCompleteAnalysis(analysis: AnalysisData | null, processingStatus: string | null): boolean {
+  if (!analysis) {
+    return false;
+  }
+  const hasAllFields = Boolean(
+    (analysis.summary || '').trim() &&
+    (analysis.translation || '').trim() &&
+    (analysis.highlights || '').trim()
+  );
+  if (!hasAllFields) {
+    return false;
+  }
+  if (!processingStatus) {
+    return true;
+  }
+  return processingStatus === 'completed';
+}
 
 export async function GET(
   request: NextRequest,
@@ -23,7 +48,7 @@ export async function GET(
       return NextResponse.json({ error: 'Podcast not found' }, { status: 404 });
     }
 
-    const podcast = podcastResult.data as any;
+    const podcast = podcastResult.data as { isPublic: boolean; userId?: string };
     
     // 检查访问权限
     const session = await getServerSession(authOptions);
@@ -42,6 +67,9 @@ export async function GET(
     }
 
     // 获取分析结果
+    const processingJobResult = await getProcessingJob(id);
+    const processingJob = processingJobResult.success ? processingJobResult.data : null;
+
     const analysisResult = await getAnalysisResults(id);
     if (!analysisResult.success) {
       console.log(`分析结果不存在，ID: ${id}`);
@@ -52,18 +80,23 @@ export async function GET(
           podcast: podcastResult.data,
           analysis: null,
           isProcessed: false,
+          processingJob,
           canEdit: session?.user?.id === podcast.userId // 是否可以编辑
         }
       });
     }
+
+    const analysisData = (analysisResult.data || null) as AnalysisData | null;
+    const isProcessed = hasCompleteAnalysis(analysisData, processingJob?.status || null);
 
     console.log(`成功获取分析结果，ID: ${id}`);
     return NextResponse.json({
       success: true,
       data: {
         podcast: podcastResult.data,
-        analysis: analysisResult.data,
-        isProcessed: true,
+        analysis: analysisData,
+        isProcessed,
+        processingJob,
         canEdit: session?.user?.id === podcast.userId // 是否可以编辑
       }
     });

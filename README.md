@@ -104,6 +104,9 @@ The application uses several environment variables to configure the LLM model an
 
 - `OPENROUTER_MODEL`: LLM model to use (default: "google/gemini-2.5-flash")
 - `MAX_CONTENT_LENGTH`: Maximum content length for processing (default: 300000)
+- `SUMMARY_CHUNK_LENGTH`: Summary checkpoint chunk length (default: 80000)
+- `TRANSLATION_CHUNK_BLOCKS`: Translation chunk size in SRT blocks (default: 120)
+- `HIGHLIGHTS_CHUNK_BLOCKS`: Full-text highlights chunk size in SRT blocks (default: 120)
 - `MAX_SUMMARY_TOKENS`: Maximum tokens for summary generation (default: 8000)
 - `MAX_TRANSLATION_TOKENS`: Maximum tokens for translation (default: 16000)
 - `MAX_HIGHLIGHTS_TOKENS`: Maximum tokens for highlights (default: 12000)

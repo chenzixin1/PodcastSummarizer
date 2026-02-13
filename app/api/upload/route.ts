@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 import { savePodcast } from '../../../lib/db';
+import { enqueueProcessingJob } from '../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { YoutubeTranscript } from 'youtube-transcript';
@@ -12,10 +13,9 @@ function createFileFromText(content: string, filename: string): File {
   if (typeof File !== 'undefined') {
     return new File([buffer], filename, { type: 'application/x-subrip' });
   }
-  const blob: any = new Blob([buffer], { type: 'application/x-subrip' });
+  const blob = new Blob([buffer], { type: 'application/x-subrip' }) as Blob & { name: string };
   blob.name = filename;
-  blob.size = buffer.length;
-  return blob as File;
+  return blob as unknown as File;
 }
 
 function formatTime(seconds: number): string {
@@ -163,6 +163,13 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
+    const queueResult = await enqueueProcessingJob(id);
+    if (!queueResult.success) {
+      console.error('[UPLOAD] enqueueProcessingJob failed:', queueResult.error);
+    } else {
+      console.log('[UPLOAD] Processing job queued:', queueResult.data?.status);
+    }
+
     // 为向后兼容，仍然返回所有信息，让客户端可以缓存在localStorage中
     return NextResponse.json({ 
       success: true,
@@ -171,7 +178,8 @@ export async function POST(request: NextRequest) {
         blobUrl,
         fileName: file.name,
         fileSize,
-        userId
+        userId,
+        processingQueued: queueResult.success
       }
     }, { status: 200 });
   } catch (error) {

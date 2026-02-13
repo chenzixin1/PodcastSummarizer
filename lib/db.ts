@@ -28,6 +28,13 @@ export interface AnalysisResult {
   highlights: string;
 }
 
+export interface PartialAnalysisResult {
+  podcastId: string;
+  summary?: string | null;
+  translation?: string | null;
+  highlights?: string | null;
+}
+
 // 数据库操作结果类型
 export interface DbResult {
   success: boolean;
@@ -75,6 +82,43 @@ export async function initDatabase(): Promise<DbResult> {
         processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (podcast_id)
       )
+    `;
+
+    // 创建处理任务队列表
+    await sql`
+      CREATE TABLE IF NOT EXISTS processing_jobs (
+        podcast_id TEXT PRIMARY KEY REFERENCES podcasts(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'queued',
+        current_task TEXT,
+        progress_current INTEGER DEFAULT 0,
+        progress_total INTEGER DEFAULT 0,
+        status_message TEXT,
+        attempts INTEGER DEFAULT 0,
+        worker_id TEXT,
+        last_error TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMP,
+        finished_at TIMESTAMP
+      )
+    `;
+
+    // 创建问答记录表
+    await sql`
+      CREATE TABLE IF NOT EXISTS qa_messages (
+        id TEXT PRIMARY KEY,
+        podcast_id TEXT NOT NULL REFERENCES podcasts(id) ON DELETE CASCADE,
+        user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        suggested_question BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_qa_messages_podcast_created_at
+      ON qa_messages (podcast_id, created_at DESC)
     `;
 
     console.log('✅ 数据库表初始化成功');
@@ -131,6 +175,30 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
     return { success: true, data: dbResult.rows[0] };
   } catch (error) {
     console.error('保存分析结果失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// 保存分析结果增量（只更新传入字段）
+export async function saveAnalysisPartialResults(result: PartialAnalysisResult): Promise<DbResult> {
+  try {
+    const dbResult = await sql`
+      INSERT INTO analysis_results
+        (podcast_id, summary, translation, highlights)
+      VALUES
+        (${result.podcastId}, ${result.summary ?? null}, ${result.translation ?? null}, ${result.highlights ?? null})
+      ON CONFLICT (podcast_id)
+      DO UPDATE SET
+        summary = COALESCE(EXCLUDED.summary, analysis_results.summary),
+        translation = COALESCE(EXCLUDED.translation, analysis_results.translation),
+        highlights = COALESCE(EXCLUDED.highlights, analysis_results.highlights),
+        processed_at = CURRENT_TIMESTAMP
+      RETURNING podcast_id
+    `;
+
+    return { success: true, data: dbResult.rows[0] };
+  } catch (error) {
+    console.error('保存分析结果增量失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

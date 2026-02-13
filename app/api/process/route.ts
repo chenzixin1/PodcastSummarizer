@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prompts } from '../../../lib/prompts';
 import { modelConfig } from '../../../lib/modelConfig';
-import { saveAnalysisResults } from '../../../lib/db';
+import { saveAnalysisResults, saveAnalysisPartialResults } from '../../../lib/db';
 import { getPodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
@@ -46,6 +46,27 @@ const RETRY_DELAY = modelConfig.RETRY_DELAY; // 毫秒
 
 // 内容处理配置 - 提高以利用Gemini 2.5 Flash的1M token能力
 const MAX_CONTENT_LENGTH = modelConfig.MAX_CONTENT_LENGTH; // 提高到30万字符，减少分段需求
+const SUMMARY_CHUNK_LENGTH = (() => {
+  const configuredChunkLength = Number(modelConfig.SUMMARY_CHUNK_LENGTH);
+  if (!Number.isFinite(configuredChunkLength) || configuredChunkLength <= 0) {
+    return MAX_CONTENT_LENGTH;
+  }
+  return Math.min(configuredChunkLength, MAX_CONTENT_LENGTH);
+})();
+const TRANSLATION_CHUNK_BLOCKS = (() => {
+  const configuredChunkBlocks = Number(modelConfig.TRANSLATION_CHUNK_BLOCKS);
+  if (!Number.isFinite(configuredChunkBlocks) || configuredChunkBlocks <= 0) {
+    return 120;
+  }
+  return Math.max(1, Math.floor(configuredChunkBlocks));
+})();
+const HIGHLIGHTS_CHUNK_BLOCKS = (() => {
+  const configuredChunkBlocks = Number(modelConfig.HIGHLIGHTS_CHUNK_BLOCKS);
+  if (!Number.isFinite(configuredChunkBlocks) || configuredChunkBlocks <= 0) {
+    return 120;
+  }
+  return Math.max(1, Math.floor(configuredChunkBlocks));
+})();
 const MAX_TOKENS = modelConfig.MAX_TOKENS;
 
 // 辅助函数：延迟执行
@@ -56,20 +77,38 @@ function chunkContent(content: string, maxLength: number): string[] {
   if (content.length <= maxLength) return [content];
   
   // 计算需要分成几个段落
-  const chunks = [];
+  const chunks: string[] = [];
   let remainingContent = content;
   
   while (remainingContent.length > 0) {
     // 找到合适的断点（句号或段落）
     let breakPoint = Math.min(maxLength, remainingContent.length);
     if (breakPoint < remainingContent.length) {
-      // 尝试在句号或换行处断开
-      const lastPeriod = remainingContent.lastIndexOf('. ', breakPoint);
-      const lastNewline = remainingContent.lastIndexOf('\n\n', breakPoint);
-      if (lastPeriod > maxLength * 0.7) {
-        breakPoint = lastPeriod + 1; // 包含句号
-      } else if (lastNewline > maxLength * 0.7) {
-        breakPoint = lastNewline + 2; // 包含换行
+      // 优先在自然语义边界断开，兼容中英文标点。
+      const breakCandidates = [
+        { token: '\n\n', keepChars: 2 },
+        { token: '. ', keepChars: 1 },
+        { token: '? ', keepChars: 1 },
+        { token: '! ', keepChars: 1 },
+        { token: '。', keepChars: 1 },
+        { token: '？', keepChars: 1 },
+        { token: '！', keepChars: 1 },
+      ];
+
+      let bestIndex = -1;
+      let bestKeepChars = 0;
+      const threshold = maxLength * 0.6;
+
+      for (const candidate of breakCandidates) {
+        const candidateIndex = remainingContent.lastIndexOf(candidate.token, breakPoint);
+        if (candidateIndex > threshold && candidateIndex > bestIndex) {
+          bestIndex = candidateIndex;
+          bestKeepChars = candidate.keepChars;
+        }
+      }
+
+      if (bestIndex !== -1) {
+        breakPoint = bestIndex + bestKeepChars;
       }
     }
     
@@ -77,6 +116,41 @@ function chunkContent(content: string, maxLength: number): string[] {
     remainingContent = remainingContent.substring(breakPoint);
   }
   
+  return chunks;
+}
+
+function splitSrtIntoBlocks(srtContent: string): string[] {
+  const regex = /(\d+\s*\n\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n[^\n]*(?:\n[^\n]*)*?)(?=\n\s*\d+\s*\n|$)/g;
+  const srtBlocks: string[] = [];
+  let match;
+  let lastIndex = 0;
+
+  while ((match = regex.exec(srtContent)) !== null) {
+    srtBlocks.push(match[0]);
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < srtContent.length) {
+    const remaining = srtContent.substring(lastIndex).trim();
+    if (remaining) {
+      srtBlocks.push(remaining);
+    }
+  }
+
+  if (srtBlocks.length > 0) {
+    return srtBlocks;
+  }
+  return [srtContent];
+}
+
+function groupSrtBlocks(srtBlocks: string[], blocksPerChunk: number): string[] {
+  if (srtBlocks.length === 0) {
+    return [];
+  }
+  const chunks: string[] = [];
+  for (let i = 0; i < srtBlocks.length; i += blocksPerChunk) {
+    chunks.push(srtBlocks.slice(i, i + blocksPerChunk).join('\n\n'));
+  }
   return chunks;
 }
 
@@ -304,13 +378,14 @@ async function parseSrtContent(srtText: string) {
 // 修改generateSummary函数以支持模拟模式
 async function generateSummary(
   plainText: string, 
-  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>
+  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>,
+  onChunkCheckpoint?: (partialSummary: string) => Promise<void>
 ): Promise<string> {
   await sendUpdate({ type: 'status', task: 'summary', message: 'Starting summary generation...' });
   let accumulatedSummary = '';
 
   // 如果内容较短，直接处理
-  if (plainText.length <= MAX_CONTENT_LENGTH) {
+  if (plainText.length <= SUMMARY_CHUNK_LENGTH) {
     await sendUpdate({ type: 'status', task: 'summary', message: 'Content is short, processing as a single chunk.' });
     accumulatedSummary = await callModelWithRetry(
       prompts.summarySystem,
@@ -322,12 +397,15 @@ async function generateSummary(
       },
       'summary'
     );
+    if (onChunkCheckpoint) {
+      await onChunkCheckpoint(accumulatedSummary);
+    }
     await sendUpdate({ type: 'summary_final_result', content: accumulatedSummary, chunkIndex: 0, totalChunks: 1, isFinalChunk: true });
     return accumulatedSummary;
   }
   
   // 分段处理长内容
-  const chunks = chunkContent(plainText, MAX_CONTENT_LENGTH);
+  const chunks = chunkContent(plainText, SUMMARY_CHUNK_LENGTH);
   await sendUpdate({ type: 'status', task: 'summary', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
   const chunkSummaries: string[] = [];
   
@@ -346,6 +424,9 @@ async function generateSummary(
       'summary'
     );
     chunkSummaries.push(currentChunkSummary);
+    if (onChunkCheckpoint) {
+      await onChunkCheckpoint(chunkSummaries.join('\n\n'));
+    }
     await sendUpdate({ 
       type: 'summary_chunk_result', 
       content: currentChunkSummary, 
@@ -359,12 +440,15 @@ async function generateSummary(
   if (chunkSummaries.length === 1) {
     accumulatedSummary = chunkSummaries[0];
     // This case is handled by the initial single-chunk logic, 
-    // but if MAX_CONTENT_LENGTH forces a single large text into one chunk here, this would be it.
+    // but if SUMMARY_CHUNK_LENGTH forces a single large text into one chunk here, this would be it.
     // The summary_final_result was already sent if it was a single chunk from the start.
     // If it became a single chunk due to chunkContent, a chunk_result was sent.
     // To ensure a final_result is always sent for the summary task if it was chunked:
     if (chunks.length === 1) { // This means it was processed as one chunk via the loop
         await sendUpdate({ type: 'summary_final_result', content: accumulatedSummary, isFinalChunk: true });
+    }
+    if (onChunkCheckpoint) {
+      await onChunkCheckpoint(accumulatedSummary);
     }
     return accumulatedSummary;
   }
@@ -381,6 +465,9 @@ async function generateSummary(
     },
     'summary'
   );
+  if (onChunkCheckpoint) {
+    await onChunkCheckpoint(accumulatedSummary);
+  }
   await sendUpdate({ type: 'summary_final_result', content: accumulatedSummary, isFinalChunk: true });
   return accumulatedSummary;
 }
@@ -388,16 +475,25 @@ async function generateSummary(
 // 修改generateTranslation函数
 async function generateTranslation(
   srtContent: string, 
-  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>
+  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>,
+  onChunkCheckpoint?: (partialTranslation: string) => Promise<void>
 ): Promise<string> {
   await sendUpdate({ type: 'status', task: 'translation', message: 'Starting translation...' });
-  
-  // 如果内容较短，直接处理
-  if (srtContent.length <= MAX_CONTENT_LENGTH) {
-    await sendUpdate({ type: 'status', task: 'translation', message: 'Content is short, processing as a single chunk.' });
+
+  const srtBlocks = splitSrtIntoBlocks(srtContent);
+  const chunks = groupSrtBlocks(srtBlocks, TRANSLATION_CHUNK_BLOCKS);
+  if (chunks.length === 0) {
+    await sendUpdate({ type: 'translation_final_result', content: '', chunkIndex: 0, totalChunks: 0, isFinalChunk: true });
+    return '';
+  }
+
+  await sendUpdate({ type: 'status', task: 'translation', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
+
+  // 单 chunk 也发 chunk_result，保证进度与入库节奏一致
+  if (chunks.length === 1) {
     const result = await callModelWithRetry(
       prompts.translateSystem,
-      prompts.translateUserFull(srtContent),
+      prompts.translateUserFull(chunks[0]),
       MAX_TOKENS.translation,
       0.3,
       async (token) => {
@@ -405,39 +501,21 @@ async function generateTranslation(
       },
       'translation'
     );
+    if (onChunkCheckpoint) {
+      await onChunkCheckpoint(result);
+    }
+    await sendUpdate({
+      type: 'translation_chunk_result',
+      content: result,
+      chunkIndex: 0,
+      totalChunks: 1,
+      isFinalChunk: true,
+    });
     await sendUpdate({ type: 'translation_final_result', content: result, chunkIndex: 0, totalChunks: 1, isFinalChunk: true });
     return result;
   }
-  
-  // 分段处理长内容，但保持SRT格式
-  const regex = /(\d+\s*\n\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n[^\n]*(?:\n[^\n]*)*?)(?=\n\s*\d+\s*\n|$)/g;
-  let match;
-  const srtBlocks = [];
-  let lastIndex = 0;
-  
-  // 提取SRT块
-  while ((match = regex.exec(srtContent)) !== null) {
-    srtBlocks.push(match[0]);
-    lastIndex = regex.lastIndex;
-  }
-  
-  // 如果有剩余内容，添加到最后
-  if (lastIndex < srtContent.length) {
-    srtBlocks.push(srtContent.substring(lastIndex));
-  }
-  
-  // 将SRT块分组
-  const MAX_BLOCKS_PER_CHUNK = 200; // 增加每个分组最多包含的SRT块数
-  const chunks = [];
-  
-  for (let i = 0; i < srtBlocks.length; i += MAX_BLOCKS_PER_CHUNK) {
-    chunks.push(srtBlocks.slice(i, i + MAX_BLOCKS_PER_CHUNK).join('\n'));
-  }
-  
-  await sendUpdate({ type: 'status', task: 'translation', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
-  
-  // 处理每个分组
-  const translatedChunks = [];
+
+  const translatedChunks: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
     await sendUpdate({ type: 'status', task: 'translation', message: `Processing translation for chunk ${i + 1} of ${chunks.length}...` });
     const translatedChunk = await callModelWithRetry(
@@ -451,34 +529,50 @@ async function generateTranslation(
       'translation'
     );
     translatedChunks.push(translatedChunk);
-    await sendUpdate({ 
-      type: 'translation_chunk_result', 
-      content: translatedChunk, 
-      chunkIndex: i, 
+    if (onChunkCheckpoint) {
+      await onChunkCheckpoint(translatedChunks.join('\n\n'));
+    }
+    await sendUpdate({
+      type: 'translation_chunk_result',
+      content: translatedChunk,
+      chunkIndex: i,
       totalChunks: chunks.length,
-      isFinalChunk: i === chunks.length - 1
+      isFinalChunk: i === chunks.length - 1,
     });
   }
-  
-  // 合并所有翻译
-  const finalTranslation = translatedChunks.join('\n');
-  await sendUpdate({ type: 'translation_final_result', content: finalTranslation, isFinalChunk: true });
+
+  const finalTranslation = translatedChunks.join('\n\n');
+  await sendUpdate({
+    type: 'translation_final_result',
+    content: finalTranslation,
+    chunkIndex: chunks.length - 1,
+    totalChunks: chunks.length,
+    isFinalChunk: true,
+  });
   return finalTranslation;
 }
 
 // 修改generateHighlights函数
 async function generateHighlights(
   srtContent: string, 
-  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>
+  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>,
+  onChunkCheckpoint?: (partialHighlights: string) => Promise<void>
 ): Promise<string> {
   await sendUpdate({ type: 'status', task: 'highlights', message: 'Starting highlights generation...' });
-  
-  // 如果内容较短，直接处理
-  if (srtContent.length <= MAX_CONTENT_LENGTH) {
-    await sendUpdate({ type: 'status', task: 'highlights', message: 'Content is short, processing as a single chunk.' });
+
+  const srtBlocks = splitSrtIntoBlocks(srtContent);
+  const chunks = groupSrtBlocks(srtBlocks, HIGHLIGHTS_CHUNK_BLOCKS);
+  if (chunks.length === 0) {
+    await sendUpdate({ type: 'highlight_final_result', content: '', chunkIndex: 0, totalChunks: 0, isFinalChunk: true });
+    return '';
+  }
+
+  await sendUpdate({ type: 'status', task: 'highlights', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
+
+  if (chunks.length === 1) {
     const result = await callModelWithRetry(
       prompts.highlightSystem,
-      prompts.highlightUserFull(srtContent),
+      prompts.highlightUserFull(chunks[0]),
       MAX_TOKENS.highlights,
       0.3,
       async (token) => {
@@ -486,35 +580,21 @@ async function generateHighlights(
       },
       'highlights'
     );
+    if (onChunkCheckpoint) {
+      await onChunkCheckpoint(result);
+    }
+    await sendUpdate({
+      type: 'highlight_chunk_result',
+      content: result,
+      chunkIndex: 0,
+      totalChunks: 1,
+      isFinalChunk: true,
+    });
     await sendUpdate({ type: 'highlight_final_result', content: result, chunkIndex: 0, totalChunks: 1, isFinalChunk: true });
     return result;
   }
-  
-  // 与翻译类似的方式处理
-  const regex = /(\d+\s*\n\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n[^\n]*(?:\n[^\n]*)*?)(?=\n\s*\d+\s*\n|$)/g;
-  let match;
-  const srtBlocks = [];
-  let lastIndex = 0;
-  
-  while ((match = regex.exec(srtContent)) !== null) {
-    srtBlocks.push(match[0]);
-    lastIndex = regex.lastIndex;
-  }
-  
-  if (lastIndex < srtContent.length) {
-    srtBlocks.push(srtContent.substring(lastIndex));
-  }
-  
-  const MAX_BLOCKS_PER_CHUNK = 200; 
-  const chunks = [];
-  
-  for (let i = 0; i < srtBlocks.length; i += MAX_BLOCKS_PER_CHUNK) {
-    chunks.push(srtBlocks.slice(i, i + MAX_BLOCKS_PER_CHUNK).join('\n'));
-  }
-  
-  await sendUpdate({ type: 'status', task: 'highlights', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
-  
-  const highlightedChunks = [];
+
+  const highlightedChunks: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
     await sendUpdate({ type: 'status', task: 'highlights', message: `Processing highlights for chunk ${i + 1} of ${chunks.length}...` });
     const highlightedChunk = await callModelWithRetry(
@@ -528,17 +608,26 @@ async function generateHighlights(
       'highlights'
     );
     highlightedChunks.push(highlightedChunk);
-    await sendUpdate({ 
-      type: 'highlight_chunk_result', 
-      content: highlightedChunk, 
-      chunkIndex: i, 
+    if (onChunkCheckpoint) {
+      await onChunkCheckpoint(highlightedChunks.join('\n\n'));
+    }
+    await sendUpdate({
+      type: 'highlight_chunk_result',
+      content: highlightedChunk,
+      chunkIndex: i,
       totalChunks: chunks.length,
-      isFinalChunk: i === chunks.length - 1
+      isFinalChunk: i === chunks.length - 1,
     });
   }
-  
-  const finalHighlights = highlightedChunks.join('\n');
-  await sendUpdate({ type: 'highlight_final_result', content: finalHighlights, isFinalChunk: true });
+
+  const finalHighlights = highlightedChunks.join('\n\n');
+  await sendUpdate({
+    type: 'highlight_final_result',
+    content: finalHighlights,
+    chunkIndex: chunks.length - 1,
+    totalChunks: chunks.length,
+    isFinalChunk: true,
+  });
   return finalHighlights;
 }
 
@@ -566,17 +655,27 @@ export async function POST(request: NextRequest) {
   const { id, blobUrl } = requestData;
   
   // ====== 权限校验开始 ======
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-  }
+  const workerSecret = request.headers.get('x-process-worker-secret');
+  const isWorkerRequest = Boolean(
+    (process.env.PROCESS_WORKER_SECRET &&
+      workerSecret &&
+      workerSecret === process.env.PROCESS_WORKER_SECRET) ||
+    (process.env.NODE_ENV !== 'production' && workerSecret === 'dev-worker')
+  );
+
   const podcastResult = await getPodcast(id);
   if (!podcastResult.success) {
     return NextResponse.json({ error: 'Podcast not found' }, { status: 404 });
   }
-  const podcast = podcastResult.data as any;
-  if (!podcast.userId || podcast.userId !== session.user.id) {
-    return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+  if (!isWorkerRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    const podcast = podcastResult.data as any;
+    if (!podcast.userId || podcast.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    }
   }
   // ====== 权限校验结束 ======
 
@@ -594,6 +693,22 @@ export async function POST(request: NextRequest) {
         
         // 发送开始状态
         await sendUpdate({ type: 'status', message: 'Starting processing...' });
+
+        const persistPartialResult = async (partial: {
+          summary?: string;
+          translation?: string;
+          highlights?: string;
+        }) => {
+          const partialResult = await saveAnalysisPartialResults({
+            podcastId: id,
+            summary: partial.summary ?? null,
+            translation: partial.translation ?? null,
+            highlights: partial.highlights ?? null,
+          });
+          if (!partialResult.success) {
+            console.error('保存分析结果增量失败:', partialResult.error);
+          }
+        };
         
         // 从Blob URL获取文件内容
         const fileResponse = await fetch(blobUrl);
@@ -616,13 +731,33 @@ export async function POST(request: NextRequest) {
         await sendUpdate({ type: 'status', message: 'Content loaded, generating summary...' });
         
         // 生成摘要
-        const summary = await generateSummary(plainText, sendUpdate);
+        const summary = await generateSummary(
+          plainText,
+          sendUpdate,
+          async (partialSummary) => {
+            await persistPartialResult({ summary: partialSummary });
+          }
+        );
         
         // 生成翻译
-        const translation = await generateTranslation(cleanSrtContent, sendUpdate);
+        const translation = await generateTranslation(
+          cleanSrtContent,
+          sendUpdate,
+          async (partialTranslation) => {
+            await persistPartialResult({ translation: partialTranslation });
+          }
+        );
+        await persistPartialResult({ translation });
         
         // 生成高亮
-        const highlights = await generateHighlights(cleanSrtContent, sendUpdate);
+        const highlights = await generateHighlights(
+          cleanSrtContent,
+          sendUpdate,
+          async (partialHighlights) => {
+            await persistPartialResult({ highlights: partialHighlights });
+          }
+        );
+        await persistPartialResult({ highlights });
         
         // 保存处理结果到数据库
         console.log(`准备保存分析结果，podcastId: ${id}, 类型: ${typeof id}`);
