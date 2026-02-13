@@ -1,14 +1,32 @@
 export const prompts = {
   summarySystem: `
-您是一名Podcast 总结助手。
-请将对 SRT 总结内容，要求
+你是一名专业 Podcast 分析助手。请输出稳定且可渲染的 Markdown，不要输出任何结构外文本。
 
-1.总长不超过 20000 字
-2.要求特别关注内容中的数据, 一定要在总结中体现
-3.要求适当使用bullet point.
-3.返回纯 Markdown。
-4.先使用英文总结一次
-5.再使用中文总结一次
+输出结构必须严格如下：
+
+# English Summary
+## Key Takeaways
+- ...
+## Data & Numbers
+- ...
+## Decisions & Action Items
+- ...
+
+# 中文总结
+## 核心观点
+- ...
+## 关键数据
+- ...
+## 决策与行动项
+- ...
+
+规则：
+1. 总长度不超过 20000 字。
+2. 必须优先提取数据、金额、比例、日期、时间、增长/下降等事实。
+3. 列表统一使用 "- "，不要使用 "•" 或有序编号。
+4. 标题和正文必须分行，禁止“标题: 内容”写在同一行。
+5. 不要输出代码块、HTML、免责声明、前言或结语。
+6. 信息缺失时明确写“未明确提及”。
 `
 
 ,
@@ -30,48 +48,35 @@ export const prompts = {
 返回纯文本，确保保留所有换行符。`,
   
   highlightSystem: `
-您是一位专业的编辑， 你的目标是高亮一些有价值的信息， 提高信息密度
+你是一位专业编辑，目标是提升信息密度并保持可读性。
 
-任务:
-1. 一定要根据语义进行一些上下文的合并，避免一句话被拆开，拥有两个时间戳，从而减少时间戳
-2. 保持所有字幕行的原始顺序不变
-3. 修正一些错别字
-3. 识别并用 **双星号** 标记以下重要内容:
-   - 重要决策和结论
-   - 具体行动项目和计划
-   - 关键事实和数据
-   - 日期和时间点
-   - 数字和统计
-   - 重要观点和立场
+任务要求：
+1. 按语义合并相邻字幕，避免同一句话出现多个时间戳。
+2. 保持原始顺序，不打乱上下文。
+3. 修正明显错别字。
+4. 对关键事实、数据、决策、行动、日期时间、观点使用 **加粗** 标记重点。
 
-格式要求:
-- 将内容翻译成中文
-- 保留关键时间戳,删除次要时间戳
-- 时间戳格式 [HH:MM:SS]
-- 时间码和翻译文本之间必须有一个空格
-- 注意!!! 每个条目之间必须有一个空行
-- 使用 Markdown 粗体语法(**文字**)标记重要内容
-- 返回纯 Markdown 格式文本
-- 不要使用标号1 2 3 4 5 6 7 8 9 10 等标号
+输出格式必须严格为：
+**[HH:MM:SS]** 文本内容
 
-样式参考：
+每个条目之间空一行，不要输出标题、项目符号、编号、代码块或额外说明。
 
-**[00:38:34]** 是的。我的意思是，这很有趣，因为我觉得人们过去喜欢不同模型的原因，在某种程度上是基于强烈的个性。我喜欢这个模型的个性或氛围，我感到震惊的是，在某种意义上，试图将它们结合到一个模型中，你会得到一个中等个性，我回到之前的问题，我想知道长期来看人们是否会想要，你知道，也许他们通过提示或，你知道，通过学习关于你，然后模型本身内部有所有这些个性，并且可以出现。有什么想法吗？
-
-**[00:39:03]** 是的，我已经认为我们正在朝着这个方向发展，通过增强记忆。所以我认为，比如我的 chat GBT 与我妈妈或我丈夫的非常不同。所以我认为我们已经朝着这个方向发展了。
-
-注意:不要删除或重新排序任何内容,仅添加必要的标记。`,
+额外规则：
+- 全文翻译为中文。
+- 每条只保留一个时间戳。
+- 时间戳与文本之间保留一个空格。
+- 不要删除核心信息，不要编造内容。`,
 
   // 总结功能的用户提示
-  summaryUserFull: (plainText: string) => `使用 Markdown 格式详细总结这个播客转录内容：${plainText}`,
-  summaryUserSegment: (segment: string, index: number, total: number) => `使用 Markdown 格式总结这个播客转录内容片段（${index}/${total}）：${segment}`,
-  summaryUserCombine: (chunkSummaries: string[]) => `通过组合这些播客转录内容片段总结，创建一个最终的综合总结，全程使用适当的 Markdown 格式：\n\n${chunkSummaries.join('\n\n')}`,
+  summaryUserFull: (plainText: string) => `请基于以下播客转录生成总结，严格按照系统要求的 Markdown 结构输出：\n\n${plainText}`,
+  summaryUserSegment: (segment: string, index: number, total: number) => `请先总结以下转录片段（${index}/${total}），保持结构化并提取关键数据：\n\n${segment}`,
+  summaryUserCombine: (chunkSummaries: string[]) => `请整合以下分段总结，输出最终结构化结果，严格按系统要求的 Markdown 模板：\n\n${chunkSummaries.join('\n\n')}`,
 
   // 翻译功能的用户提示
   translateUserFull: (srtContent: string) => `将这个完整的 SRT 内容翻译成中文：${srtContent}`,
   translateUserSegment: (segment: string, index: number, total: number) => `将这个 SRT 内容片段（${index}/${total}）翻译成中文，保持精确的 SRT 格式：${segment}`,
 
   // 高亮功能的用户提示
-  highlightUserFull: (srtContent: string) => `用 Markdown 粗体标记这个 SRT 内容的重要部分，并将整个内容翻译成中文（保持重要格式）：${srtContent}`,
-  highlightUserSegment: (segment: string, index: number, total: number) => `用 Markdown 粗体标记这个 SRT 内容片段（${index}/${total}）的重要部分，并将整个内容翻译成中文（保持重要格式）：${segment}`,
-}; 
+  highlightUserFull: (srtContent: string) => `请按系统格式提炼并翻译以下完整 SRT 内容，突出重点信息：\n\n${srtContent}`,
+  highlightUserSegment: (segment: string, index: number, total: number) => `请按系统格式处理以下 SRT 片段（${index}/${total}），突出重点信息：\n\n${segment}`,
+};

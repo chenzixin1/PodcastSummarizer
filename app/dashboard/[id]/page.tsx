@@ -24,6 +24,12 @@ interface ProcessedData {
   processedAt?: string;
 }
 
+interface StreamingBuffers {
+  summary: string;
+  translation: string;
+  highlights: string;
+}
+
 // Define types for streamed process results
 interface ProcessResult {
   summary: string;
@@ -33,6 +39,22 @@ interface ProcessResult {
 }
 
 type ViewMode = 'summary' | 'translate' | 'fullText';
+type ProcessingTask = 'summary' | 'translation' | 'highlights';
+
+interface ProcessingProgress {
+  task: ProcessingTask | null;
+  completed: number;
+  total: number;
+}
+
+const STREAM_FLUSH_INTERVAL_MS = 80;
+const COPY_STATUS_RESET_MS = 1500;
+const AUTO_SCROLL_BOTTOM_THRESHOLD = 64;
+const TASK_LABELS: Record<ProcessingTask, string> = {
+  summary: 'Summary',
+  translation: 'Translation',
+  highlights: 'Highlights',
+};
 
 // Helper function to safely parse JSON
 const safelyParseJSON = (jsonString: string) => {
@@ -54,6 +76,20 @@ const enforceLineBreaks = (text: string) => {
   });
   // Remove leading newlines and trim
   return result.replace(/^\n+/, '').trim();
+};
+
+const normalizeMarkdownOutput = (text: string) => {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/^[ \t]*•[ \t]+/gm, '- ')
+    .replace(/\u00A0/g, ' ')
+    .trim();
+};
+
+const normalizePlainTextOutput = (text: string) => {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00A0/g, ' ');
 };
 
 // Debug interface to track application state
@@ -95,12 +131,34 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
+  const [isSummaryFinal, setIsSummaryFinal] = useState(true);
+  const [isHighlightsFinal, setIsHighlightsFinal] = useState(true);
+  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [processingProgress, setProcessingProgress] = useState<ProcessingProgress>({
+    task: null,
+    completed: 0,
+    total: 0,
+  });
   
   // Refs for scroll control and processing state
-  const contentRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLElement | null>(null);
   const isProcessingRef = useRef(false);
+  const isAutoScrollEnabledRef = useRef(true);
+  const viewScrollPositionsRef = useRef<Record<ViewMode, number>>({
+    summary: 0,
+    translate: 0,
+    fullText: 0,
+  });
   const lastHeightRef = useRef(0);
   const requestSentRef = useRef(false);
+  const streamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamBuffersRef = useRef<StreamingBuffers>({
+    summary: '',
+    translation: '',
+    highlights: '',
+  });
 
   // Debug state
   const [debugMode, setDebugMode] = useState(false);
@@ -124,6 +182,129 @@ export default function DashboardPage() {
 
   console.log(`[DEBUG] Dashboard initializing for ID: ${id}`);
   logDebug(`Dashboard initializing for ID: ${id}`);
+
+  const flushStreamBuffers = useCallback(() => {
+    if (streamFlushTimerRef.current !== null) {
+      clearTimeout(streamFlushTimerRef.current);
+      streamFlushTimerRef.current = null;
+    }
+    const { summary, translation, highlights } = streamBuffersRef.current;
+    setData(prevData => prevData ? {
+      ...prevData,
+      summary,
+      translation,
+      fullTextHighlights: highlights,
+    } : prevData);
+  }, []);
+
+  const queueStreamFlush = useCallback(() => {
+    if (streamFlushTimerRef.current !== null) {
+      return;
+    }
+    streamFlushTimerRef.current = setTimeout(flushStreamBuffers, STREAM_FLUSH_INTERVAL_MS);
+  }, [flushStreamBuffers]);
+
+  const syncStreamBuffersFromData = useCallback((nextData: ProcessedData) => {
+    streamBuffersRef.current = {
+      summary: nextData.summary,
+      translation: nextData.translation,
+      highlights: nextData.fullTextHighlights,
+    };
+  }, []);
+
+  const setContentElement = useCallback((element: HTMLElement | null) => {
+    contentRef.current = element;
+    if (!element) {
+      return;
+    }
+    const savedTop = viewScrollPositionsRef.current[activeView] || 0;
+    element.scrollTop = savedTop;
+    const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    isAutoScrollEnabledRef.current = distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
+  }, [activeView]);
+
+  const handleContentScroll = useCallback(() => {
+    const element = contentRef.current;
+    if (!element) {
+      return;
+    }
+    viewScrollPositionsRef.current[activeView] = element.scrollTop;
+    const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    isAutoScrollEnabledRef.current = distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
+  }, [activeView]);
+
+  const switchActiveView = (nextView: ViewMode) => {
+    if (nextView === activeView) {
+      return;
+    }
+    if (contentRef.current) {
+      viewScrollPositionsRef.current[activeView] = contentRef.current.scrollTop;
+    }
+    if (copyStatusTimerRef.current !== null) {
+      clearTimeout(copyStatusTimerRef.current);
+      copyStatusTimerRef.current = null;
+    }
+    setCopyStatus('idle');
+    setActiveView(nextView);
+  };
+
+  const resetProcessingProgress = useCallback(() => {
+    setProcessingProgress({
+      task: null,
+      completed: 0,
+      total: 0,
+    });
+  }, []);
+
+  const updateProcessingProgress = useCallback(
+    (task: ProcessingTask, chunkIndex?: unknown, totalChunks?: unknown) => {
+      if (typeof chunkIndex === 'number' && typeof totalChunks === 'number' && totalChunks > 0) {
+        setProcessingProgress({
+          task,
+          completed: Math.min(Math.max(chunkIndex + 1, 0), totalChunks),
+          total: totalChunks,
+        });
+        return;
+      }
+      setProcessingProgress(prev => ({ ...prev, task }));
+    },
+    [],
+  );
+
+  const markTaskComplete = useCallback((task: ProcessingTask) => {
+    setProcessingProgress(prev => {
+      const total = prev.total > 0 ? prev.total : 1;
+      return {
+        task,
+        completed: total,
+        total,
+      };
+    });
+  }, []);
+
+  const setCopyStatusWithReset = useCallback((nextStatus: 'idle' | 'copied' | 'failed') => {
+    setCopyStatus(nextStatus);
+    if (copyStatusTimerRef.current !== null) {
+      clearTimeout(copyStatusTimerRef.current);
+      copyStatusTimerRef.current = null;
+    }
+    if (nextStatus !== 'idle') {
+      copyStatusTimerRef.current = setTimeout(() => {
+        setCopyStatus('idle');
+      }, COPY_STATUS_RESET_MS);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (streamFlushTimerRef.current !== null) {
+        clearTimeout(streamFlushTimerRef.current);
+      }
+      if (copyStatusTimerRef.current !== null) {
+        clearTimeout(copyStatusTimerRef.current);
+      }
+    };
+  }, []);
 
 
   // Add ID validation after all hooks and functions are defined
@@ -269,21 +450,12 @@ export default function DashboardPage() {
 
   // Enhanced scroll function with debug (use useCallback to fix hook dependency issues)
   const scrollToBottom = useCallback(() => {
-    console.log(`[DEBUG] Attempting to scroll to bottom, isProcessing: ${isProcessingRef.current}`);
+    console.log(`[DEBUG] Attempting to scroll to bottom, isProcessing: ${isProcessingRef.current}, autoScroll: ${isAutoScrollEnabledRef.current}`);
+    if (!isAutoScrollEnabledRef.current) {
+      return;
+    }
     if (contentRef.current) {
-      const lastElement = contentRef.current.querySelector('p:last-child, h1:last-child, h2:last-child, h3:last-child');
-      
-      if (lastElement) {
-        console.log('[DEBUG] Found last element, scrolling into view');
-        lastElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      } else {
-        console.log('[DEBUG] No last element found for scrolling');
-        logDebug('No last element found for scrolling', { 
-          contentHeight: contentRef.current.scrollHeight,
-          contentHtml: contentRef.current.innerHTML.substring(0, 200) + '...'
-        });
-      }
-      
+      contentRef.current.scrollTo({ top: contentRef.current.scrollHeight, behavior: 'smooth' });
       lastHeightRef.current = contentRef.current.scrollHeight;
       console.log(`[DEBUG] Updated lastHeightRef to ${lastHeightRef.current}`);
     }
@@ -292,12 +464,12 @@ export default function DashboardPage() {
   // Monitor content changes and scroll
   useEffect(() => {
     console.log(`[DEBUG] Content change detected, summary length: ${data?.summary?.length}, isProcessing: ${isProcessingRef.current}`);
-    if (data?.summary && isProcessingRef.current) {
+    if (activeView === 'summary' && data?.summary && isProcessingRef.current) {
       requestAnimationFrame(() => {
         scrollToBottom();
       });
     }
-  }, [data?.summary]); // 移除 isProcessing 依赖，避免无限循环
+  }, [activeView, data?.summary, scrollToBottom]);
 
   // Main data loading effect - only use database
   useEffect(() => {
@@ -337,15 +509,24 @@ export default function DashboardPage() {
           if (isProcessed && analysis) {
             // 数据库中有完整的分析结果
             console.log('[DEBUG] 从数据库加载完整分析结果');
-            setData({
+            const loadedData: ProcessedData = {
               title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
-              summary: analysis.summary || 'Summary not available.',
-              translation: analysis.translation || 'Translation not available.',
-              fullTextHighlights: enforceLineBreaks(analysis.highlights || 'Highlights not available.'),
+              summary: normalizeMarkdownOutput(analysis.summary || 'Summary not available.'),
+              translation: normalizePlainTextOutput(analysis.translation || 'Translation not available.'),
+              fullTextHighlights: normalizeMarkdownOutput(
+                enforceLineBreaks(analysis.highlights || 'Highlights not available.')
+              ),
               processedAt: analysis.processedAt,
-            });
+            };
+            setData(loadedData);
+            syncStreamBuffersFromData(loadedData);
+            setIsSummaryFinal(true);
+            setIsHighlightsFinal(true);
+            setProcessingStatus(null);
+            setCopyStatusWithReset('idle');
+            resetProcessingProgress();
             setIsLoading(false);
             setCanEdit(canEdit); // 新增
             
@@ -361,14 +542,21 @@ export default function DashboardPage() {
           } else if (podcast) {
             // 数据库中有播客信息但没有分析结果，需要处理
             console.log('[DEBUG] 数据库中有播客信息但无分析结果，开始处理');
-            setData({
+            const processingData: ProcessedData = {
               title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
-              summary: '正在处理中... 您将看到实时的处理结果!',
-              translation: '处理中...',
-              fullTextHighlights: '处理中...',
-            });
+              summary: '',
+              translation: '',
+              fullTextHighlights: '',
+            };
+            setData(processingData);
+            syncStreamBuffersFromData(processingData);
+            setIsSummaryFinal(false);
+            setIsHighlightsFinal(false);
+            setProcessingStatus('正在处理中，稍后显示结果...');
+            setCopyStatusWithReset('idle');
+            resetProcessingProgress();
             setIsLoading(false);
             
             // 开始处理
@@ -403,8 +591,23 @@ export default function DashboardPage() {
     
     // 标记为处理中
     setIsProcessing(true);
+    setIsSummaryFinal(false);
+    setIsHighlightsFinal(false);
+    setProcessingStatus('正在启动处理流程...');
+    setCopyStatusWithReset('idle');
+    setProcessingProgress({
+      task: 'summary',
+      completed: 0,
+      total: 0,
+    });
     requestSentRef.current = true;
     isProcessingRef.current = true;
+    isAutoScrollEnabledRef.current = true;
+    streamBuffersRef.current = {
+      summary: '',
+      translation: '',
+      highlights: '',
+    };
     
     // 处理文件
     console.log(`[DEBUG] 发送处理请求到 /api/process，ID: ${id}`);
@@ -468,8 +671,8 @@ export default function DashboardPage() {
       const decoder = new TextDecoder();
       let buffer = '';
       let summary = '';
-      let translation = 'Translation not processed in this version.';
-      let highlights = 'Highlights not processed in this version.';
+      let translation = '';
+      let highlights = '';
       
       // Track events received
       let eventsReceived = 0;
@@ -517,85 +720,117 @@ export default function DashboardPage() {
                   switch (eventData.type) {
                     case 'status':
                       console.log('[DEBUG] Status update:', eventData.message);
-                      setData(prevData => prevData ? {
-                        ...prevData,
-                        summary: `${summary}\n\n> Status: ${eventData.message}`,
-                      } : null);
+                      if (
+                        eventData.task === 'summary' ||
+                        eventData.task === 'translation' ||
+                        eventData.task === 'highlights'
+                      ) {
+                        updateProcessingProgress(eventData.task);
+                      }
+                      setProcessingStatus(typeof eventData.message === 'string' ? eventData.message : null);
                       break;
                     case 'summary_token':
+                      if (typeof eventData.content !== 'string') {
+                        break;
+                      }
                       const summaryContent = eventData.content;
                       summary += summaryContent;
                       
                       if (summary.length % 100 === 0) {
                         console.log(`[DEBUG] Summary accumulating, now at ${summary.length} characters`);
                       }
-                      
-                      setData(prevData => prevData ? {
-                        ...prevData,
-                        summary: summary,
-                      } : null);
+
+                      streamBuffersRef.current.summary = summary;
+                      queueStreamFlush();
                       break;
                     case 'translation_token':
+                      if (typeof eventData.content !== 'string') {
+                        break;
+                      }
                       const translationContent = eventData.content;
                       translation += translationContent;
-                      
-                      setData(prevData => prevData ? {
-                        ...prevData,
-                        translation: translation,
-                      } : null);
+
+                      streamBuffersRef.current.translation = translation;
+                      queueStreamFlush();
                       break;
                     case 'highlight_token':
+                      if (typeof eventData.content !== 'string') {
+                        break;
+                      }
                       const highlightContent = eventData.content;
                       highlights += highlightContent;
-                      
-                      setData(prevData => prevData ? {
-                        ...prevData,
-                        fullTextHighlights: highlights,
-                      } : null);
+
+                      streamBuffersRef.current.highlights = highlights;
+                      queueStreamFlush();
+                      break;
+                    case 'summary_chunk_result':
+                      updateProcessingProgress('summary', eventData.chunkIndex, eventData.totalChunks);
+                      break;
+                    case 'translation_chunk_result':
+                      updateProcessingProgress('translation', eventData.chunkIndex, eventData.totalChunks);
+                      break;
+                    case 'highlight_chunk_result':
+                      updateProcessingProgress('highlights', eventData.chunkIndex, eventData.totalChunks);
                       break;
                     case 'summary_final_result':
-                      summary = eventData.content;
-                      setData(prevData => prevData ? {
-                        ...prevData,
-                        summary: summary,
-                      } : null);
+                      summary = typeof eventData.content === 'string'
+                        ? normalizeMarkdownOutput(eventData.content)
+                        : summary;
+                      streamBuffersRef.current.summary = summary;
+                      flushStreamBuffers();
+                      setIsSummaryFinal(true);
+                      markTaskComplete('summary');
                       break;
                     case 'translation_final_result':
-                      translation = eventData.content;
-                      setData(prevData => prevData ? {
-                        ...prevData,
-                        translation: translation,
-                      } : null);
+                      translation = typeof eventData.content === 'string'
+                        ? normalizePlainTextOutput(eventData.content)
+                        : translation;
+                      streamBuffersRef.current.translation = translation;
+                      flushStreamBuffers();
+                      markTaskComplete('translation');
                       break;
                     case 'highlight_final_result':
-                      highlights = enforceLineBreaks(eventData.content);
-                      setData(prevData => prevData ? {
-                        ...prevData,
-                        fullTextHighlights: highlights,
-                      } : null);
+                      if (typeof eventData.content === 'string') {
+                        highlights = normalizeMarkdownOutput(enforceLineBreaks(eventData.content));
+                      }
+                      streamBuffersRef.current.highlights = highlights;
+                      flushStreamBuffers();
+                      setIsHighlightsFinal(true);
+                      markTaskComplete('highlights');
                       break;
                     case 'all_done':
                       console.log('[DEBUG] Received all_done event');
                       if (eventData.finalResults) {
-                        summary = eventData.finalResults.summary;
-                        translation = eventData.finalResults.translation;
-                        highlights = enforceLineBreaks(eventData.finalResults.highlights);
+                        if (typeof eventData.finalResults.summary === 'string') {
+                          summary = normalizeMarkdownOutput(eventData.finalResults.summary);
+                        }
+                        if (typeof eventData.finalResults.translation === 'string') {
+                          translation = normalizePlainTextOutput(eventData.finalResults.translation);
+                        }
+                        if (typeof eventData.finalResults.highlights === 'string') {
+                          highlights = normalizeMarkdownOutput(enforceLineBreaks(eventData.finalResults.highlights));
+                        }
                         
                         console.log(`[DEBUG] Final results received - summary: ${summary?.length} chars, translation: ${translation?.length} chars`);
                         
-                        setData(prevData => prevData ? {
-                          ...prevData,
+                        streamBuffersRef.current = {
                           summary,
                           translation,
-                          fullTextHighlights: highlights,
-                        } : null);
+                          highlights,
+                        };
+                        flushStreamBuffers();
+                        setIsSummaryFinal(true);
+                        setIsHighlightsFinal(true);
+                        setProcessingStatus(null);
+                        resetProcessingProgress();
                       }
                       break;
                     case 'error':
-                      console.error('[DEBUG] Process error:', eventData.message);
-                      logError('Process stream error', { message: eventData.message, task: eventData.task });
-                      setError(`处理错误: ${eventData.message}`);
-                      reject(new Error(eventData.message));
+                      const streamErrorMessage = typeof eventData.message === 'string' ? eventData.message : 'Unknown stream error';
+                      console.error('[DEBUG] Process error:', streamErrorMessage);
+                      logError('Process stream error', { message: streamErrorMessage, task: eventData.task });
+                      setError(`处理错误: ${streamErrorMessage}`);
+                      reject(new Error(streamErrorMessage));
                       break;
                   }
                 } catch (e) {
@@ -632,7 +867,12 @@ export default function DashboardPage() {
       
       isProcessingRef.current = false;
       setIsProcessing(false);
+      setProcessingStatus(null);
       requestSentRef.current = false;
+      setIsSummaryFinal(true);
+      setIsHighlightsFinal(true);
+      resetProcessingProgress();
+      flushStreamBuffers();
     })
     .catch(error => {
       console.error('[DEBUG] Processing error:', error);
@@ -641,6 +881,10 @@ export default function DashboardPage() {
       setIsProcessing(false);
       isProcessingRef.current = false;
       requestSentRef.current = false;
+      setProcessingStatus(null);
+      setIsSummaryFinal(true);
+      setIsHighlightsFinal(true);
+      resetProcessingProgress();
     });
   }
 
@@ -675,10 +919,20 @@ export default function DashboardPage() {
           title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
           originalFileName: podcast.originalFileName,
           originalFileSize: podcast.fileSize,
-          summary: '正在重新处理... 您将看到实时的处理结果!',
-          translation: '处理中...',
-          fullTextHighlights: '处理中...',
+          summary: '',
+          translation: '',
+          fullTextHighlights: '',
         });
+        streamBuffersRef.current = {
+          summary: '',
+          translation: '',
+          highlights: '',
+        };
+        setIsSummaryFinal(false);
+        setIsHighlightsFinal(false);
+        setProcessingStatus('正在重新处理...');
+        setCopyStatusWithReset('idle');
+        resetProcessingProgress();
         
         startProcessing(podcast.blobUrl, podcast.originalFileName);
       } else {
@@ -688,6 +942,53 @@ export default function DashboardPage() {
     .catch(error => {
       setError('获取文件信息失败: ' + error.message);
     });
+  };
+
+  const getActiveViewContent = useCallback(() => {
+    if (!data) {
+      return '';
+    }
+    if (activeView === 'summary') {
+      return data.summary;
+    }
+    if (activeView === 'translate') {
+      return data.translation;
+    }
+    return data.fullTextHighlights;
+  }, [activeView, data]);
+
+  const copyCurrentView = async () => {
+    const content = getActiveViewContent().trim();
+    if (!content) {
+      setCopyStatusWithReset('failed');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopyStatusWithReset('copied');
+    } catch (copyError) {
+      console.error('[DEBUG] Failed to copy current view:', copyError);
+      setCopyStatusWithReset('failed');
+    }
+  };
+
+  const scrollCurrentViewToTop = () => {
+    if (contentRef.current) {
+      contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      viewScrollPositionsRef.current[activeView] = 0;
+      isAutoScrollEnabledRef.current = false;
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const scrollCurrentViewToBottom = () => {
+    if (!contentRef.current) {
+      return;
+    }
+    contentRef.current.scrollTo({ top: contentRef.current.scrollHeight, behavior: 'smooth' });
+    viewScrollPositionsRef.current[activeView] = contentRef.current.scrollHeight;
+    isAutoScrollEnabledRef.current = true;
   };
 
   const renderContent = () => {
@@ -704,23 +1005,43 @@ export default function DashboardPage() {
     switch (activeView) {
       case 'summary':
         return (
-          <div className="p-6 bg-slate-800 rounded-lg">
-            <div className="markdown-body streaming-content" ref={contentRef}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {data.summary}
-              </ReactMarkdown>
+          <div className="p-4 sm:p-6 bg-slate-800 rounded-lg">
+            <div className="streaming-content" ref={setContentElement} onScroll={handleContentScroll}>
+              {!isSummaryFinal && isProcessing ? (
+                <pre className="streaming-plain">{data.summary || '正在生成摘要...'}</pre>
+              ) : (
+                <div className="markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {data.summary}
+                  </ReactMarkdown>
+                </div>
+              )}
             </div>
           </div>
         );
       case 'translate':
-        return <pre className="p-6 bg-slate-800 rounded-lg text-sm whitespace-pre-wrap overflow-x-auto">{data.translation}</pre>;
+        return (
+          <pre
+            ref={setContentElement}
+            onScroll={handleContentScroll}
+            className="streaming-content p-4 sm:p-6 bg-slate-800 rounded-lg text-sm whitespace-pre-wrap overflow-x-auto"
+          >
+            {data.translation}
+          </pre>
+        );
       case 'fullText':
         return (
-            <div className="p-6 bg-slate-800 rounded-lg">
-            <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {data.fullTextHighlights}
-                  </ReactMarkdown>
+            <div className="p-4 sm:p-6 bg-slate-800 rounded-lg">
+            <div className="streaming-content" ref={setContentElement} onScroll={handleContentScroll}>
+                  {!isHighlightsFinal && isProcessing ? (
+                    <pre className="streaming-plain">{data.fullTextHighlights || '正在生成重点内容...'}</pre>
+                  ) : (
+                    <div className="markdown-body">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {data.fullTextHighlights}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
             </div>
         );
@@ -730,7 +1051,7 @@ export default function DashboardPage() {
   };
 
   const getButtonClass = (view: ViewMode) => 
-    `px-4 py-2 rounded-md text-sm font-medium transition-colors 
+    `px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors 
      ${activeView === view 
        ? 'bg-sky-600 text-white' 
        : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`;
@@ -785,25 +1106,30 @@ export default function DashboardPage() {
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-slate-900 text-white flex flex-col">
-        <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
-          <div className="container mx-auto flex justify-between items-center">
+        <header className="p-3 md:p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
+          <div className="container mx-auto flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
             {/* Breadcrumb Navigation */}
-            <nav className="flex items-center space-x-2 text-xl">
-              <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
+            <nav className="flex items-center space-x-2 text-sm sm:text-base lg:text-xl min-w-0 w-full md:w-auto">
+              <Link href="/" className="text-sky-400 hover:underline font-semibold shrink-0">PodSum.cc</Link>
               <span className="text-slate-400">/</span>
-              <span className="text-white font-medium truncate max-w-xl lg:max-w-2xl" title={data?.title || ''}>{data?.title || ''}</span>
+              <span
+                className="text-white font-medium truncate max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
+                title={data?.title || ''}
+              >
+                {data?.title || ''}
+              </span>
             </nav>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end w-full md:w-auto">
               <button 
                 onClick={() => setDebugMode(!debugMode)}
-                className="text-xs bg-slate-700 hover:bg-slate-600 py-1 px-2 rounded-md text-slate-300"
+                className="hidden sm:inline-flex text-xs bg-slate-700 hover:bg-slate-600 py-1 px-2 rounded-md text-slate-300"
               >
                 {debugMode ? 'Hide Debug' : 'Debug Mode'}
               </button>
               <Link href="/my" className="text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-3 rounded-md text-slate-300">
                 View All Files
               </Link>
-              {id && <span className="text-xs text-slate-500">ID: {id}</span>}
+              {id && <span className="hidden md:inline text-xs text-slate-500">ID: {id}</span>}
             </div>
           </div>
         </header>
@@ -839,9 +1165,9 @@ export default function DashboardPage() {
         )}
 
         {data && (
-          <main className="container mx-auto p-4 md:p-6 flex-grow flex flex-col md:flex-row gap-6">
+          <main className="container mx-auto p-3 sm:p-4 md:p-6 flex-grow flex flex-col md:flex-row gap-4 md:gap-6">
             {/* Left Sidebar */} 
-            <aside className="w-full md:w-1/3 lg:w-1/4 bg-slate-800 p-6 rounded-lg shadow-xl self-start">
+            <aside className="w-full md:w-1/3 lg:w-1/4 bg-slate-800 p-4 sm:p-5 md:p-6 rounded-lg shadow-xl self-start">
               <h2 className="text-xl font-semibold mb-1 text-sky-400 truncate" title={data.title}>{data.title}</h2>
               <p className="text-xs text-slate-500 mb-4">ID: {id}</p>
               
@@ -902,15 +1228,58 @@ export default function DashboardPage() {
 
             {/* Right Content Area */} 
             <section className="w-full md:w-2/3 lg:w-3/4">
-              <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
-                  <div className="flex space-x-2 sm:space-x-3 flex-wrap gap-y-2">
-                      <button onClick={() => setActiveView('summary')} className={getButtonClass('summary')}>Summary</button>
-                      <button onClick={() => setActiveView('translate')} className={getButtonClass('translate')}>Translate</button>
-                      <button onClick={() => setActiveView('fullText')} className={getButtonClass('fullText')}>Full Text</button>
+              <div className="mb-4 sm:mb-6 space-y-3">
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
+                      <button onClick={() => switchActiveView('translate')} className={`${getButtonClass('translate')} shrink-0`}>Translate</button>
+                      <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={copyCurrentView}
+                      className="text-[11px] sm:text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-2.5 sm:px-3 rounded-md text-slate-300"
+                    >
+                      {copyStatus === 'copied' ? 'Copied' : (copyStatus === 'failed' ? 'No Content' : 'Copy View')}
+                    </button>
+                    <button
+                      onClick={scrollCurrentViewToTop}
+                      className="text-[11px] sm:text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-2.5 sm:px-3 rounded-md text-slate-300"
+                    >
+                      Top
+                    </button>
+                    <button
+                      onClick={scrollCurrentViewToBottom}
+                      className="text-[11px] sm:text-xs bg-slate-700 hover:bg-slate-600 py-1.5 px-2.5 sm:px-3 rounded-md text-slate-300"
+                    >
+                      Bottom
+                    </button>
                   </div>
               </div>
+
+              {isProcessing && (
+                <div className="mb-4 rounded-lg border border-sky-800/60 bg-slate-800/70 p-3">
+                  <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                    <div className="text-sky-200 flex items-center gap-2">
+                      <span className="inline-block h-2 w-2 rounded-full bg-sky-400 animate-pulse"></span>
+                      <span>{processingStatus || '处理中...'}</span>
+                    </div>
+                    <span className="text-slate-300">
+                      {processingProgress.task ? TASK_LABELS[processingProgress.task] : 'Preparing'}
+                      {processingProgress.total > 0 ? ` · ${processingProgress.completed}/${processingProgress.total}` : ''}
+                    </span>
+                  </div>
+                  {processingProgress.total > 0 && (
+                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-700 overflow-hidden">
+                      <div
+                        className="h-full bg-sky-500 transition-all duration-300 ease-out"
+                        style={{ width: `${Math.min(100, Math.round((processingProgress.completed / processingProgress.total) * 100))}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               
-              <div className="bg-slate-800/50 backdrop-blur-md rounded-lg shadow-xl min-h-[300px]">
+              <div className="bg-slate-800/50 backdrop-blur-md rounded-lg shadow-xl min-h-[240px] sm:min-h-[300px]">
                 {renderContent()}
               </div>
             </section>
