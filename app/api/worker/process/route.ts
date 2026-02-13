@@ -136,6 +136,20 @@ export async function POST(request: NextRequest) {
     }
 
     const decoder = new TextDecoder();
+    const maxCompletedByTask: Record<'summary' | 'translation' | 'highlights', number> = {
+      summary: 0,
+      translation: 0,
+      highlights: 0,
+    };
+
+    const monotonicCompletedCount = (task: 'summary' | 'translation' | 'highlights', candidate?: number) => {
+      if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+        return maxCompletedByTask[task];
+      }
+      const normalized = Math.max(0, Math.floor(candidate));
+      maxCompletedByTask[task] = Math.max(maxCompletedByTask[task], normalized);
+      return maxCompletedByTask[task];
+    };
     let buffer = '';
     let finished = false;
 
@@ -178,9 +192,12 @@ export async function POST(request: NextRequest) {
         }
 
         if (eventData.type === 'summary_chunk_result') {
+          const completedCandidate =
+            safeProgressNumber(eventData.chunkIndex) !== undefined ? Number(eventData.chunkIndex) + 1 : undefined;
+          const completed = monotonicCompletedCount('summary', completedCandidate);
           await updateProcessingJobProgress(job.podcastId, {
             currentTask: 'summary',
-            progressCurrent: safeProgressNumber(eventData.chunkIndex) !== undefined ? Number(eventData.chunkIndex) + 1 : undefined,
+            progressCurrent: completed,
             progressTotal: safeProgressNumber(eventData.totalChunks),
             statusMessage: 'Processing summary chunks',
           });
@@ -188,9 +205,12 @@ export async function POST(request: NextRequest) {
         }
 
         if (eventData.type === 'translation_chunk_result') {
+          const completedCandidate =
+            safeProgressNumber(eventData.chunkIndex) !== undefined ? Number(eventData.chunkIndex) + 1 : undefined;
+          const completed = monotonicCompletedCount('translation', completedCandidate);
           await updateProcessingJobProgress(job.podcastId, {
             currentTask: 'translation',
-            progressCurrent: safeProgressNumber(eventData.chunkIndex) !== undefined ? Number(eventData.chunkIndex) + 1 : undefined,
+            progressCurrent: completed,
             progressTotal: safeProgressNumber(eventData.totalChunks),
             statusMessage: 'Processing translation chunks',
           });
@@ -198,9 +218,12 @@ export async function POST(request: NextRequest) {
         }
 
         if (eventData.type === 'highlight_chunk_result') {
+          const completedCandidate =
+            safeProgressNumber(eventData.chunkIndex) !== undefined ? Number(eventData.chunkIndex) + 1 : undefined;
+          const completed = monotonicCompletedCount('highlights', completedCandidate);
           await updateProcessingJobProgress(job.podcastId, {
             currentTask: 'highlights',
-            progressCurrent: safeProgressNumber(eventData.chunkIndex) !== undefined ? Number(eventData.chunkIndex) + 1 : undefined,
+            progressCurrent: completed,
             progressTotal: safeProgressNumber(eventData.totalChunks),
             statusMessage: 'Processing highlight chunks',
           });
@@ -209,28 +232,21 @@ export async function POST(request: NextRequest) {
 
         if (eventData.type === 'summary_final_result') {
           await updateProcessingJobProgress(job.podcastId, {
-            currentTask: 'translation',
-            progressCurrent: 0,
-            progressTotal: 0,
-            statusMessage: 'Summary done, starting translation',
+            statusMessage: 'Summary completed',
           });
           continue;
         }
 
         if (eventData.type === 'translation_final_result') {
           await updateProcessingJobProgress(job.podcastId, {
-            currentTask: 'highlights',
-            progressCurrent: 0,
-            progressTotal: 0,
-            statusMessage: 'Translation done, starting highlights',
+            statusMessage: 'Translation completed',
           });
           continue;
         }
 
         if (eventData.type === 'highlight_final_result') {
           await updateProcessingJobProgress(job.podcastId, {
-            currentTask: 'highlights',
-            statusMessage: 'Highlights done, saving results',
+            statusMessage: 'Highlights completed',
           });
           continue;
         }

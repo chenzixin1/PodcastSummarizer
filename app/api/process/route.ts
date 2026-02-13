@@ -66,10 +66,39 @@ const TRANSLATION_CHUNK_BLOCKS = (() => {
 const HIGHLIGHTS_CHUNK_BLOCKS = (() => {
   const configuredChunkBlocks = Number(modelConfig.HIGHLIGHTS_CHUNK_BLOCKS);
   if (!Number.isFinite(configuredChunkBlocks) || configuredChunkBlocks <= 0) {
-    return 120;
+    return 180;
   }
   return Math.max(1, Math.floor(configuredChunkBlocks));
 })();
+const MAX_TRANSLATION_CHUNKS = (() => {
+  const configuredMaxChunks = Number(modelConfig.MAX_TRANSLATION_CHUNKS);
+  if (!Number.isFinite(configuredMaxChunks) || configuredMaxChunks <= 0) {
+    return 24;
+  }
+  return Math.max(1, Math.floor(configuredMaxChunks));
+})();
+const MAX_HIGHLIGHTS_CHUNKS = (() => {
+  const configuredMaxChunks = Number(modelConfig.MAX_HIGHLIGHTS_CHUNKS);
+  if (!Number.isFinite(configuredMaxChunks) || configuredMaxChunks <= 0) {
+    return 24;
+  }
+  return Math.max(1, Math.floor(configuredMaxChunks));
+})();
+const TRANSLATION_CHUNK_CONCURRENCY = (() => {
+  const configuredConcurrency = Number(modelConfig.TRANSLATION_CHUNK_CONCURRENCY);
+  if (!Number.isFinite(configuredConcurrency) || configuredConcurrency <= 0) {
+    return 3;
+  }
+  return Math.min(5, Math.max(1, Math.floor(configuredConcurrency)));
+})();
+const HIGHLIGHTS_CHUNK_CONCURRENCY = (() => {
+  const configuredConcurrency = Number(modelConfig.HIGHLIGHTS_CHUNK_CONCURRENCY);
+  if (!Number.isFinite(configuredConcurrency) || configuredConcurrency <= 0) {
+    return 2;
+  }
+  return Math.min(5, Math.max(1, Math.floor(configuredConcurrency)));
+})();
+const ENABLE_PARALLEL_TASKS = Boolean(modelConfig.ENABLE_PARALLEL_TASKS);
 const MAX_TOKENS = modelConfig.MAX_TOKENS;
 
 // 辅助函数：延迟执行
@@ -155,6 +184,38 @@ function groupSrtBlocks(srtBlocks: string[], blocksPerChunk: number): string[] {
     chunks.push(srtBlocks.slice(i, i + blocksPerChunk).join('\n\n'));
   }
   return chunks;
+}
+
+function resolveBlocksPerChunk(totalBlocks: number, baseBlocksPerChunk: number, maxChunks: number): number {
+  if (totalBlocks <= 0) {
+    return baseBlocksPerChunk;
+  }
+  const minBlocksPerChunkForBudget = Math.ceil(totalBlocks / Math.max(1, maxChunks));
+  return Math.max(baseBlocksPerChunk, minBlocksPerChunkForBudget);
+}
+
+async function mapWithConcurrency<T>(
+  items: string[],
+  concurrency: number,
+  mapper: (item: string, index: number) => Promise<T>
+): Promise<T[]> {
+  const results: T[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) {
+        return;
+      }
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  };
+
+  const workerCount = Math.min(Math.max(1, Math.floor(concurrency)), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 
@@ -528,13 +589,22 @@ async function generateTranslation(
   await sendUpdate({ type: 'status', task: 'translation', message: 'Starting translation...' });
 
   const srtBlocks = splitSrtIntoBlocks(srtContent);
-  const chunks = groupSrtBlocks(srtBlocks, TRANSLATION_CHUNK_BLOCKS);
+  const translationBlocksPerChunk = resolveBlocksPerChunk(
+    srtBlocks.length,
+    TRANSLATION_CHUNK_BLOCKS,
+    MAX_TRANSLATION_CHUNKS
+  );
+  const chunks = groupSrtBlocks(srtBlocks, translationBlocksPerChunk);
   if (chunks.length === 0) {
     await sendUpdate({ type: 'translation_final_result', content: '', chunkIndex: 0, totalChunks: 0, isFinalChunk: true });
     return '';
   }
 
-  await sendUpdate({ type: 'status', task: 'translation', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
+  await sendUpdate({
+    type: 'status',
+    task: 'translation',
+    message: `Content divided into ${chunks.length} chunks (~${translationBlocksPerChunk} blocks/chunk). Concurrency: ${TRANSLATION_CHUNK_CONCURRENCY}.`
+  });
 
   // 单 chunk 也发 chunk_result，保证进度与入库节奏一致
   if (chunks.length === 1) {
@@ -562,14 +632,33 @@ async function generateTranslation(
     return result;
   }
 
-  const translatedChunks: string[] = [];
-  for (let i = 0; i < chunks.length; i++) {
+  const translatedChunks: string[] = new Array(chunks.length).fill('');
+  let completedChunks = 0;
+  let highestContiguousChunkIndex = -1;
+
+  const checkpointContiguousChunks = async () => {
+    if (!onChunkCheckpoint) {
+      return;
+    }
+
+    let nextContiguousIndex = highestContiguousChunkIndex + 1;
+    while (nextContiguousIndex < translatedChunks.length && translatedChunks[nextContiguousIndex]) {
+      nextContiguousIndex += 1;
+    }
+    const newHighest = nextContiguousIndex - 1;
+    if (newHighest > highestContiguousChunkIndex) {
+      highestContiguousChunkIndex = newHighest;
+      await onChunkCheckpoint(translatedChunks.slice(0, highestContiguousChunkIndex + 1).join('\n\n'));
+    }
+  };
+
+  await mapWithConcurrency(chunks, TRANSLATION_CHUNK_CONCURRENCY, async (chunk, i) => {
     const chunkMessage = `Processing translation for chunk ${i + 1} of ${chunks.length}...`;
     await sendUpdate({ type: 'status', task: 'translation', message: chunkMessage });
     const translatedChunk = await runWithStatusHeartbeat('translation', chunkMessage, sendUpdate, async () =>
       callModelWithRetry(
         prompts.translateSystem,
-        prompts.translateUserSegment(chunks[i], i + 1, chunks.length),
+        prompts.translateUserSegment(chunk, i + 1, chunks.length),
         MAX_TOKENS.translation,
         0.3,
         async (token) => {
@@ -578,20 +667,27 @@ async function generateTranslation(
         'translation'
       )
     );
-    translatedChunks.push(translatedChunk);
-    if (onChunkCheckpoint) {
-      await onChunkCheckpoint(translatedChunks.join('\n\n'));
-    }
+
+    translatedChunks[i] = translatedChunk;
+    completedChunks += 1;
+    await checkpointContiguousChunks();
+
     await sendUpdate({
       type: 'translation_chunk_result',
       content: translatedChunk,
       chunkIndex: i,
       totalChunks: chunks.length,
       isFinalChunk: i === chunks.length - 1,
+      message: `Translation chunk ${i + 1}/${chunks.length} completed (${completedChunks}/${chunks.length})`
     });
-  }
+
+    return translatedChunk;
+  });
 
   const finalTranslation = translatedChunks.join('\n\n');
+  if (onChunkCheckpoint) {
+    await onChunkCheckpoint(finalTranslation);
+  }
   await sendUpdate({
     type: 'translation_final_result',
     content: finalTranslation,
@@ -611,13 +707,22 @@ async function generateHighlights(
   await sendUpdate({ type: 'status', task: 'highlights', message: 'Starting highlights generation...' });
 
   const srtBlocks = splitSrtIntoBlocks(srtContent);
-  const chunks = groupSrtBlocks(srtBlocks, HIGHLIGHTS_CHUNK_BLOCKS);
+  const highlightBlocksPerChunk = resolveBlocksPerChunk(
+    srtBlocks.length,
+    HIGHLIGHTS_CHUNK_BLOCKS,
+    MAX_HIGHLIGHTS_CHUNKS
+  );
+  const chunks = groupSrtBlocks(srtBlocks, highlightBlocksPerChunk);
   if (chunks.length === 0) {
     await sendUpdate({ type: 'highlight_final_result', content: '', chunkIndex: 0, totalChunks: 0, isFinalChunk: true });
     return '';
   }
 
-  await sendUpdate({ type: 'status', task: 'highlights', message: `Content divided into ${chunks.length} chunks. Processing sequentially.` });
+  await sendUpdate({
+    type: 'status',
+    task: 'highlights',
+    message: `Content divided into ${chunks.length} chunks (~${highlightBlocksPerChunk} blocks/chunk). Concurrency: ${HIGHLIGHTS_CHUNK_CONCURRENCY}.`
+  });
 
   if (chunks.length === 1) {
     const result = await callModelWithRetry(
@@ -644,14 +749,33 @@ async function generateHighlights(
     return result;
   }
 
-  const highlightedChunks: string[] = [];
-  for (let i = 0; i < chunks.length; i++) {
+  const highlightedChunks: string[] = new Array(chunks.length).fill('');
+  let completedChunks = 0;
+  let highestContiguousChunkIndex = -1;
+
+  const checkpointContiguousChunks = async () => {
+    if (!onChunkCheckpoint) {
+      return;
+    }
+
+    let nextContiguousIndex = highestContiguousChunkIndex + 1;
+    while (nextContiguousIndex < highlightedChunks.length && highlightedChunks[nextContiguousIndex]) {
+      nextContiguousIndex += 1;
+    }
+    const newHighest = nextContiguousIndex - 1;
+    if (newHighest > highestContiguousChunkIndex) {
+      highestContiguousChunkIndex = newHighest;
+      await onChunkCheckpoint(highlightedChunks.slice(0, highestContiguousChunkIndex + 1).join('\n\n'));
+    }
+  };
+
+  await mapWithConcurrency(chunks, HIGHLIGHTS_CHUNK_CONCURRENCY, async (chunk, i) => {
     const chunkMessage = `Processing highlights for chunk ${i + 1} of ${chunks.length}...`;
     await sendUpdate({ type: 'status', task: 'highlights', message: chunkMessage });
     const highlightedChunk = await runWithStatusHeartbeat('highlights', chunkMessage, sendUpdate, async () =>
       callModelWithRetry(
         prompts.highlightSystem,
-        prompts.highlightUserSegment(chunks[i], i + 1, chunks.length),
+        prompts.highlightUserSegment(chunk, i + 1, chunks.length),
         MAX_TOKENS.highlights,
         0.3,
         async (token) => {
@@ -660,20 +784,27 @@ async function generateHighlights(
         'highlights'
       )
     );
-    highlightedChunks.push(highlightedChunk);
-    if (onChunkCheckpoint) {
-      await onChunkCheckpoint(highlightedChunks.join('\n\n'));
-    }
+
+    highlightedChunks[i] = highlightedChunk;
+    completedChunks += 1;
+    await checkpointContiguousChunks();
+
     await sendUpdate({
       type: 'highlight_chunk_result',
       content: highlightedChunk,
       chunkIndex: i,
       totalChunks: chunks.length,
       isFinalChunk: i === chunks.length - 1,
+      message: `Highlights chunk ${i + 1}/${chunks.length} completed (${completedChunks}/${chunks.length})`
     });
-  }
+
+    return highlightedChunk;
+  });
 
   const finalHighlights = highlightedChunks.join('\n\n');
+  if (onChunkCheckpoint) {
+    await onChunkCheckpoint(finalHighlights);
+  }
   await sendUpdate({
     type: 'highlight_final_result',
     content: finalHighlights,
@@ -779,36 +910,67 @@ export async function POST(request: NextRequest) {
         const plainText = await parseSrtContent(cleanSrtContent);
         
         // 发送状态更新
-        await sendUpdate({ type: 'status', message: 'Content loaded, generating summary...' });
-        
-        // 生成摘要
-        const summary = await generateSummary(
-          plainText,
-          sendUpdate,
-          async (partialSummary) => {
-            await persistPartialResult({ summary: partialSummary });
-          }
-        );
-        
-        // 生成翻译
-        const translation = await generateTranslation(
-          cleanSrtContent,
-          sendUpdate,
-          async (partialTranslation) => {
-            await persistPartialResult({ translation: partialTranslation });
-          }
-        );
-        await persistPartialResult({ translation });
-        
-        // 生成高亮
-        const highlights = await generateHighlights(
-          cleanSrtContent,
-          sendUpdate,
-          async (partialHighlights) => {
-            await persistPartialResult({ highlights: partialHighlights });
-          }
-        );
-        await persistPartialResult({ highlights });
+        await sendUpdate({ type: 'status', message: 'Content loaded. Starting analysis pipeline...' });
+
+        const summaryTask = async () => {
+          const summaryValue = await generateSummary(
+            plainText,
+            sendUpdate,
+            async (partialSummary) => {
+              await persistPartialResult({ summary: partialSummary });
+            }
+          );
+          await persistPartialResult({ summary: summaryValue });
+          return summaryValue;
+        };
+
+        const translationTask = async () => {
+          const translationValue = await generateTranslation(
+            cleanSrtContent,
+            sendUpdate,
+            async (partialTranslation) => {
+              await persistPartialResult({ translation: partialTranslation });
+            }
+          );
+          await persistPartialResult({ translation: translationValue });
+          return translationValue;
+        };
+
+        const highlightsTask = async () => {
+          const highlightsValue = await generateHighlights(
+            cleanSrtContent,
+            sendUpdate,
+            async (partialHighlights) => {
+              await persistPartialResult({ highlights: partialHighlights });
+            }
+          );
+          await persistPartialResult({ highlights: highlightsValue });
+          return highlightsValue;
+        };
+
+        let summary: string;
+        let translation: string;
+        let highlights: string;
+
+        if (ENABLE_PARALLEL_TASKS) {
+          await sendUpdate({
+            type: 'status',
+            message: `Running summary, translation, and highlights in parallel. Model: ${MODEL}`
+          });
+          [summary, translation, highlights] = await Promise.all([
+            summaryTask(),
+            translationTask(),
+            highlightsTask(),
+          ]);
+        } else {
+          await sendUpdate({
+            type: 'status',
+            message: `Running summary, translation, and highlights sequentially. Model: ${MODEL}`
+          });
+          summary = await summaryTask();
+          translation = await translationTask();
+          highlights = await highlightsTask();
+        }
         
         // 保存处理结果到数据库
         console.log(`准备保存分析结果，podcastId: ${id}, 类型: ${typeof id}`);

@@ -9,8 +9,13 @@ export const modelConfig = {
   // Content processing limits 
   MAX_CONTENT_LENGTH: parseInt(process.env.MAX_CONTENT_LENGTH || '300000', 10),
   SUMMARY_CHUNK_LENGTH: parseInt(process.env.SUMMARY_CHUNK_LENGTH || '80000', 10),
-  TRANSLATION_CHUNK_BLOCKS: parseInt(process.env.TRANSLATION_CHUNK_BLOCKS || '120', 10),
-  HIGHLIGHTS_CHUNK_BLOCKS: parseInt(process.env.HIGHLIGHTS_CHUNK_BLOCKS || '120', 10),
+  TRANSLATION_CHUNK_BLOCKS: parseInt(process.env.TRANSLATION_CHUNK_BLOCKS || '180', 10),
+  HIGHLIGHTS_CHUNK_BLOCKS: parseInt(process.env.HIGHLIGHTS_CHUNK_BLOCKS || '180', 10),
+  MAX_TRANSLATION_CHUNKS: parseInt(process.env.MAX_TRANSLATION_CHUNKS || '24', 10),
+  MAX_HIGHLIGHTS_CHUNKS: parseInt(process.env.MAX_HIGHLIGHTS_CHUNKS || '24', 10),
+  TRANSLATION_CHUNK_CONCURRENCY: parseInt(process.env.TRANSLATION_CHUNK_CONCURRENCY || '3', 10),
+  HIGHLIGHTS_CHUNK_CONCURRENCY: parseInt(process.env.HIGHLIGHTS_CHUNK_CONCURRENCY || '2', 10),
+  ENABLE_PARALLEL_TASKS: process.env.ENABLE_PARALLEL_TASKS !== 'false',
   MAX_TOKENS: {
     summary: parseInt(process.env.MAX_SUMMARY_TOKENS || '8000', 10),
     translation: parseInt(process.env.MAX_TRANSLATION_TOKENS || '16000', 10),
