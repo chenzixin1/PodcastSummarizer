@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 
 interface FileRecord {
   id: string;
@@ -50,69 +51,73 @@ export default function PublicPodcastSummaryPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
-        <div className="container mx-auto flex justify-between items-center">
+    <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col">
+      <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
+        <div className="container mx-auto px-4 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
           {/* Breadcrumb Navigation */}
-          <nav className="flex items-center space-x-2 text-xl">
-            <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
-            <span className="text-slate-400">/</span>
-            <span className="text-white font-medium">Public Podcast Summary</span>
+          <nav className="flex items-center space-x-2 text-lg sm:text-xl min-w-0">
+            <Link href="/" className="inline-flex items-center gap-2 text-[var(--heading)] hover:text-[var(--text-main)] transition-colors font-semibold shrink-0">
+              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={22} height={22} />
+              <span>PodSum.cc</span>
+            </Link>
+            <span className="text-[var(--text-muted)]">/</span>
+            <span className="text-[var(--text-main)] font-medium truncate">Public Podcast Summary</span>
           </nav>
-          <div className="flex items-center gap-3">
-            <Link href="/my" className="bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-6 rounded-md">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <Link href="/my" className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
               My Summaries
             </Link>
-            <Link href="/upload" className="bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-6 rounded-md">
+            <Link href="/upload" className="bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
               + Upload SRT
             </Link>
           </div>
         </div>
       </header>
-      <main className="container mx-auto p-6">
-        <h2 className="text-2xl font-bold mb-6">All Public Podcast Summaries</h2>
+      <main className="container mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8 flex-grow">
+        <div className="dashboard-panel rounded-2xl p-5 sm:p-6 lg:p-8">
+          <h2 className="text-2xl font-bold mb-6 text-[var(--heading)]">All Public Podcast Summaries</h2>
         {error && (
-          <div className="bg-red-800/30 text-red-400 p-4 rounded-lg mb-6">
+          <div className="border border-[#d8b7b7] bg-[#fff5f5] text-[var(--danger)] p-4 rounded-xl mb-6">
             <p className="font-medium">Error loading data</p>
             <p className="text-sm mt-1">{error}</p>
           </div>
         )}
         {isLoading ? (
           <div className="flex items-center justify-center p-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)]"></div>
           </div>
         ) : files.length === 0 ? (
-          <div className="bg-slate-800/50 rounded-lg p-8 text-center">
-            <p className="text-slate-400 mb-4">No public podcast summaries available.</p>
+          <div className="bg-[var(--paper-subtle)] border border-[var(--border-soft)] rounded-xl p-8 text-center">
+            <p className="text-[var(--text-muted)] mb-4">No public podcast summaries available.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
             {files.map((file) => (
-              <div key={file.id} className="bg-slate-800/50 rounded-lg p-4 hover:bg-slate-800 transition-colors">
+              <div key={file.id} className="bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-xl p-4 hover:bg-[var(--paper-muted)] transition-colors">
                 <Link href={`/dashboard/${file.id}`} className="block">
                   <div className="flex justify-between items-start">
                     <div>
-                      <h3 className="font-medium text-sky-400 mb-1 truncate" title={file.name}>
+                      <h3 className="font-medium text-[var(--heading)] mb-1 truncate" title={file.name}>
                         {file.name}
                       </h3>
-                      <div className="flex gap-4 text-xs text-slate-400 flex-wrap">
+                      <div className="flex gap-4 text-xs text-[var(--text-muted)] flex-wrap">
                         <span>{file.size}</span>
                         <span>ID: {file.id.substring(0, 6)}...</span>
                         {file.isPublic && (
-                          <span className="text-green-400">Public</span>
+                          <span className="text-emerald-600">Public</span>
                         )}
                         {file.processed && (
-                          <span className="text-emerald-400">✓ Processed</span>
+                          <span className="text-emerald-600">✓ Processed</span>
                         )}
                         {!file.processed && (
-                          <span className="text-amber-400">⟳ Processing</span>
+                          <span className="text-amber-600">⟳ Processing</span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-500 mt-1">
+                      <div className="text-xs text-[var(--text-muted)] mt-1">
                         Uploaded: {new Date(file.uploadDate).toLocaleString()}
                       </div>
                     </div>
-                    <div className="bg-slate-700 rounded-md px-3 py-1 text-xs">
+                    <div className="bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] rounded-md px-3 py-1 text-xs">
                       View
                     </div>
                   </div>
@@ -121,8 +126,9 @@ export default function PublicPodcastSummaryPage() {
             ))}
           </div>
         )}
+        </div>
       </main>
-      <footer className="p-4 text-center text-xs text-slate-600">
+      <footer className="p-4 text-center text-xs text-[var(--text-muted)]">
         PodSum.cc - Powered by Vercel
       </footer>
     </div>
