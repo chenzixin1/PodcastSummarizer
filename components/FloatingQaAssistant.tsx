@@ -447,7 +447,7 @@ export default function FloatingQaAssistant({
       {isOpen && (
         <div
           ref={panelRef}
-          className="fixed z-40 w-[min(92vw,420px)] h-[min(78vh,560px)] rounded-2xl border border-slate-600/50 bg-slate-950/92 text-slate-100 shadow-2xl backdrop-blur-xl"
+          className="fixed z-40 flex w-[min(92vw,420px)] h-[min(78vh,560px)] flex-col overflow-hidden rounded-2xl border border-slate-600/50 bg-slate-950/92 text-slate-100 shadow-2xl backdrop-blur-xl"
           style={{ left: position.x, top: position.y }}
         >
           <div
@@ -467,7 +467,7 @@ export default function FloatingQaAssistant({
             </button>
           </div>
 
-          <div className="border-b border-slate-800/70 px-3.5 py-2.5">
+          <div className="shrink-0 border-b border-slate-800/70 px-3.5 py-2.5">
             <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400 mb-2">推荐问题</p>
             <div className="flex flex-wrap gap-1.5">
               {suggestedQuestions.map(question => (
@@ -486,7 +486,7 @@ export default function FloatingQaAssistant({
             </div>
           </div>
 
-          <div ref={messageListRef} className="h-[calc(100%-196px)] overflow-y-auto px-3.5 py-3 space-y-2.5">
+          <div ref={messageListRef} className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3 space-y-2.5">
             {loadingHistory && (
               <div className="text-xs text-slate-400">Loading history...</div>
             )}
@@ -523,7 +523,7 @@ export default function FloatingQaAssistant({
             ))}
           </div>
 
-          <form onSubmit={handleSubmit} className="absolute bottom-0 left-0 right-0 border-t border-slate-700/70 p-3 bg-slate-950/95 rounded-b-2xl">
+          <form onSubmit={handleSubmit} className="shrink-0 border-t border-slate-700/70 p-3 bg-slate-950/95">
             <textarea
               value={input}
               onChange={event => setInput(event.target.value.slice(0, MAX_INPUT_LENGTH))}

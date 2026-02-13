@@ -198,7 +198,11 @@ export default function DashboardPage() {
     }
 
     const maxScrollTop = element.scrollHeight - element.clientHeight;
-    const nextScrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + event.deltaY));
+    const modeMultiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+    const normalizedDeltaY = event.deltaY * modeMultiplier;
+    const boostedDeltaY =
+      Math.sign(normalizedDeltaY) * Math.max(Math.abs(normalizedDeltaY) * 1.35, 22);
+    const nextScrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + boostedDeltaY));
 
     if (nextScrollTop !== element.scrollTop) {
       element.scrollTop = nextScrollTop;
