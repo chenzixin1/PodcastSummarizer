@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 
 interface FileRecord {
@@ -144,7 +145,10 @@ export default function MyPage() {
         <div className="container mx-auto">
           {/* Breadcrumb Navigation */}
           <nav className="flex items-center space-x-2 text-xl mb-4">
-            <Link href="/" className="text-sky-400 hover:underline font-semibold">PodSum.cc</Link>
+            <Link href="/" className="inline-flex items-center gap-2 text-sky-400 hover:underline font-semibold">
+              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={22} height={22} />
+              <span>PodSum.cc</span>
+            </Link>
             <span className="text-slate-400">/</span>
             <span className="text-white font-medium">My Podcast Summaries</span>
           </nav>

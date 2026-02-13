@@ -7,6 +7,7 @@ import { getPodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { isWorkerAuthorizedBySecret } from '../../../lib/workerAuth';
+import { rebuildQaContextChunksForPodcast } from '../../../lib/qaContextChunks';
 
 // VERCEL DEBUG: Add version number to help track deployments
 const API_VERSION = modelConfig.API_VERSION;
@@ -1021,7 +1022,25 @@ export async function POST(request: NextRequest) {
           console.error('保存分析结果到数据库失败:', dbError);
           // 即使数据库保存失败，我们也继续返回结果给用户
         }
-        
+
+        await sendUpdate({
+          type: 'status',
+          message: 'Building QA retrieval index...'
+        });
+
+        const qaIndexResult = await rebuildQaContextChunksForPodcast({
+          podcastId: id,
+          summary,
+          translation,
+          highlights,
+          transcriptSrt: cleanSrtContent,
+        });
+        if (!qaIndexResult.success) {
+          console.error('构建 QA 检索索引失败:', qaIndexResult.error);
+        } else {
+          console.log(`QA 检索索引构建完成，podcastId: ${id}, chunks: ${qaIndexResult.chunkCount}`);
+        }
+
         // 发送全部完成事件
         await sendUpdate({
           type: 'all_done',

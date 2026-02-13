@@ -4,6 +4,7 @@ import { getQaMessages, saveQaMessage } from '../../../../lib/qaMessages';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { modelConfig } from '../../../../lib/modelConfig';
+import { rebuildQaContextChunksForPodcast, renderChunkLabel, retrieveHybridQaChunks } from '../../../../lib/qaContextChunks';
 
 interface PodcastData {
   isPublic: boolean;
@@ -24,6 +25,7 @@ interface QaRequestBody {
 
 const QA_MODEL = process.env.OPENROUTER_QA_MODEL || modelConfig.MODEL;
 const MAX_QUESTION_LENGTH = 1000;
+const MAX_RETRIEVED_CHUNKS = Math.max(4, Math.min(12, Number.parseInt(process.env.QA_MAX_RETRIEVED_CHUNKS || '8', 10)));
 
 const ENGLISH_STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'what', 'with', 'from', 'about', 'have', 'will',
@@ -145,7 +147,7 @@ async function fetchTranscript(blobUrl?: string | null): Promise<string> {
   }
 }
 
-function buildContext(question: string, analysis: AnalysisData, transcript: string): string {
+function buildLegacyContext(question: string, analysis: AnalysisData, transcript: string): string {
   const summary = buildRelevantSnippet(normalizeText(analysis.summary), question, 12000);
   const translation = buildRelevantSnippet(normalizeText(analysis.translation), question, 35000);
   const highlights = buildRelevantSnippet(normalizeText(analysis.highlights), question, 15000);
@@ -166,11 +168,38 @@ function buildContext(question: string, analysis: AnalysisData, transcript: stri
   ].join('\n');
 }
 
-async function callQaModel(question: string, context: string): Promise<string> {
+function buildRetrievedContext(
+  chunks: Awaited<ReturnType<typeof retrieveHybridQaChunks>>
+): string {
+  return chunks
+    .map((chunk, index) => {
+      const label = renderChunkLabel(chunk);
+      return [
+        `### Evidence ${index + 1}`,
+        `id: chunk-${chunk.id}`,
+        `label: ${label}`,
+        `score: ${chunk.finalScore.toFixed(4)} (semantic=${chunk.semanticScore.toFixed(4)}, lexical=${chunk.lexicalScore.toFixed(4)})`,
+        chunk.content,
+      ].join('\n');
+    })
+    .join('\n\n---\n\n');
+}
+
+async function callQaModel(question: string, context: string, mode: 'hybrid' | 'legacy'): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY is not configured');
   }
+
+  const systemPrompt =
+    mode === 'hybrid'
+      ? '你是播客问答助手。你只能基于提供的证据回答，不要编造。' +
+        '请用中文输出，结构为：1) 直接答案；2) 依据要点（最多3条）。' +
+        '每条依据后追加对应证据 id（格式例如：chunk-12）。' +
+        '如果证据只支持“间接提及”，请明确写“属于间接提及，未直接下结论”。' +
+        '如果证据不足，请明确写“在当前上下文中未找到明确依据”。'
+      : '你是播客问答助手。只能基于提供的上下文回答，不要编造。请用中文输出，结构为：' +
+        '1) 直接答案；2) 依据要点（最多3条）。如果上下文不足，请明确写“在当前上下文中未找到明确依据”。';
 
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -187,9 +216,7 @@ async function callQaModel(question: string, context: string): Promise<string> {
       messages: [
         {
           role: 'system',
-          content:
-            '你是播客问答助手。只能基于提供的上下文回答，不要编造。请用中文输出，结构为：' +
-            '1) 直接答案；2) 依据要点（最多3条）。如果上下文不足，请明确写“在当前上下文中未找到明确依据”。',
+          content: systemPrompt,
         },
         {
           role: 'user',
@@ -332,9 +359,35 @@ export async function POST(
     }
     const analysis = (analysisResult.data || {}) as AnalysisData;
 
-    const transcript = await fetchTranscript(access.podcast.blobUrl);
-    const contextText = buildContext(question, analysis, transcript);
-    const answer = await callQaModel(question, contextText);
+    let retrievedChunks = await retrieveHybridQaChunks(id, question, MAX_RETRIEVED_CHUNKS);
+    let contextText = '';
+    let mode: 'hybrid' | 'legacy' = 'hybrid';
+
+    if (retrievedChunks.length > 0) {
+      contextText = buildRetrievedContext(retrievedChunks);
+    } else {
+      const transcript = await fetchTranscript(access.podcast.blobUrl);
+
+      const rebuildResult = await rebuildQaContextChunksForPodcast({
+        podcastId: id,
+        summary: analysis.summary,
+        translation: analysis.translation,
+        highlights: analysis.highlights,
+        transcriptSrt: transcript,
+      });
+      if (rebuildResult.success && rebuildResult.chunkCount > 0) {
+        retrievedChunks = await retrieveHybridQaChunks(id, question, MAX_RETRIEVED_CHUNKS);
+      }
+
+      if (retrievedChunks.length > 0) {
+        contextText = buildRetrievedContext(retrievedChunks);
+      } else {
+        contextText = buildLegacyContext(question, analysis, transcript);
+        mode = 'legacy';
+      }
+    }
+
+    const answer = await callQaModel(question, contextText, mode);
 
     const saveResult = await saveQaMessage({
       podcastId: id,

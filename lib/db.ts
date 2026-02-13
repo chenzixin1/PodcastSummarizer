@@ -171,6 +171,34 @@ export async function initDatabase(): Promise<DbResult> {
       ON qa_messages (podcast_id, created_at DESC)
     `;
 
+    // 创建问答上下文分块索引表（用于混合召回）
+    await sql`
+      CREATE TABLE IF NOT EXISTS qa_context_chunks (
+        id BIGSERIAL PRIMARY KEY,
+        podcast_id TEXT NOT NULL REFERENCES podcasts(id) ON DELETE CASCADE,
+        chunk_index INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        start_sec INTEGER,
+        end_sec INTEGER,
+        content TEXT NOT NULL,
+        content_tsv TSVECTOR,
+        embedding_json JSONB,
+        embedding_model TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (podcast_id, source, chunk_index)
+      )
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_qa_context_chunks_podcast
+      ON qa_context_chunks (podcast_id, source, chunk_index)
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_qa_context_chunks_content_tsv
+      ON qa_context_chunks USING GIN (content_tsv)
+    `;
+
     console.log('✅ 数据库表初始化成功');
     return { success: true };
   } catch (error) {

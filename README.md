@@ -103,6 +103,7 @@ The application uses several environment variables to configure the LLM model an
 ### Optional Environment Variables (with defaults)
 
 - `OPENROUTER_MODEL`: LLM model to use (default: "google/gemini-2.5-flash")
+- `OPENROUTER_EMBEDDING_MODEL`: Embedding model for QA hybrid retrieval (default: "openai/text-embedding-3-small")
 - `MAX_CONTENT_LENGTH`: Maximum content length for processing (default: 300000)
 - `SUMMARY_CHUNK_LENGTH`: Summary checkpoint chunk length (default: 80000)
 - `TRANSLATION_CHUNK_BLOCKS`: Translation chunk size in SRT blocks (default: 120)
@@ -112,6 +113,8 @@ The application uses several environment variables to configure the LLM model an
 - `MAX_HIGHLIGHTS_TOKENS`: Maximum tokens for highlights (default: 12000)
 - `MAX_RETRIES`: Maximum API call retry attempts (default: 2)
 - `RETRY_DELAY`: Delay between retries in milliseconds (default: 1000)
+- `QA_MAX_RETRIEVED_CHUNKS`: Number of chunks used as QA evidence (default: 8)
+- `QA_MAX_TOTAL_CHUNKS`: Max indexed chunks per podcast for QA (default: 180)
 
 You can set these environment variables:
 1. Through your hosting platform (e.g., Vercel)
