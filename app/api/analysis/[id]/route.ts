@@ -34,10 +34,17 @@ function hasCompleteAnalysis(analysis: AnalysisData | null, processingStatus: st
   return processingStatus === 'completed';
 }
 
-function shouldTriggerQueuedWorker(processingJob: ProcessingJobData | null): boolean {
-  if (!processingJob || processingJob.status !== 'queued') {
+function shouldKickWorker(processingJob: ProcessingJobData | null): boolean {
+  if (!processingJob || !processingJob.status) {
     return false;
   }
+
+  const isQueued = processingJob.status === 'queued';
+  const isStaleProcessing = processingJob.status === 'processing';
+  if (!isQueued && !isStaleProcessing) {
+    return false;
+  }
+
   if (!processingJob.updatedAt) {
     return true;
   }
@@ -45,7 +52,12 @@ function shouldTriggerQueuedWorker(processingJob: ProcessingJobData | null): boo
   if (!Number.isFinite(updatedAt)) {
     return true;
   }
-  return Date.now() - updatedAt > 8000;
+
+  const staleMs = Date.now() - updatedAt;
+  if (isQueued) {
+    return staleMs > 8000;
+  }
+  return staleMs > 120000;
 }
 
 export async function GET(
@@ -90,7 +102,7 @@ export async function GET(
     const processingJobResult = await getProcessingJob(id);
     const processingJob = processingJobResult.success ? processingJobResult.data : null;
 
-    if (shouldTriggerQueuedWorker(processingJob as ProcessingJobData | null)) {
+    if (shouldKickWorker(processingJob as ProcessingJobData | null)) {
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('analysis_poll', id);
         if (!triggerResult.success) {
