@@ -45,6 +45,11 @@ export async function POST(request: NextRequest) {
   const formData = await request.formData();
   let file = formData.get('file') as File | null;
   const youtubeUrl = formData.get('youtubeUrl') as string | null;
+  const sourceReferenceRaw = formData.get('sourceReference');
+  const sourceReference =
+    typeof sourceReferenceRaw === 'string' && sourceReferenceRaw.trim()
+      ? sourceReferenceRaw.trim()
+      : (youtubeUrl?.trim() || null);
 
   if (!file && youtubeUrl) {
     try {
@@ -150,6 +155,7 @@ export async function POST(request: NextRequest) {
       originalFileName: file.name,
       fileSize,
       blobUrl,
+      sourceReference,
       isPublic,
       userId // 添加用户ID
     });

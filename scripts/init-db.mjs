@@ -12,6 +12,7 @@ async function initDatabase() {
         original_filename VARCHAR(255) NOT NULL,
         file_size VARCHAR(50) NOT NULL,
         blob_url TEXT,
+        source_reference TEXT,
         is_public BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -25,11 +26,20 @@ async function initDatabase() {
         summary TEXT,
         translation TEXT,
         highlights TEXT,
+        token_count INTEGER,
+        word_count INTEGER,
+        character_count INTEGER,
         processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (podcast_id)
       )
     `;
     console.log('✅ 创建分析结果表成功');
+
+    // 兼容历史表结构
+    await sql`ALTER TABLE podcasts ADD COLUMN IF NOT EXISTS source_reference TEXT`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS token_count INTEGER`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS word_count INTEGER`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS character_count INTEGER`;
 
     // 测试查询
     const result = await sql`SELECT NOW() as current_time`;

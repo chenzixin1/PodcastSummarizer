@@ -9,6 +9,9 @@ interface AnalysisData {
   summary?: string | null;
   translation?: string | null;
   highlights?: string | null;
+  tokenCount?: number | null;
+  wordCount?: number | null;
+  characterCount?: number | null;
 }
 
 interface ProcessingJobData {

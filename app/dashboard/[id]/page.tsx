@@ -24,6 +24,10 @@ interface ProcessedData {
   translation: string;
   fullTextHighlights: string;
   processedAt?: string;
+  tokenCount?: number | null;
+  wordCount?: number | null;
+  characterCount?: number | null;
+  sourceReference?: string | null;
 }
 
 interface ProcessingJobData {
@@ -80,6 +84,22 @@ const normalizePlainTextOutput = (text: string) => {
     .replace(/\u00A0/g, ' ');
 };
 
+const isValidHttpUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+const formatMetricValue = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '-';
+  }
+  return value.toLocaleString();
+};
+
 // Debug interface to track application state
 interface DebugState {
   appVersion: string;
@@ -131,6 +151,10 @@ export default function DashboardPage() {
     completed: 0,
     total: 0,
   });
+  const [sourceInput, setSourceInput] = useState('');
+  const [isSavingSource, setIsSavingSource] = useState(false);
+  const [sourceSaveStatus, setSourceSaveStatus] = useState<'idle' | 'saved' | 'failed'>('idle');
+  const [sourceSaveError, setSourceSaveError] = useState<string | null>(null);
   
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
@@ -414,6 +438,18 @@ export default function DashboardPage() {
     window.localStorage.setItem('podsum-dashboard-theme', themeMode);
   }, [themeMode]);
 
+  useEffect(() => {
+    if (!data) {
+      setSourceInput('');
+      setSourceSaveStatus('idle');
+      setSourceSaveError(null);
+      return;
+    }
+    setSourceInput(data.sourceReference || '');
+    setSourceSaveStatus('idle');
+    setSourceSaveError(null);
+  }, [data?.sourceReference, id]);
+
 
   // Add ID validation after all hooks and functions are defined
   if (!id || id === 'undefined' || id === 'null') {
@@ -634,6 +670,10 @@ export default function DashboardPage() {
                 enforceLineBreaks(analysis.highlights || 'Highlights not available.')
               ),
               processedAt: analysis.processedAt,
+              tokenCount: analysis.tokenCount ?? null,
+              wordCount: analysis.wordCount ?? null,
+              characterCount: analysis.characterCount ?? null,
+              sourceReference: podcast.sourceReference ?? null,
             };
             setData(loadedData);
             setIsSummaryFinal(true);
@@ -675,6 +715,10 @@ export default function DashboardPage() {
                   )
                 : prev?.fullTextHighlights || '',
               processedAt: analysis?.processedAt || prev?.processedAt || undefined,
+              tokenCount: analysis?.tokenCount ?? prev?.tokenCount ?? null,
+              wordCount: analysis?.wordCount ?? prev?.wordCount ?? null,
+              characterCount: analysis?.characterCount ?? prev?.characterCount ?? null,
+              sourceReference: podcast.sourceReference ?? prev?.sourceReference ?? null,
             }));
             setIsSummaryFinal(false);
             setIsHighlightsFinal(false);
@@ -744,6 +788,45 @@ export default function DashboardPage() {
     requestSentRef.current = false;
     enqueueBackgroundProcessing(true);
   };
+
+  const saveSourceReference = async () => {
+    if (!id || !canEdit || isSavingSource) {
+      return;
+    }
+
+    const normalizedSource = sourceInput.trim();
+    setIsSavingSource(true);
+    setSourceSaveError(null);
+    setSourceSaveStatus('idle');
+
+    try {
+      const response = await fetch(`/api/podcasts/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sourceReference: normalizedSource || null,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Save failed (${response.status})`);
+      }
+
+      setData(prev => prev ? { ...prev, sourceReference: normalizedSource || null } : prev);
+      setSourceSaveStatus('saved');
+    } catch (saveError) {
+      setSourceSaveStatus('failed');
+      setSourceSaveError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setIsSavingSource(false);
+    }
+  };
+
+  const currentSourceReference = (data?.sourceReference || '').trim();
+  const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
 
   const getActiveViewContent = useCallback(() => {
     if (!data) {
@@ -1011,6 +1094,88 @@ export default function DashboardPage() {
                   <div>
                     <span className="font-semibold text-[var(--text-muted)] tracking-wide">Processed</span> 
                     <p className="text-[var(--text-main)] mt-1">{new Date(data.processedAt).toLocaleString()}</p>
+                  </div>
+                )}
+                <div>
+                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Token Count</span>
+                  <p className="text-[var(--text-main)] mt-1">{formatMetricValue(data.tokenCount)}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Word Count</span>
+                  <p className="text-[var(--text-main)] mt-1">{formatMetricValue(data.wordCount)}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Character Count</span>
+                  <p className="text-[var(--text-main)] mt-1">{formatMetricValue(data.characterCount)}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Source</span>
+                  {canEdit ? (
+                    <div className="mt-2 space-y-2">
+                      <input
+                        type="text"
+                        value={sourceInput}
+                        onChange={(event) => {
+                          setSourceInput(event.target.value);
+                          setSourceSaveStatus('idle');
+                          setSourceSaveError(null);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void saveSourceReference();
+                          }
+                        }}
+                        placeholder="粘贴 YouTube URL 或备注"
+                        className="w-full rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-[var(--text-main)] text-sm focus:outline-none focus:border-[var(--border-medium)]"
+                      />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={saveSourceReference}
+                          disabled={isSavingSource}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {isSavingSource ? 'Saving...' : 'Save Source'}
+                        </button>
+                        {sourceSaveStatus === 'saved' && (
+                          <span className="text-xs text-emerald-700">Saved</span>
+                        )}
+                        {sourceSaveStatus === 'failed' && (
+                          <span className="text-xs text-[var(--danger)]">{sourceSaveError || 'Save failed'}</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-1">
+                      {currentSourceReference ? (
+                        sourceReferenceIsUrl ? (
+                          <a
+                            href={currentSourceReference}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[var(--btn-primary)] underline break-all"
+                          >
+                            {currentSourceReference}
+                          </a>
+                        ) : (
+                          <p className="text-[var(--text-main)] break-words leading-6">{currentSourceReference}</p>
+                        )
+                      ) : (
+                        <p className="text-[var(--text-muted)]">-</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {canEdit && currentSourceReference && sourceReferenceIsUrl && (
+                  <div>
+                    <a
+                      href={currentSourceReference}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[var(--btn-primary)] underline break-all"
+                    >
+                      打开来源链接
+                    </a>
                   </div>
                 )}
               </div>

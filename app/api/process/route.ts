@@ -480,6 +480,37 @@ async function parseSrtContent(srtText: string) {
   return plainText;
 }
 
+function calculateTextStats(text: string): {
+  tokenCount: number;
+  wordCount: number;
+  characterCount: number;
+} {
+  const normalized = text.trim();
+  if (!normalized) {
+    return {
+      tokenCount: 0,
+      wordCount: 0,
+      characterCount: 0,
+    };
+  }
+
+  const characterCount = normalized.length;
+  const latinWordCount = (normalized.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g) || []).length;
+  const cjkCharCount = (normalized.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) || []).length;
+  const wordCount = latinWordCount + cjkCharCount;
+
+  // 粗略估算 token：ASCII 文本按 4 字符约 1 token，CJK 字符按约 1 token
+  const asciiCharCount = (normalized.match(/[\x00-\x7F]/g) || []).length;
+  const nonAsciiCharCount = characterCount - asciiCharCount;
+  const tokenCount = Math.max(1, Math.round(asciiCharCount / 4 + nonAsciiCharCount));
+
+  return {
+    tokenCount,
+    wordCount,
+    characterCount,
+  };
+}
+
 // 修改generateSummary函数以支持模拟模式
 async function generateSummary(
   plainText: string, 
@@ -908,6 +939,7 @@ export async function POST(request: NextRequest) {
         
         // 解析为纯文本用于摘要生成
         const plainText = await parseSrtContent(cleanSrtContent);
+        const textStats = calculateTextStats(plainText);
         
         // 发送状态更新
         await sendUpdate({ type: 'status', message: 'Content loaded. Starting analysis pipeline...' });
@@ -979,7 +1011,10 @@ export async function POST(request: NextRequest) {
             podcastId: id,
             summary,
             translation,
-            highlights
+            highlights,
+            tokenCount: textStats.tokenCount,
+            wordCount: textStats.wordCount,
+            characterCount: textStats.characterCount,
           });
           console.log(`分析结果保存成功，podcastId: ${id}`);
         } catch (dbError) {
