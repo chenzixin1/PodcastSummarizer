@@ -1,8 +1,13 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 
-// 使用提供的连接URL
-const connectionString = 'postgres://REDACTED:REDACTED@REDACTED';
+// 仅从环境变量读取连接串，避免明文凭据出现在仓库中
+const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL || '';
+
+if (!connectionString) {
+  console.error('❌ 未找到数据库连接串。请先设置 POSTGRES_URL 或 DATABASE_URL 环境变量。');
+  process.exit(1);
+}
 
 async function testConnection() {
   const pool = new Pool({

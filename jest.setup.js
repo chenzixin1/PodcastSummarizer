@@ -38,6 +38,11 @@ global.TextDecoder = require('util').TextDecoder;
 // Mock NextResponse for API route testing
 jest.mock('next/server', () => ({
   NextRequest: jest.requireActual('next/server').NextRequest,
+  after: (callback) => {
+    if (typeof callback === 'function') {
+      Promise.resolve().then(callback).catch(() => {});
+    }
+  },
   NextResponse: {
     json: (data, options = {}) => {
       const status = options.status || 200;
