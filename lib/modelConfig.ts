@@ -19,5 +19,7 @@ export const modelConfig = {
   
   // API retry configuration
   MAX_RETRIES: parseInt(process.env.MAX_RETRIES || '2', 10),
-  RETRY_DELAY: parseInt(process.env.RETRY_DELAY || '1000', 10)
+  RETRY_DELAY: parseInt(process.env.RETRY_DELAY || '1000', 10),
+  API_TIMEOUT_MS: parseInt(process.env.API_TIMEOUT_MS || '120000', 10),
+  STATUS_HEARTBEAT_MS: parseInt(process.env.STATUS_HEARTBEAT_MS || '8000', 10)
 }; 

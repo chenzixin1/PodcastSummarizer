@@ -44,6 +44,8 @@ const MODEL = modelConfig.MODEL;
 // 重试配置
 const MAX_RETRIES = modelConfig.MAX_RETRIES;
 const RETRY_DELAY = modelConfig.RETRY_DELAY; // 毫秒
+const API_TIMEOUT_MS = modelConfig.API_TIMEOUT_MS;
+const STATUS_HEARTBEAT_MS = modelConfig.STATUS_HEARTBEAT_MS;
 
 // 内容处理配置 - 提高以利用Gemini 2.5 Flash的1M token能力
 const MAX_CONTENT_LENGTH = modelConfig.MAX_CONTENT_LENGTH; // 提高到30万字符，减少分段需求
@@ -212,16 +214,32 @@ async function callModelWithRetry(
       };
       
       // 按照官方文档设置正确的请求头
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
-          'X-Title': 'PodSum.cc'
-        },
-        body: JSON.stringify(requestBody)
-      });
+      const timeoutController = new AbortController();
+      const timeoutHandle = setTimeout(() => {
+        timeoutController.abort();
+      }, API_TIMEOUT_MS);
+
+      let response: Response;
+      try {
+        response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
+            'X-Title': 'PodSum.cc'
+          },
+          body: JSON.stringify(requestBody),
+          signal: timeoutController.signal,
+        });
+      } catch (fetchError) {
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error(`OpenRouter request timed out after ${API_TIMEOUT_MS}ms`);
+        }
+        throw fetchError;
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
       
       const callEndTime = Date.now();
       console.log(`[OpenRouter Request ${requestId}] API call initiated in ${callEndTime - callStartTime}ms (stream: ${!!onTokenStream})`);
@@ -350,6 +368,31 @@ async function callModelWithRetry(
   throw lastError; // 不应该到达这里，但为了类型安全
 }
 
+async function runWithStatusHeartbeat<T>(
+  task: 'summary' | 'translation' | 'highlights',
+  statusMessage: string,
+  sendUpdate: (update: ProcessStreamUpdate) => Promise<void>,
+  work: () => Promise<T>
+): Promise<T> {
+  const startedAt = Date.now();
+  const interval = setInterval(() => {
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+    void sendUpdate({
+      type: 'status',
+      task,
+      message: `${statusMessage} (running ${elapsedSeconds}s)`,
+    }).catch((heartbeatError) => {
+      console.error('Failed to send heartbeat status:', heartbeatError);
+    });
+  }, STATUS_HEARTBEAT_MS);
+
+  try {
+    return await work();
+  } finally {
+    clearInterval(interval);
+  }
+}
+
 async function parseSrtContent(srtText: string) {
   // 简单解析SRT内容为纯文本（忽略时间戳）
   const lines = srtText.split('\n');
@@ -412,17 +455,20 @@ async function generateSummary(
   
   // 处理每个分段
   for (let i = 0; i < chunks.length; i++) {
-    await sendUpdate({ type: 'status', task: 'summary', message: `Processing summary for chunk ${i + 1} of ${chunks.length}...` });
+    const chunkMessage = `Processing summary for chunk ${i + 1} of ${chunks.length}...`;
+    await sendUpdate({ type: 'status', task: 'summary', message: chunkMessage });
     let currentChunkSummary = '';
-    currentChunkSummary = await callModelWithRetry(
-      prompts.summarySystem, 
-      prompts.summaryUserSegment(chunks[i], i + 1, chunks.length),
-      MAX_TOKENS.summary / 2, // Or a different token limit for chunks
-      0.5,
-      async (token) => {
-        await sendUpdate({ type: 'summary_token', content: token, chunkIndex: i, totalChunks: chunks.length });
-      },
-      'summary'
+    currentChunkSummary = await runWithStatusHeartbeat('summary', chunkMessage, sendUpdate, async () =>
+      callModelWithRetry(
+        prompts.summarySystem, 
+        prompts.summaryUserSegment(chunks[i], i + 1, chunks.length),
+        MAX_TOKENS.summary / 2, // Or a different token limit for chunks
+        0.5,
+        async (token) => {
+          await sendUpdate({ type: 'summary_token', content: token, chunkIndex: i, totalChunks: chunks.length });
+        },
+        'summary'
+      )
     );
     chunkSummaries.push(currentChunkSummary);
     if (onChunkCheckpoint) {
@@ -518,16 +564,19 @@ async function generateTranslation(
 
   const translatedChunks: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
-    await sendUpdate({ type: 'status', task: 'translation', message: `Processing translation for chunk ${i + 1} of ${chunks.length}...` });
-    const translatedChunk = await callModelWithRetry(
-      prompts.translateSystem,
-      prompts.translateUserSegment(chunks[i], i + 1, chunks.length),
-      MAX_TOKENS.translation,
-      0.3,
-      async (token) => {
-        await sendUpdate({ type: 'translation_token', content: token, chunkIndex: i, totalChunks: chunks.length });
-      },
-      'translation'
+    const chunkMessage = `Processing translation for chunk ${i + 1} of ${chunks.length}...`;
+    await sendUpdate({ type: 'status', task: 'translation', message: chunkMessage });
+    const translatedChunk = await runWithStatusHeartbeat('translation', chunkMessage, sendUpdate, async () =>
+      callModelWithRetry(
+        prompts.translateSystem,
+        prompts.translateUserSegment(chunks[i], i + 1, chunks.length),
+        MAX_TOKENS.translation,
+        0.3,
+        async (token) => {
+          await sendUpdate({ type: 'translation_token', content: token, chunkIndex: i, totalChunks: chunks.length });
+        },
+        'translation'
+      )
     );
     translatedChunks.push(translatedChunk);
     if (onChunkCheckpoint) {
@@ -597,16 +646,19 @@ async function generateHighlights(
 
   const highlightedChunks: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
-    await sendUpdate({ type: 'status', task: 'highlights', message: `Processing highlights for chunk ${i + 1} of ${chunks.length}...` });
-    const highlightedChunk = await callModelWithRetry(
-      prompts.highlightSystem,
-      prompts.highlightUserSegment(chunks[i], i + 1, chunks.length),
-      MAX_TOKENS.highlights,
-      0.3,
-      async (token) => {
-        await sendUpdate({ type: 'highlight_token', content: token, chunkIndex: i, totalChunks: chunks.length });
-      },
-      'highlights'
+    const chunkMessage = `Processing highlights for chunk ${i + 1} of ${chunks.length}...`;
+    await sendUpdate({ type: 'status', task: 'highlights', message: chunkMessage });
+    const highlightedChunk = await runWithStatusHeartbeat('highlights', chunkMessage, sendUpdate, async () =>
+      callModelWithRetry(
+        prompts.highlightSystem,
+        prompts.highlightUserSegment(chunks[i], i + 1, chunks.length),
+        MAX_TOKENS.highlights,
+        0.3,
+        async (token) => {
+          await sendUpdate({ type: 'highlight_token', content: token, chunkIndex: i, totalChunks: chunks.length });
+        },
+        'highlights'
+      )
     );
     highlightedChunks.push(highlightedChunk);
     if (onChunkCheckpoint) {
