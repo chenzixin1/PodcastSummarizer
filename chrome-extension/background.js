@@ -952,8 +952,8 @@ async function ensureOffscreenDocument() {
 
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_DOCUMENT_PATH,
-      reasons: ['BLOBS'],
-      justification: 'Download YouTube audio in browser and upload to PodSum Path2 API.',
+      reasons: ['BLOBS', 'AUDIO_PLAYBACK'],
+      justification: 'Download and decode YouTube audio in browser, then upload Path2 payload to PodSum API.',
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error || '');
@@ -1126,6 +1126,66 @@ async function handleOffscreenProgress(message) {
         stack: data?.stack || null,
         fileName: data?.fileName || null,
         durationSec: data?.durationSec || null,
+        mimeType: data?.mimeType || null,
+      },
+    });
+    return;
+  }
+
+  if (stage === 'transcode_start') {
+    await mutateTask(taskId, (task) => ({
+      ...task,
+      updatedAt: Date.now(),
+      statusMessage: '音频下载完成，正在转换为转写格式...',
+    }));
+    await reportTaskMonitorEvent(taskId, {
+      path: 'path2',
+      stage: 'client_path2_transcode_start',
+      level: 'info',
+      message: 'Path2 audio transcode started in offscreen worker.',
+      endpoint: 'chrome-extension/offscreen',
+      meta: {
+        fromMime: data?.fromMime || null,
+        targetMime: data?.targetMime || 'audio/wav',
+        targetRate: data?.targetRate || 16000,
+      },
+    });
+    return;
+  }
+
+  if (stage === 'transcode_complete') {
+    await mutateTask(taskId, (task) => ({
+      ...task,
+      updatedAt: Date.now(),
+      fileName: data?.fileName ? String(data.fileName) : task.fileName,
+      statusMessage: '音频格式转换完成，准备上传...',
+    }));
+    await reportTaskMonitorEvent(taskId, {
+      path: 'path2',
+      stage: 'client_path2_transcode_complete',
+      level: 'info',
+      message: 'Path2 audio transcode completed in offscreen worker.',
+      endpoint: 'chrome-extension/offscreen',
+      meta: {
+        fromMime: data?.fromMime || null,
+        toMime: data?.toMime || null,
+        bytes: data?.bytes || null,
+        fileName: data?.fileName || null,
+      },
+    });
+    return;
+  }
+
+  if (stage === 'transcode_failed') {
+    await reportTaskMonitorEvent(taskId, {
+      path: 'path2',
+      stage: 'client_path2_transcode_failed',
+      level: 'error',
+      message: 'Path2 audio transcode failed in offscreen worker.',
+      endpoint: 'chrome-extension/offscreen',
+      meta: {
+        fromMime: data?.fromMime || null,
+        error: data?.error || null,
       },
     });
     return;
