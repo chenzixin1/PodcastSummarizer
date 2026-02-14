@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "PodSum 字幕助手",
-  "version": "0.1.8",
-  "version_name": "git-d499510-r8",
+  "version": "0.1.9",
+  "version_name": "git-d499510-r9",
   "description": "在 YouTube 页面一键抓取字幕，保存本地并上传到 PodSum。",
   "permissions": [
     "storage",

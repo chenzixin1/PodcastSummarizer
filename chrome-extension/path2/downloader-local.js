@@ -428,6 +428,50 @@ function isTranscriptionFriendlyMime(mimeType) {
   return null;
 }
 
+function inferContainerFromMimeType(mimeType) {
+  const normalized = toAscii(mimeType);
+  if (normalized.startsWith('audio/mp4')) return 'mp4';
+  if (normalized.startsWith('audio/mpeg')) return 'mp3';
+  if (normalized.startsWith('audio/wav') || normalized.startsWith('audio/x-wav')) return 'wav';
+  if (normalized.startsWith('audio/aac')) return 'aac';
+  if (normalized.startsWith('audio/flac')) return 'flac';
+  return '';
+}
+
+function looksLikeTextPayload(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 8) {
+    return false;
+  }
+
+  const probe = bytes.slice(0, 96);
+  let text = '';
+  for (const code of probe) {
+    if (code === 0) {
+      return false;
+    }
+    if (code >= 32 && code <= 126) {
+      text += String.fromCharCode(code);
+      continue;
+    }
+    if (code === 9 || code === 10 || code === 13) {
+      text += ' ';
+      continue;
+    }
+    // Non-printable binary byte: likely real media bytes.
+    return false;
+  }
+
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.startsWith('<!doctype html') ||
+    normalized.startsWith('<html') ||
+    normalized.startsWith('<?xml') ||
+    normalized.startsWith('{') ||
+    normalized.startsWith('[')
+  );
+}
+
 function detectAudioContainer(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 4) {
     return 'unknown';
@@ -435,7 +479,7 @@ function detectAudioContainer(bytes) {
 
   if (bytes.length >= 12) {
     const box = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
-    if (box === 'ftyp') {
+    if (box === 'ftyp' || box === 'styp' || box === 'sidx' || box === 'moov' || box === 'moof' || box === 'mdat') {
       return 'mp4';
     }
   }
@@ -547,9 +591,16 @@ export async function downloadAudioWithLocalFallback(options) {
         contentLength: Number.isFinite(contentLength) ? contentLength : 0,
         onProgress: options?.onProgress,
       });
-      const container = detectAudioContainer(audioBytes);
+      let container = detectAudioContainer(audioBytes);
+      if (container === 'unknown') {
+        const hintedContainer = inferContainerFromMimeType(hintedMimeType);
+        if (hintedContainer) {
+          container = hintedContainer;
+        }
+      }
       if (!isSupportedContainer(container)) {
-        lastError = new Error(`Unsupported audio container from network candidate: ${container}`);
+        const payloadHint = looksLikeTextPayload(audioBytes) ? ' (received non-audio text payload)' : '';
+        lastError = new Error(`Unsupported audio container from network candidate: ${container}${payloadHint}`);
         continue;
       }
       const mimeType = containerToMime(container, hintedMimeType);
@@ -601,9 +652,16 @@ export async function downloadAudioWithLocalFallback(options) {
         contentLength: Number.isFinite(contentLength) ? contentLength : 0,
         onProgress: options?.onProgress,
       });
-      const container = detectAudioContainer(audioBytes);
+      let container = detectAudioContainer(audioBytes);
+      if (container === 'unknown') {
+        const hintedContainer = inferContainerFromMimeType(mimeType);
+        if (hintedContainer) {
+          container = hintedContainer;
+        }
+      }
       if (!isSupportedContainer(container)) {
-        lastError = new Error(`Unsupported audio container from adaptive format: ${container}`);
+        const payloadHint = looksLikeTextPayload(audioBytes) ? ' (received non-audio text payload)' : '';
+        lastError = new Error(`Unsupported audio container from adaptive format: ${container}${payloadHint}`);
         continue;
       }
       const finalMimeType = containerToMime(container, mimeType);
