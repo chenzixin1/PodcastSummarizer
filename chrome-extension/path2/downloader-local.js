@@ -409,6 +409,78 @@ function toNumber(value) {
   return num;
 }
 
+function toAscii(input) {
+  return String(input || '').toLowerCase();
+}
+
+function isTranscriptionFriendlyMime(mimeType) {
+  const normalized = toAscii(mimeType);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.startsWith('audio/mp4')) return true;
+  if (normalized.startsWith('audio/mpeg')) return true;
+  if (normalized.startsWith('audio/wav') || normalized.startsWith('audio/x-wav')) return true;
+  if (normalized.startsWith('audio/aac')) return true;
+  if (normalized.startsWith('audio/flac')) return true;
+  if (normalized.startsWith('audio/ogg')) return false;
+  if (normalized.startsWith('audio/webm') || normalized.startsWith('audio/opus')) return false;
+  return null;
+}
+
+function detectAudioContainer(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 4) {
+    return 'unknown';
+  }
+
+  if (bytes.length >= 12) {
+    const box = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+    if (box === 'ftyp') {
+      return 'mp4';
+    }
+  }
+
+  if (bytes.length >= 4) {
+    const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+    if (riff === 'RIFF' && bytes.length >= 12) {
+      const wave = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
+      if (wave === 'WAVE') return 'wav';
+    }
+    if (riff === 'OggS') return 'ogg';
+    if (riff === 'fLaC') return 'flac';
+    if (riff === 'ID3') return 'mp3';
+  }
+
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+    return 'webm';
+  }
+
+  if (bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0) {
+    return 'aac';
+  }
+
+  if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
+    return 'mp3';
+  }
+
+  return 'unknown';
+}
+
+function isSupportedContainer(container) {
+  const normalized = toAscii(container);
+  return normalized === 'mp4' || normalized === 'mp3' || normalized === 'wav' || normalized === 'aac' || normalized === 'flac';
+}
+
+function containerToMime(container, fallback = 'audio/mp4') {
+  const normalized = toAscii(container);
+  if (normalized === 'mp4') return 'audio/mp4';
+  if (normalized === 'mp3') return 'audio/mpeg';
+  if (normalized === 'wav') return 'audio/wav';
+  if (normalized === 'aac') return 'audio/aac';
+  if (normalized === 'flac') return 'audio/flac';
+  return fallback;
+}
+
 function pickNetworkAudioCandidates(candidates) {
   return candidates
     .filter((item) => item && typeof item === 'object')
@@ -419,7 +491,13 @@ function pickNetworkAudioCandidates(candidates) {
       itag: Number(item.itag || 0),
     }))
     .filter((item) => item.url)
-    .sort((a, b) => (Number(b.contentLength || 0) - Number(a.contentLength || 0)));
+    .sort((a, b) => {
+      const mimeA = isTranscriptionFriendlyMime(itemMimeSafe(a.mimeType));
+      const mimeB = isTranscriptionFriendlyMime(itemMimeSafe(b.mimeType));
+      const scoreA = (mimeA === true ? 1000 : mimeA === false ? -1000 : 0) + Number(a.contentLength || 0);
+      const scoreB = (mimeB === true ? 1000 : mimeB === false ? -1000 : 0) + Number(b.contentLength || 0);
+      return scoreB - scoreA;
+    });
 }
 
 function inferMimeTypeFromUrl(url, fallback = 'audio/mp4') {
@@ -433,6 +511,10 @@ function inferMimeTypeFromUrl(url, fallback = 'audio/mp4') {
     // Ignore URL parsing failures.
   }
   return fallback;
+}
+
+function itemMimeSafe(mimeType) {
+  return String(mimeType || '').trim();
 }
 
 export async function downloadAudioWithLocalFallback(options) {
@@ -453,14 +535,26 @@ export async function downloadAudioWithLocalFallback(options) {
   let lastError = null;
   for (const candidate of networkCandidates) {
     try {
-      const mimeType = extractContentType(candidate.mimeType || inferMimeTypeFromUrl(candidate.url, 'audio/mp4'));
-      const extension = guessExtension(mimeType, 'm4a');
-      const fileName = buildAudioFileName(videoId, title, extension);
+      const hintedMimeType = extractContentType(candidate.mimeType || inferMimeTypeFromUrl(candidate.url, 'audio/mp4'));
+      const mimeCheck = isTranscriptionFriendlyMime(hintedMimeType);
+      if (mimeCheck === false) {
+        lastError = new Error(`Unsupported transcription mime type from network candidate: ${hintedMimeType}`);
+        continue;
+      }
+
       const contentLength = Number(candidate.contentLength || 0);
       const audioBytes = await downloadBinary(candidate.url, {
         contentLength: Number.isFinite(contentLength) ? contentLength : 0,
         onProgress: options?.onProgress,
       });
+      const container = detectAudioContainer(audioBytes);
+      if (!isSupportedContainer(container)) {
+        lastError = new Error(`Unsupported audio container from network candidate: ${container}`);
+        continue;
+      }
+      const mimeType = containerToMime(container, hintedMimeType);
+      const extension = guessExtension(mimeType, 'm4a');
+      const fileName = buildAudioFileName(videoId, title, extension);
 
       return {
         stack: 'local_decsig',
@@ -494,6 +588,11 @@ export async function downloadAudioWithLocalFallback(options) {
   for (const format of candidates) {
     try {
       const mimeType = extractContentType(format?.mimeType || 'audio/mp4');
+      const mimeCheck = isTranscriptionFriendlyMime(mimeType);
+      if (mimeCheck === false) {
+        lastError = new Error(`Unsupported transcription mime type from adaptive format: ${mimeType}`);
+        continue;
+      }
       const extension = guessExtension(mimeType, 'm4a');
       const fileName = buildAudioFileName(videoId, title, extension);
       const contentLength = Number(format?.contentLength || 0);
@@ -502,13 +601,21 @@ export async function downloadAudioWithLocalFallback(options) {
         contentLength: Number.isFinite(contentLength) ? contentLength : 0,
         onProgress: options?.onProgress,
       });
+      const container = detectAudioContainer(audioBytes);
+      if (!isSupportedContainer(container)) {
+        lastError = new Error(`Unsupported audio container from adaptive format: ${container}`);
+        continue;
+      }
+      const finalMimeType = containerToMime(container, mimeType);
+      const finalExtension = guessExtension(finalMimeType, extension);
+      const finalFileName = buildAudioFileName(videoId, title, finalExtension);
 
       return {
         stack: 'local_decsig',
         audioBytes,
-        mimeType,
-        extension,
-        fileName,
+        mimeType: finalMimeType,
+        extension: finalExtension,
+        fileName: finalFileName,
         title,
         durationSec: durationSec || null,
       };
