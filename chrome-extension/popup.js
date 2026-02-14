@@ -97,8 +97,16 @@ function taskStatusLabel(task) {
   }
 }
 
+const STEP_TIPS = Object.freeze({
+  S: 'S：字幕获取',
+  D: 'D：下载（Path1 为字幕文件，Path2 为音频）',
+  U: 'U：上传到 PodSum',
+  P: 'P：转写/分析处理',
+});
+
 function lightTemplate(label, state) {
-  return `<span class="light ${state}" title="${label}">${label}</span>`;
+  const tip = STEP_TIPS[label] || label;
+  return `<span class="light ${state}" title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">${label}</span>`;
 }
 
 function taskActionsTemplate(task) {
