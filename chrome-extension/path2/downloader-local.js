@@ -409,6 +409,32 @@ function toNumber(value) {
   return num;
 }
 
+function pickNetworkAudioCandidates(candidates) {
+  return candidates
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => ({
+      url: String(item.url || '').trim(),
+      mimeType: String(item.mimeType || '').trim(),
+      contentLength: Number(item.contentLength || 0),
+      itag: Number(item.itag || 0),
+    }))
+    .filter((item) => item.url)
+    .sort((a, b) => (Number(b.contentLength || 0) - Number(a.contentLength || 0)));
+}
+
+function inferMimeTypeFromUrl(url, fallback = 'audio/mp4') {
+  try {
+    const parsed = new URL(String(url || ''));
+    const mimeParam = decodeURIComponent(parsed.searchParams.get('mime') || '');
+    if (mimeParam) {
+      return mimeParam;
+    }
+  } catch {
+    // Ignore URL parsing failures.
+  }
+  return fallback;
+}
+
 export async function downloadAudioWithLocalFallback(options) {
   const context = options?.downloadContext || {};
   const videoId = String(context.videoId || options?.videoId || '').trim();
@@ -423,19 +449,48 @@ export async function downloadAudioWithLocalFallback(options) {
     throw new Error(`VIDEO_TOO_LONG: ${durationSec}s exceeds ${maxDurationSec}s.`);
   }
 
+  const networkCandidates = pickNetworkAudioCandidates(context.networkAudioCandidates || []);
+  let lastError = null;
+  for (const candidate of networkCandidates) {
+    try {
+      const mimeType = extractContentType(candidate.mimeType || inferMimeTypeFromUrl(candidate.url, 'audio/mp4'));
+      const extension = guessExtension(mimeType, 'm4a');
+      const fileName = buildAudioFileName(videoId, title, extension);
+      const contentLength = Number(candidate.contentLength || 0);
+      const audioBytes = await downloadBinary(candidate.url, {
+        contentLength: Number.isFinite(contentLength) ? contentLength : 0,
+        onProgress: options?.onProgress,
+      });
+
+      return {
+        stack: 'local_decsig',
+        audioBytes,
+        mimeType,
+        extension,
+        fileName,
+        title,
+        durationSec: durationSec || null,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
   const adaptiveFormats = Array.isArray(context.adaptiveFormats) ? context.adaptiveFormats : [];
   const allAudioFormats = adaptiveFormats.filter((item) =>
     String(item?.mimeType || '').toLowerCase().startsWith('audio/'),
   );
   const candidates = pickAudioFormats(adaptiveFormats);
   if (!candidates.length) {
+    if (lastError) {
+      throw lastError;
+    }
     if (allAudioFormats.length > 0) {
       throw new Error('No downloadable audio formats available in player response.');
     }
     throw new Error('No audio formats available in player response.');
   }
 
-  let lastError = null;
   for (const format of candidates) {
     try {
       const mimeType = extractContentType(format?.mimeType || 'audio/mp4');

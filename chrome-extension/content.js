@@ -452,11 +452,103 @@ function extractAdaptiveAudioFormats(response) {
       approxDurationMs: String(item?.approxDurationMs || ''),
       url: item?.url ? String(item.url) : '',
       signatureCipher: item?.signatureCipher ? String(item.signatureCipher) : '',
+      signature_cipher: item?.signature_cipher ? String(item.signature_cipher) : '',
       cipher: item?.cipher ? String(item.cipher) : '',
     });
   }
 
   return sanitized;
+}
+
+function tryParseUrl(value) {
+  try {
+    return new URL(String(value || ''));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeGoogleVideoCandidate(rawUrl) {
+  const parsed = tryParseUrl(rawUrl);
+  if (!parsed) {
+    return null;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (!host.includes('googlevideo.com')) {
+    return null;
+  }
+
+  if (!parsed.pathname.includes('/videoplayback')) {
+    return null;
+  }
+
+  const mime = decodeURIComponent(parsed.searchParams.get('mime') || '').toLowerCase();
+  if (mime && !mime.startsWith('audio/')) {
+    return null;
+  }
+
+  if (parsed.searchParams.get('sq')) {
+    // Live/HLS sequence fragments are not suitable for full-file download.
+    return null;
+  }
+
+  parsed.searchParams.delete('range');
+  parsed.searchParams.delete('rn');
+  parsed.searchParams.delete('rbuf');
+  parsed.searchParams.delete('ump');
+
+  return parsed;
+}
+
+function collectNetworkAudioCandidates() {
+  const entries = performance?.getEntriesByType?.('resource') || [];
+  const dedup = new Set();
+  const candidates = [];
+
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    const rawUrl = String(entry?.name || '');
+    if (!rawUrl || !rawUrl.includes('googlevideo.com')) {
+      continue;
+    }
+
+    const parsed = normalizeGoogleVideoCandidate(rawUrl);
+    if (!parsed) {
+      continue;
+    }
+
+    const normalizedUrl = parsed.toString();
+    if (dedup.has(normalizedUrl)) {
+      continue;
+    }
+    dedup.add(normalizedUrl);
+
+    candidates.push({
+      url: normalizedUrl,
+      mimeType: decodeURIComponent(parsed.searchParams.get('mime') || ''),
+      contentLength: String(parsed.searchParams.get('clen') || ''),
+      itag: Number(parsed.searchParams.get('itag') || 0),
+    });
+
+    if (candidates.length >= 8) {
+      break;
+    }
+  }
+
+  return candidates;
+}
+
+async function collectNetworkAudioCandidatesWithWait(timeoutMs = 2600) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const candidates = collectNetworkAudioCandidates();
+    if (candidates.length > 0) {
+      return candidates;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 260));
+  }
+  return collectNetworkAudioCandidates();
 }
 
 async function extractDownloadContextPayload() {
@@ -478,13 +570,18 @@ async function extractDownloadContextPayload() {
   }
 
   const adaptiveFormats = extractAdaptiveAudioFormats(playerResponse);
+  const networkAudioCandidates = await collectNetworkAudioCandidatesWithWait();
   if (!adaptiveFormats.length) {
-    throw new ExtractionError('PATH2_AUDIO_UNAVAILABLE', '当前视频没有可用音频流，无法启动 Path2。');
+    if (!networkAudioCandidates.length) {
+      throw new ExtractionError('PATH2_AUDIO_UNAVAILABLE', '当前视频没有可用音频流，无法启动 Path2。');
+    }
   }
 
   const title = String(playerResponse?.videoDetails?.title || fallbackTitle(videoId));
   const lengthSeconds = String(playerResponse?.videoDetails?.lengthSeconds || '');
   const playerUrl = getPlayerScriptUrl();
+  const dashManifestUrl = String(playerResponse?.streamingData?.dashManifestUrl || '');
+  const hlsManifestUrl = String(playerResponse?.streamingData?.hlsManifestUrl || '');
 
   return {
     videoId,
@@ -492,6 +589,9 @@ async function extractDownloadContextPayload() {
     lengthSeconds,
     playerUrl,
     adaptiveFormats,
+    networkAudioCandidates,
+    dashManifestUrl,
+    hlsManifestUrl,
   };
 }
 
