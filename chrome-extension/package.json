@@ -1,6 +1,6 @@
 {
   "name": "podsum-chrome-extension",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "PodSum Chrome extension for YouTube subtitle download and upload.",
   "scripts": {

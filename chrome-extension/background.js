@@ -1222,16 +1222,28 @@ function handleOffscreenResponse(message) {
 
 async function runPath2DownloadAndUpload(task, tabId) {
   const [settings, auth] = await Promise.all([getSettings(), requireAuth()]);
-  const downloadContext = await extractDownloadContextFromTab(tabId);
-  const durationSec = Number(downloadContext?.lengthSeconds || 0);
-  if (Number.isFinite(durationSec) && durationSec > PATH2_MAX_DURATION_SEC) {
-    throw new TaskError(
-      'VIDEO_TOO_LONG',
-      `Path2 仅支持 ${PATH2_MAX_DURATION_SEC / 60} 分钟内视频，当前约 ${Math.ceil(durationSec / 60)} 分钟。`,
+  const shouldRetryWithFreshContext = (error) => {
+    const message = String(error instanceof Error ? error.message : error || '').toLowerCase();
+    return (
+      message.includes('no url or signaturecipher in selected format') ||
+      message.includes('no downloadable audio formats available')
     );
-  }
+  };
 
-  return sendOffscreenRequest({
+  const validateDuration = (downloadContext) => {
+    const durationSec = Number(downloadContext?.lengthSeconds || 0);
+    if (Number.isFinite(durationSec) && durationSec > PATH2_MAX_DURATION_SEC) {
+      throw new TaskError(
+        'VIDEO_TOO_LONG',
+        `Path2 仅支持 ${PATH2_MAX_DURATION_SEC / 60} 分钟内视频，当前约 ${Math.ceil(durationSec / 60)} 分钟。`,
+      );
+    }
+  };
+
+  let downloadContext = await extractDownloadContextFromTab(tabId);
+  validateDuration(downloadContext);
+
+  const buildPayload = () => ({
     action: 'PATH2_DOWNLOAD_AND_UPLOAD',
     taskId: task.taskId,
     traceId: task.traceId || buildTraceId(task.videoId),
@@ -1244,6 +1256,30 @@ async function runPath2DownloadAndUpload(task, tabId) {
     maxDurationSec: PATH2_MAX_DURATION_SEC,
     downloadContext,
   });
+
+  try {
+    return await sendOffscreenRequest(buildPayload());
+  } catch (error) {
+    if (!shouldRetryWithFreshContext(error)) {
+      throw error;
+    }
+
+    await reportTaskMonitorEvent(task.taskId, {
+      path: 'path2',
+      stage: 'client_path2_context_retry',
+      level: 'warn',
+      message: 'Path2 audio context unavailable, retrying with refreshed context.',
+      meta: {
+        reason: error instanceof Error ? error.message : String(error),
+      },
+    });
+
+    await delay(1500);
+    downloadContext = await extractDownloadContextFromTab(tabId);
+    validateDuration(downloadContext);
+
+    return sendOffscreenRequest(buildPayload());
+  }
 }
 
 async function markAwaitingPath2(taskId, error) {

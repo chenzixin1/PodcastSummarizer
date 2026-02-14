@@ -326,9 +326,27 @@ function parseCipherValue(cipherValue) {
   };
 }
 
+function hasDownloadAddress(format) {
+  const directUrl = String(format?.url || format?.downloadUrl || '').trim();
+  const cipherValue = String(
+    format?.signatureCipher ||
+      format?.signature_cipher ||
+      format?.cipher ||
+      format?.signature_cipher_text ||
+      '',
+  ).trim();
+  return Boolean(directUrl || cipherValue);
+}
+
 async function buildDownloadUrl(format, playerUrl) {
-  const directUrl = String(format?.url || '').trim();
-  const cipherValue = String(format?.signatureCipher || format?.cipher || '').trim();
+  const directUrl = String(format?.url || format?.downloadUrl || '').trim();
+  const cipherValue = String(
+    format?.signatureCipher ||
+      format?.signature_cipher ||
+      format?.cipher ||
+      format?.signature_cipher_text ||
+      '',
+  ).trim();
 
   if (!directUrl && !cipherValue) {
     throw new Error('No URL or signatureCipher in selected format.');
@@ -373,6 +391,7 @@ async function buildDownloadUrl(format, playerUrl) {
 function pickAudioFormats(formats) {
   return formats
     .filter((item) => String(item?.mimeType || '').toLowerCase().startsWith('audio/'))
+    .filter((item) => hasDownloadAddress(item))
     .sort((a, b) => {
       const mimeA = String(a?.mimeType || '').toLowerCase();
       const mimeB = String(b?.mimeType || '').toLowerCase();
@@ -405,8 +424,14 @@ export async function downloadAudioWithLocalFallback(options) {
   }
 
   const adaptiveFormats = Array.isArray(context.adaptiveFormats) ? context.adaptiveFormats : [];
+  const allAudioFormats = adaptiveFormats.filter((item) =>
+    String(item?.mimeType || '').toLowerCase().startsWith('audio/'),
+  );
   const candidates = pickAudioFormats(adaptiveFormats);
   if (!candidates.length) {
+    if (allAudioFormats.length > 0) {
+      throw new Error('No downloadable audio formats available in player response.');
+    }
     throw new Error('No audio formats available in player response.');
   }
 
