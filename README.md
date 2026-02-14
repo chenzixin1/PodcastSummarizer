@@ -120,13 +120,14 @@ The application uses several environment variables to configure the LLM model an
 
 When uploading a YouTube URL, the backend now does:
 1. Try native/auto YouTube captions with language fallback
-2. If captions are unavailable, call Gladia pre-recorded API directly with the YouTube URL and request SRT
-3. If Gladia is unavailable/fails, download audio, upload audio to Vercel Blob, then call Volcano Engine ASR and convert result to SRT
+2. If captions are unavailable and `GLADIA_FALLBACK_ENABLED=true`, call Gladia pre-recorded API directly with the YouTube URL and request SRT
+3. If Gladia is disabled/unavailable/fails, download audio, upload audio to Vercel Blob, then call Volcano Engine ASR and convert result to SRT
 
 Environment variables for this pipeline:
 
 - `BLOB_READ_WRITE_TOKEN`: Required for storing uploaded SRT and fallback audio on Vercel Blob
-- `GLADIA_API_KEY`: Optional paid fallback provider key (recommended for restricted/no-caption videos)
+- `GLADIA_FALLBACK_ENABLED`: Default disabled. Set `true`/`1` to enable Gladia fallback.
+- `GLADIA_API_KEY`: Optional paid fallback provider key (required only when `GLADIA_FALLBACK_ENABLED=true`)
 - `GLADIA_BASE_URL`: Default `https://api.gladia.io`
 - `GLADIA_MAX_RETRIES`: Default `120`
 - `GLADIA_RETRY_DELAY_MS`: Default `5000`
@@ -144,6 +145,25 @@ Environment variables for this pipeline:
 - `YOUTUBE_MAX_AUDIO_DURATION_SECONDS`: Max duration allowed for ASR fallback (default `10800`)
 - `YOUTUBE_MAX_AUDIO_BYTES`: Max downloadable audio size (default `157286400`)
 - `YOUTUBE_MAX_FORMAT_ATTEMPTS`: Max candidate audio formats to retry in ytdl fallback (default `4`)
+
+### Extension Monitor (Path1 + Path2 Observability)
+
+A server-side monitor page is available for extension task debugging:
+
+- Page: `/ops/extension-monitor`
+- API: `/api/ops/extension-monitor/tasks` and `/api/ops/extension-monitor/tasks/:id`
+- Access: Any logged-in NextAuth user (current temporary policy)
+
+Runtime switches:
+
+- `EXTENSION_MONITOR_ENABLED`: default `false`. Must be `true` to enable monitor APIs/UI and ingestion.
+- `EXTENSION_MONITOR_CAPTURE_RAW`: default `false`. Set `true` to persist raw request/response payloads.
+- `EXTENSION_MONITOR_RETENTION_DAYS`: default `3`. Automatic cleanup window for monitor tasks/events.
+
+Notes:
+
+- Raw logging keeps `Authorization` header as-is for debugging.
+- Any `password` field is always redacted before persistence.
 
 You can set these environment variables:
 1. Through your hosting platform (e.g., Vercel)

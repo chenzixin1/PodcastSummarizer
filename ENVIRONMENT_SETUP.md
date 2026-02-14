@@ -45,6 +45,7 @@ QA_MAX_TOTAL_CHUNKS=180
 
 # ========== YouTube URL 转 SRT 回退链路 ==========
 # 优先: YouTube captions -> Gladia(可选) -> Volcano + 音频下载
+GLADIA_FALLBACK_ENABLED=false
 GLADIA_API_KEY=your_gladia_api_key_here
 GLADIA_BASE_URL=https://api.gladia.io
 GLADIA_MAX_RETRIES=120

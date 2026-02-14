@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PodSum 扩展设置</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #0b1220;
+        color: #e2e8f0;
+      }
+      main {
+        max-width: 600px;
+        margin: 24px auto;
+        background: #111b2f;
+        border: 1px solid #233250;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 20px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+      }
+      input {
+        border: 1px solid #334155;
+        border-radius: 8px;
+        background: #0f172a;
+        color: #f8fafc;
+        padding: 10px;
+      }
+      .actions {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        border: none;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #saveBtn {
+        background: #0ea5e9;
+        color: #f8fafc;
+      }
+      #resetBtn {
+        background: transparent;
+        border: 1px solid #334155;
+        color: #cbd5e1;
+      }
+      #message {
+        margin-top: 10px;
+        color: #bae6fd;
+        min-height: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>PodSum 扩展设置</h1>
+      <label>
+        PodSum 网站地址
+        <input id="baseUrlInput" type="url" placeholder="https://podsum.cc" />
+      </label>
+      <p>默认：`https://podsum.cc`。本地开发可填 `http://localhost:3000`。</p>
+      <div class="actions">
+        <button id="saveBtn" type="button">保存</button>
+        <button id="resetBtn" type="button">恢复默认</button>
+      </div>
+      <div id="message"></div>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

@@ -48,7 +48,7 @@ describe('Database Operations Tests', () => {
       const result = await initDatabase();
       
       expect(result.success).toBe(true);
-      expect(mockSql).toHaveBeenCalledTimes(2); // 两个CREATE TABLE语句
+      expect(mockSql.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
     test('should handle database initialization error', async () => {

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PodSum 字幕助手</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header class="header">
+        <img src="assets/icons/icon-32.png" alt="PodSum" width="24" height="24" />
+        <div>
+          <h1>PodSum 字幕助手</h1>
+          <p id="accountHint" class="subtle">未登录</p>
+          <p id="versionHint" class="subtle versionHint"></p>
+        </div>
+      </header>
+
+      <section id="errorBox" class="error hidden"></section>
+      <section id="infoBox" class="info hidden"></section>
+
+      <section id="loginView" class="panel">
+        <form id="loginForm" class="stack">
+          <label>
+            邮箱
+            <input id="emailInput" type="email" autocomplete="username" required />
+          </label>
+          <label>
+            密码
+            <input id="passwordInput" type="password" autocomplete="current-password" required />
+          </label>
+          <button id="loginButton" type="submit">登录</button>
+        </form>
+      </section>
+
+      <section id="mainView" class="panel hidden">
+        <div class="toolbar">
+          <button id="addCurrentButton" type="button">添加当前视频</button>
+          <label class="toggle">
+            <input id="isPublicToggle" type="checkbox" />
+            <span>Make public</span>
+          </label>
+        </div>
+
+        <div class="tasksHead">
+          <h2>最近任务</h2>
+          <span class="subtle">最多 5 条</span>
+        </div>
+
+        <ul id="tasksList" class="tasks"></ul>
+
+        <div class="footerActions">
+          <button id="openSiteButton" type="button" class="ghost">打开 PodSum 网站</button>
+          <button id="logoutButton" type="button" class="ghost">退出登录</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

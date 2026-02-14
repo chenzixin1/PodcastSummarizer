@@ -779,6 +779,11 @@ function getGladiaConfig(): GladiaConfig {
   };
 }
 
+function isGladiaFallbackEnabled(): boolean {
+  const raw = (process.env.GLADIA_FALLBACK_ENABLED || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
 function formatGladiaError(error: GladiaPollResponse['error'], fallback: string): string {
   if (!error) {
     return fallback;
@@ -1184,21 +1189,23 @@ export async function generateSrtFromYoutubeUrl(youtubeUrl: string): Promise<You
     }
 
     let gladiaError: YoutubeIngestError | null = null;
-    try {
-      const gladiaResult = await transcribeWithGladiaFromYoutube(youtubeUrl, videoId);
-      return {
-        ...gladiaResult,
-        source: 'gladia_asr',
-        availableLanguages: [],
-        selectedLanguage: undefined,
-      };
-    } catch (error) {
-      if (error instanceof YoutubeIngestError) {
-        if (error.code !== 'GLADIA_NOT_CONFIGURED') {
-          gladiaError = error;
+    if (isGladiaFallbackEnabled()) {
+      try {
+        const gladiaResult = await transcribeWithGladiaFromYoutube(youtubeUrl, videoId);
+        return {
+          ...gladiaResult,
+          source: 'gladia_asr',
+          availableLanguages: [],
+          selectedLanguage: undefined,
+        };
+      } catch (error) {
+        if (error instanceof YoutubeIngestError) {
+          if (error.code !== 'GLADIA_NOT_CONFIGURED') {
+            gladiaError = error;
+          }
+        } else {
+          throw error;
         }
-      } else {
-        throw error;
       }
     }
 

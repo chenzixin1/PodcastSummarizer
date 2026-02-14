@@ -1,0 +1,282 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  width: 380px;
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+.popup {
+  padding: 12px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.header h1 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.subtle {
+  margin: 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.versionHint {
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.panel {
+  background: #111b2f;
+  border: 1px solid #233250;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.hidden {
+  display: none;
+}
+
+.stack {
+  display: grid;
+  gap: 10px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+input[type='email'],
+input[type='password'] {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 8px;
+  font-size: 13px;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #0ea5e9;
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.tasksHead {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tasksHead h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.tasks {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.task {
+  border: 1px solid #2c3d60;
+  border-radius: 8px;
+  padding: 8px;
+  background: #0f172a;
+}
+
+.taskTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.taskTopRight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.taskTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.taskMeta {
+  margin: 4px 0;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.taskDeleteButton {
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  border: 1px solid #334155;
+  background: transparent;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  font-size: 13px;
+}
+
+.taskDeleteButton:hover {
+  border-color: #ef4444;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.lights {
+  display: flex;
+  gap: 6px;
+}
+
+.light {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #f8fafc;
+  border: 1px solid #334155;
+}
+
+.light.idle {
+  background: #334155;
+}
+
+.light.running {
+  background: #ca8a04;
+}
+
+.light.success {
+  background: #16a34a;
+}
+
+.light.failed {
+  background: #dc2626;
+}
+
+.statusText {
+  font-size: 11px;
+  color: #cbd5e1;
+  text-align: right;
+}
+
+.rowActions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rowActions button {
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.error,
+.info {
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.error {
+  background: rgba(220, 38, 38, 0.2);
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  color: #fecaca;
+}
+
+.info {
+  background: rgba(14, 165, 233, 0.18);
+  border: 1px solid rgba(14, 165, 233, 0.45);
+  color: #bae6fd;
+}
+
+.footerActions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.empty {
+  border: 1px dashed #334155;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 12px;
+}

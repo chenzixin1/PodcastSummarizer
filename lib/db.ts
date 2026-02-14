@@ -52,6 +52,118 @@ export interface DbResult {
 let schemaUpgradeEnsured = false;
 let schemaUpgradePromise: Promise<void> | null = null;
 
+export async function ensureExtensionTranscriptionJobsTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS extension_transcription_jobs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      provider_task_id TEXT,
+      podcast_id TEXT REFERENCES podcasts(id) ON DELETE SET NULL,
+      audio_blob_url TEXT,
+      source_reference TEXT,
+      original_file_name TEXT,
+      title TEXT,
+      video_id TEXT,
+      is_public BOOLEAN DEFAULT FALSE,
+      error TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_transcription_jobs_user_created
+    ON extension_transcription_jobs (user_id, created_at DESC)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_transcription_jobs_provider_task
+    ON extension_transcription_jobs (provider_task_id)
+  `;
+}
+
+export async function ensureExtensionMonitorTables(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS extension_monitor_tasks (
+      id TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      status TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      user_email TEXT,
+      client_task_id TEXT,
+      trace_id TEXT,
+      source_reference TEXT,
+      video_id TEXT,
+      title TEXT,
+      is_public BOOLEAN DEFAULT FALSE,
+      transcription_job_id TEXT,
+      podcast_id TEXT REFERENCES podcasts(id) ON DELETE SET NULL,
+      provider_task_id TEXT,
+      last_error_code TEXT,
+      last_error_message TEXT,
+      last_http_status INTEGER,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS extension_monitor_events (
+      id BIGSERIAL PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES extension_monitor_tasks(id) ON DELETE CASCADE,
+      level TEXT NOT NULL DEFAULT 'info',
+      stage TEXT NOT NULL,
+      endpoint TEXT,
+      http_status INTEGER,
+      message TEXT,
+      request_headers JSONB,
+      request_body JSONB,
+      response_headers JSONB,
+      response_body JSONB,
+      error_stack TEXT,
+      meta JSONB,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_monitor_tasks_created
+    ON extension_monitor_tasks (created_at DESC)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_monitor_tasks_status_path_updated
+    ON extension_monitor_tasks (status, path, updated_at DESC)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_monitor_tasks_user_created
+    ON extension_monitor_tasks (user_id, created_at DESC)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_monitor_tasks_transcription_job
+    ON extension_monitor_tasks (transcription_job_id)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_monitor_tasks_podcast
+    ON extension_monitor_tasks (podcast_id)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_monitor_tasks_trace
+    ON extension_monitor_tasks (trace_id)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_extension_monitor_events_task_created
+    ON extension_monitor_events (task_id, created_at ASC)
+  `;
+}
+
 async function ensureSchemaUpgrades(): Promise<void> {
   if (schemaUpgradeEnsured) {
     return;
@@ -75,6 +187,8 @@ async function ensureSchemaUpgrades(): Promise<void> {
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS character_count INTEGER
       `;
+      await ensureExtensionTranscriptionJobsTable();
+      await ensureExtensionMonitorTables();
       schemaUpgradeEnsured = true;
     })().catch((error) => {
       schemaUpgradePromise = null;
@@ -198,6 +312,9 @@ export async function initDatabase(): Promise<DbResult> {
       CREATE INDEX IF NOT EXISTS idx_qa_context_chunks_content_tsv
       ON qa_context_chunks USING GIN (content_tsv)
     `;
+
+    await ensureExtensionTranscriptionJobsTable();
+    await ensureExtensionMonitorTables();
 
     console.log('✅ 数据库表初始化成功');
     return { success: true };
