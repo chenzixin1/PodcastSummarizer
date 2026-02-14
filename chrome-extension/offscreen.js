@@ -13,6 +13,18 @@ class OffscreenTaskError extends Error {
 function sendWorkerMessage(payload) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(payload, () => {
+      const runtimeError = chrome.runtime.lastError;
+      if (runtimeError) {
+        const message = String(runtimeError.message || '').toLowerCase();
+        const isBenign =
+          message.includes('message port closed before a response was received') ||
+          message.includes('port closed before a response was received') ||
+          message.includes('receiving end does not exist');
+        if (!isBenign) {
+          // Keep unexpected channel errors visible for debugging.
+          console.warn('[OFFSCREEN] sendMessage runtime error:', runtimeError.message || runtimeError);
+        }
+      }
       resolve();
     });
   });
