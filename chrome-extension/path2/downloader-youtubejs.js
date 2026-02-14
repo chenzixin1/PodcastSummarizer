@@ -34,16 +34,49 @@ function toUint8Array(value) {
   return new Uint8Array(value);
 }
 
-function isTranscriptionFriendlyMime(mimeType) {
+function inferContainerFromMimeType(mimeType) {
   const normalized = extractContentType(mimeType || '');
-  if (normalized.startsWith('audio/mp4')) return true;
-  if (normalized.startsWith('audio/mpeg')) return true;
-  if (normalized.startsWith('audio/wav') || normalized.startsWith('audio/x-wav')) return true;
-  if (normalized.startsWith('audio/aac')) return true;
-  if (normalized.startsWith('audio/flac')) return true;
-  if (normalized.startsWith('audio/ogg')) return false;
-  if (normalized.startsWith('audio/webm') || normalized.startsWith('audio/opus')) return false;
-  return null;
+  if (normalized.startsWith('audio/mp4')) return 'mp4';
+  if (normalized.startsWith('audio/mpeg')) return 'mp3';
+  if (normalized.startsWith('audio/wav') || normalized.startsWith('audio/x-wav')) return 'wav';
+  if (normalized.startsWith('audio/aac')) return 'aac';
+  if (normalized.startsWith('audio/flac')) return 'flac';
+  if (normalized.startsWith('audio/ogg')) return 'ogg';
+  if (normalized.startsWith('audio/webm') || normalized.startsWith('audio/opus')) return 'webm';
+  return '';
+}
+
+function looksLikeTextPayload(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 8) {
+    return false;
+  }
+
+  const limit = Math.min(bytes.length, 96);
+  let probe = '';
+  for (let i = 0; i < limit; i += 1) {
+    const code = bytes[i];
+    if (code === 0) {
+      return false;
+    }
+    if (code >= 32 && code <= 126) {
+      probe += String.fromCharCode(code);
+      continue;
+    }
+    if (code === 9 || code === 10 || code === 13) {
+      probe += ' ';
+      continue;
+    }
+    return false;
+  }
+
+  const normalized = probe.trim().toLowerCase();
+  return (
+    normalized.startsWith('<!doctype html') ||
+    normalized.startsWith('<html') ||
+    normalized.startsWith('<?xml') ||
+    normalized.startsWith('{') ||
+    normalized.startsWith('[')
+  );
 }
 
 function detectAudioContainer(bytes) {
@@ -53,7 +86,9 @@ function detectAudioContainer(bytes) {
 
   if (bytes.length >= 12) {
     const box = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
-    if (box === 'ftyp') return 'mp4';
+    if (box === 'ftyp' || box === 'styp' || box === 'sidx' || box === 'moov' || box === 'moof' || box === 'mdat') {
+      return 'mp4';
+    }
   }
 
   const head4 = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
@@ -76,6 +111,8 @@ function containerToMime(container, fallback = 'audio/mp4') {
   if (container === 'wav') return 'audio/wav';
   if (container === 'aac') return 'audio/aac';
   if (container === 'flac') return 'audio/flac';
+  if (container === 'ogg') return 'audio/ogg';
+  if (container === 'webm') return 'audio/webm';
   return fallback;
 }
 
@@ -149,9 +186,8 @@ export async function downloadAudioWithYoutubeJs(options) {
 
   const format = pickFormat(info);
   const mimeType = extractContentType(format?.mime_type || 'audio/mp4');
-  const mimeCheck = isTranscriptionFriendlyMime(mimeType);
-  if (mimeCheck === false) {
-    throw new Error(`UNSUPPORTED_AUDIO_MIME: ${mimeType}`);
+  if (!mimeType.startsWith('audio/')) {
+    throw new Error(`UNSUPPORTED_AUDIO_MIME: ${mimeType || 'unknown'}`);
   }
   const extension = guessExtension(mimeType, 'm4a');
   const totalBytes = Number(format?.content_length || 0);
@@ -164,11 +200,17 @@ export async function downloadAudioWithYoutubeJs(options) {
   });
 
   const audioBytes = await streamToBytes(stream, Number.isFinite(totalBytes) ? totalBytes : 0, onProgress);
-  const container = detectAudioContainer(audioBytes);
-  if (container === 'webm' || container === 'ogg' || container === 'unknown') {
-    throw new Error(`UNSUPPORTED_AUDIO_CONTAINER: ${container}`);
+  let container = detectAudioContainer(audioBytes);
+  if (container === 'unknown') {
+    const hinted = inferContainerFromMimeType(mimeType);
+    if (hinted) {
+      container = hinted;
+    }
   }
-  const finalMimeType = containerToMime(container, mimeType);
+  if (container === 'unknown' && looksLikeTextPayload(audioBytes)) {
+    throw new Error('YOUTUBEJS_RECEIVED_TEXT_PAYLOAD');
+  }
+  const finalMimeType = container === 'unknown' ? mimeType : containerToMime(container, mimeType);
   const finalExtension = guessExtension(finalMimeType, extension);
   const finalFileName = buildAudioFileName(
     videoId,
