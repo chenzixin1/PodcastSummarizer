@@ -81,7 +81,7 @@ describe('MindMapCanvas AntV integration', () => {
     state.latestProps = null;
   });
 
-  test('passes right-direction boxed configuration and node-triggered collapse settings', async () => {
+  test('passes right-direction linear configuration and node-triggered collapse settings', async () => {
     render(<MindMapCanvas data={SAMPLE_DATA} themeMode="dark" />);
 
     await waitFor(() => {
@@ -91,10 +91,11 @@ describe('MindMapCanvas AntV integration', () => {
 
     const props = getMockState().latestProps;
     expect(props.direction).toBe('right');
-    expect(props.type).toBe('boxed');
+    expect(props.type).toBe('linear');
     expect(props.labelField).toBe('label');
-    expect(props.nodeMinWidth).toBe(280);
-    expect(props.nodeMaxWidth).toBe(700);
+    expect(props.nodeMinWidth).toBe(0);
+    expect(props.nodeMaxWidth).toBe(560);
+    expect(props.animation).toBe(false);
 
     const transformed = props.transforms([
       {
@@ -112,7 +113,7 @@ describe('MindMapCanvas AntV integration', () => {
     expect(collapseTransform.enable).toBe(true);
     expect(collapseTransform.trigger).toBe('node');
     expect(collapseTransform.direction).toBe('out');
-    expect(collapseTransform.refreshLayout).toBe(true);
+    expect(collapseTransform.refreshLayout).toBe(false);
   });
 
   test('calls graph.fitView when clicking Fit View button', async () => {

@@ -77,6 +77,7 @@ function FullscreenIcon({ exit }: { exit: boolean }) {
 export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<GraphLike | null>(null);
+  const initialFittedRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const antvData = useMemo(() => buildAntvMindMapData(data), [data]);
@@ -92,9 +93,12 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
   const handleGraphReady = useCallback(
     (graph: unknown) => {
       graphRef.current = (graph as GraphLike) || null;
-      setTimeout(() => {
-        fitView();
-      }, 32);
+      if (!initialFittedRef.current) {
+        initialFittedRef.current = true;
+        setTimeout(() => {
+          fitView();
+        }, 32);
+      }
     },
     [fitView]
   );
@@ -146,7 +150,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
         enable: true,
         trigger: 'node',
         direction: 'out',
-        refreshLayout: true,
+        refreshLayout: false,
       };
     });
 
@@ -157,7 +161,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
         enable: true,
         trigger: 'node',
         direction: 'out',
-        refreshLayout: true,
+        refreshLayout: false,
       });
     }
 
@@ -232,17 +236,16 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
       <div className="mindmap-antv-surface">
         <MindMap
           data={antvData}
-          type="boxed"
+          type="linear"
           direction="right"
           labelField="label"
-          nodeMinWidth={280}
-          nodeMaxWidth={700}
+          nodeMinWidth={0}
+          nodeMaxWidth={560}
           transforms={transforms}
           layout={layout as any}
-          animation={{ duration: 420 }}
+          animation={false}
           containerStyle={{ width: '100%', height: '100%' }}
           onInit={handleGraphReady}
-          onReady={handleGraphReady}
         />
       </div>
     </div>
