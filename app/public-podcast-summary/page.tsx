@@ -108,8 +108,8 @@ export default function PublicPodcastSummaryPage() {
             name: resolvedName,
             briefSummary: normalizeBriefSummary(item.briefSummary),
             uploadDate: item.createdAt,
-            processed: item.isProcessed,
-            processedAt: item.processedAt,
+            processed: item.isProcessed ?? false,
+            processedAt: item.processedAt ?? undefined,
             isPublic: item.isPublic || false,
             sourceReference: item.sourceReference || null,
             wordCount: typeof item.wordCount === 'number' ? item.wordCount : null,
@@ -183,7 +183,7 @@ export default function PublicPodcastSummaryPage() {
           {/* Breadcrumb Navigation */}
           <nav className="app-breadcrumb-nav w-full md:w-auto">
             <Link href="/" className="app-breadcrumb-link">
-              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} />
+              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
               <span>PodSum.cc</span>
             </Link>
             <span className="app-breadcrumb-divider">/</span>
