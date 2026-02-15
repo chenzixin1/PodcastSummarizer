@@ -492,7 +492,8 @@ export default function DashboardPage() {
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [pollTick, setPollTick] = useState(0);
-  const [contentPanelHeight, setContentPanelHeight] = useState<number | undefined>(undefined);
+  const [assistantPanelHeight, setAssistantPanelHeight] = useState<number | undefined>(undefined);
+  const [assistantStickyTop, setAssistantStickyTop] = useState(96);
   const [themeMode, setThemeMode] = useState<ThemeMode>('light');
   const [contentLanguage, setContentLanguage] = useState<ContentLanguage>('zh');
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgress>({
@@ -508,6 +509,7 @@ export default function DashboardPage() {
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
   const contentPanelRef = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLElement | null>(null);
   const isProcessingRef = useRef(false);
   const isAutoScrollEnabledRef = useRef(true);
   const viewScrollPositionsRef = useRef<Record<ViewMode, number>>({
@@ -556,16 +558,20 @@ export default function DashboardPage() {
     isAutoScrollEnabledRef.current = distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
   }, [activeView]);
 
-  const syncContentPanelHeight = useCallback(() => {
-    const panel = contentPanelRef.current;
-    if (!panel) {
-      setContentPanelHeight(undefined);
+  const syncAssistantLayout = useCallback(() => {
+    if (typeof window === 'undefined') {
       return;
     }
-    const nextHeight = Math.round(panel.getBoundingClientRect().height);
-    if (Number.isFinite(nextHeight) && nextHeight > 0) {
-      setContentPanelHeight(nextHeight);
-    }
+
+    const headerHeight = Math.round(headerRef.current?.getBoundingClientRect().height ?? 0);
+    const nextStickyTop = Math.max(16, headerHeight + 16);
+    setAssistantStickyTop((prev) => (prev === nextStickyTop ? prev : nextStickyTop));
+
+    const panelHeight = Math.round(contentPanelRef.current?.getBoundingClientRect().height ?? 0);
+    const viewportMaxHeight = Math.max(260, Math.floor(window.innerHeight - nextStickyTop - 16));
+    const targetHeight = panelHeight > 0 ? Math.round(panelHeight * 0.8) : viewportMaxHeight;
+    const nextHeight = Math.max(260, Math.min(targetHeight, viewportMaxHeight));
+    setAssistantPanelHeight((prev) => (prev === nextHeight ? prev : nextHeight));
   }, []);
 
   const handleContentScroll = useCallback(() => {
@@ -749,24 +755,38 @@ export default function DashboardPage() {
   }, [id]);
 
   useEffect(() => {
-    const panel = contentPanelRef.current;
-    if (!panel) {
+    syncAssistantLayout();
+
+    if (typeof window === 'undefined') {
       return;
     }
 
-    syncContentPanelHeight();
+    const handleResize = () => {
+      syncAssistantLayout();
+    };
+    window.addEventListener('resize', handleResize);
 
     if (typeof ResizeObserver === 'undefined') {
-      return;
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
     }
 
     const observer = new ResizeObserver(() => {
-      syncContentPanelHeight();
+      syncAssistantLayout();
     });
-    observer.observe(panel);
+    if (contentPanelRef.current) {
+      observer.observe(contentPanelRef.current);
+    }
+    if (headerRef.current) {
+      observer.observe(headerRef.current);
+    }
 
-    return () => observer.disconnect();
-  }, [syncContentPanelHeight, activeView, data, isProcessing, processingProgress.completed, processingProgress.total]);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      observer.disconnect();
+    };
+  }, [syncAssistantLayout, activeView, data, isProcessing, processingProgress.completed, processingProgress.total]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1460,7 +1480,7 @@ export default function DashboardPage() {
   return (
     <ErrorBoundary>
       <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
-        <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
+        <header ref={headerRef} className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
           <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
             {/* Breadcrumb Navigation */}
             <nav className="app-breadcrumb-nav w-full md:w-auto">
@@ -1661,77 +1681,77 @@ export default function DashboardPage() {
               )}
             </section>
 
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px] gap-4 md:gap-6 xl:items-start">
-              <section className="w-full min-w-0">
-                <div className="mb-4 sm:mb-6">
-                  <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border-soft)] pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
-                    <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
-                    <button onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
-                  </div>
-                  <div className="mt-3 inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
-                    <button
-                      onClick={() => setContentLanguage('zh')}
-                      className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                        contentLanguage === 'zh'
-                          ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                          : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                      }`}
-                    >
-                      中文
-                    </button>
-                    <button
-                      onClick={() => setContentLanguage('en')}
-                      className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                        contentLanguage === 'en'
-                          ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                          : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                      }`}
-                    >
-                      English
-                    </button>
-                  </div>
-                </div>
+            <div className="mb-4 sm:mb-6">
+              <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border-soft)] pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
+                <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
+                <button onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
+              </div>
+              <div className="mt-3 inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
+                <button
+                  onClick={() => setContentLanguage('zh')}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                    contentLanguage === 'zh'
+                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                  }`}
+                >
+                  中文
+                </button>
+                <button
+                  onClick={() => setContentLanguage('en')}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                    contentLanguage === 'en'
+                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                  }`}
+                >
+                  English
+                </button>
+              </div>
+            </div>
 
-                {isProcessing && (
-                  <div className="mb-4 rounded-2xl border border-[#bed3c9] bg-[var(--paper-base)] p-3.5 sm:p-4 shadow-[0_12px_28px_-24px_rgba(73,93,83,0.5)]">
-                    <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
-                      <div className="text-[var(--text-secondary)] flex items-center gap-2">
-                        <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
-                        <span>{processingStatus || '处理中...'}</span>
-                      </div>
-                      <span className="text-[var(--text-muted)] tracking-wide">
-                        {processingProgress.task ? TASK_LABELS[processingProgress.task] : 'Preparing'}
-                        {processingProgress.total > 0 ? ` · ${processingProgress.completed}/${processingProgress.total}` : ''}
-                      </span>
-                    </div>
-                    {processingProgress.total > 0 && (
-                      <div className="mt-2.5 h-2 w-full rounded-full bg-[#d9d3c7] overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-[#7ea08f] to-[#3f7a68] transition-all duration-300 ease-out"
-                          style={{ width: `${Math.min(100, Math.round((processingProgress.completed / processingProgress.total) * 100))}%` }}
-                        />
-                      </div>
-                    )}
+            {isProcessing && (
+              <div className="mb-4 rounded-2xl border border-[#bed3c9] bg-[var(--paper-base)] p-3.5 sm:p-4 shadow-[0_12px_28px_-24px_rgba(73,93,83,0.5)]">
+                <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                  <div className="text-[var(--text-secondary)] flex items-center gap-2">
+                    <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
+                    <span>{processingStatus || '处理中...'}</span>
+                  </div>
+                  <span className="text-[var(--text-muted)] tracking-wide">
+                    {processingProgress.task ? TASK_LABELS[processingProgress.task] : 'Preparing'}
+                    {processingProgress.total > 0 ? ` · ${processingProgress.completed}/${processingProgress.total}` : ''}
+                  </span>
+                </div>
+                {processingProgress.total > 0 && (
+                  <div className="mt-2.5 h-2 w-full rounded-full bg-[#d9d3c7] overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-[#7ea08f] to-[#3f7a68] transition-all duration-300 ease-out"
+                      style={{ width: `${Math.min(100, Math.round((processingProgress.completed / processingProgress.total) * 100))}%` }}
+                    />
                   </div>
                 )}
+              </div>
+            )}
 
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px] gap-4 md:gap-6 xl:items-start">
+              <section className="w-full min-w-0">
                 <div ref={contentPanelRef} className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl overflow-hidden">
                   {renderContent()}
                 </div>
               </section>
 
-              <div className="w-full self-start">
+              <div className="w-full self-start xl:sticky" style={{ top: assistantStickyTop }}>
                 {isQaAssistantEnabled ? (
                   <FloatingQaAssistant
                     podcastId={id}
                     enabled={isQaAssistantEnabled}
-                    panelHeight={contentPanelHeight}
+                    panelHeight={assistantPanelHeight}
                   />
                 ) : (
                   <aside
-                    className="dashboard-panel w-full min-h-[320px] rounded-2xl overflow-hidden flex flex-col justify-center px-5 text-sm text-[var(--text-secondary)]"
-                    style={typeof contentPanelHeight === 'number' && contentPanelHeight > 0 ? { height: contentPanelHeight } : undefined}
+                    className="dashboard-panel w-full min-h-[260px] rounded-2xl overflow-hidden flex flex-col justify-center px-5 text-sm text-[var(--text-secondary)]"
+                    style={typeof assistantPanelHeight === 'number' && assistantPanelHeight > 0 ? { height: assistantPanelHeight } : undefined}
                   >
                     Copilot 会在当前文件处理完成后启用。
                   </aside>

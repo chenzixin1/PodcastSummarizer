@@ -263,7 +263,7 @@ export default function FloatingQaAssistant({
 
   return (
     <aside
-      className="dashboard-panel w-full min-h-[320px] rounded-2xl overflow-hidden flex flex-col"
+      className="dashboard-panel w-full min-h-[260px] rounded-2xl overflow-hidden flex flex-col"
       style={shouldMatchHeight ? { height: panelHeight } : undefined}
     >
       <div className="border-b border-[var(--border-soft)] px-4 py-3">
