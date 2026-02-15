@@ -7,7 +7,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { Blob } from 'buffer';
 import { triggerWorkerProcessing } from '../../../lib/workerTrigger';
-import { generateSrtFromYoutubeUrl, YoutubeIngestError } from '../../../lib/youtubeIngest';
+import { fetchYoutubeSrtViaApify, ApifyTranscriptError } from '../../../lib/apifyTranscript';
 import { resolveFilePodcastTitle, resolveYoutubePodcastTitle } from '../../../lib/podcastTitle';
 
 export const runtime = 'nodejs';
@@ -23,23 +23,8 @@ function createFileFromText(content: string, filename: string): File {
   return blob as unknown as File;
 }
 
-function statusForYoutubeIngestError(error: YoutubeIngestError): number {
-  switch (error.code) {
-    case 'INVALID_YOUTUBE_URL':
-      return 400;
-    case 'YOUTUBE_RATE_LIMITED':
-      return 429;
-    case 'YOUTUBE_LOGIN_REQUIRED':
-      return 403;
-    case 'GLADIA_NOT_CONFIGURED':
-    case 'VOLCANO_NOT_CONFIGURED':
-      return 503;
-    case 'GLADIA_TRANSCRIBE_TIMEOUT':
-    case 'VOLCANO_TRANSCRIBE_TIMEOUT':
-      return 504;
-    default:
-      return 502;
-  }
+function statusForApifyIngestError(error: ApifyTranscriptError): number {
+  return error.status;
 }
 
 export async function POST(request: NextRequest) {
@@ -64,36 +49,33 @@ export async function POST(request: NextRequest) {
 
   let youtubeIngestMeta:
     | {
-        source: 'youtube_caption' | 'gladia_asr' | 'volcano_asr';
-        selectedLanguage?: string;
-        audioBlobUrl?: string;
+        source: 'apify_text_with_timestamps';
         videoId: string;
+        entries: number;
       }
     | undefined;
   let youtubeVideoTitle: string | undefined;
 
   if (!file && youtubeUrl) {
     try {
-      console.log('[UPLOAD] Resolving transcript from YouTube URL', youtubeUrl);
-      const youtubeResult = await generateSrtFromYoutubeUrl(youtubeUrl);
+      console.log('[UPLOAD] Resolving transcript from YouTube URL via APIFY', youtubeUrl);
+      const youtubeResult = await fetchYoutubeSrtViaApify(youtubeUrl);
 
       file = createFileFromText(youtubeResult.srtContent, `${youtubeResult.videoId}.srt`);
       youtubeIngestMeta = {
         source: youtubeResult.source,
-        selectedLanguage: youtubeResult.selectedLanguage,
-        audioBlobUrl: youtubeResult.audioBlobUrl,
         videoId: youtubeResult.videoId,
+        entries: youtubeResult.entries,
       };
-      youtubeVideoTitle = youtubeResult.videoTitle;
+      youtubeVideoTitle = youtubeResult.title;
 
       console.log('[UPLOAD] YouTube transcript resolved', {
         source: youtubeResult.source,
         videoId: youtubeResult.videoId,
-        selectedLanguage: youtubeResult.selectedLanguage,
-        hasAudioBlobUrl: Boolean(youtubeResult.audioBlobUrl),
+        entries: youtubeResult.entries,
       });
     } catch (error) {
-      if (error instanceof YoutubeIngestError) {
+      if (error instanceof ApifyTranscriptError) {
         console.error('[UPLOAD] YouTube ingest failed:', {
           code: error.code,
           message: error.message,
@@ -106,7 +88,7 @@ export async function POST(request: NextRequest) {
             code: error.code,
             details: error.details,
           },
-          { status: statusForYoutubeIngestError(error) },
+          { status: statusForApifyIngestError(error) },
         );
       }
 

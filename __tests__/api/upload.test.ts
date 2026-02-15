@@ -33,22 +33,24 @@ jest.mock('../../lib/auth', () => ({
   authOptions: {},
 }));
 
-jest.mock('../../lib/youtubeIngest', () => {
-  class MockYoutubeIngestError extends Error {
+jest.mock('../../lib/apifyTranscript', () => {
+  class MockApifyTranscriptError extends Error {
     code: string;
+    status: number;
     details?: string;
 
-    constructor(code: string, message: string, details?: string) {
+    constructor(code: string, status: number, message: string, details?: string) {
       super(message);
-      this.name = 'YoutubeIngestError';
+      this.name = 'ApifyTranscriptError';
       this.code = code;
+      this.status = status;
       this.details = details;
     }
   }
 
   return {
-    generateSrtFromYoutubeUrl: jest.fn(),
-    YoutubeIngestError: MockYoutubeIngestError,
+    fetchYoutubeSrtViaApify: jest.fn(),
+    ApifyTranscriptError: MockApifyTranscriptError,
   };
 });
 
@@ -58,7 +60,7 @@ const mockSavePodcast = jest.fn();
 const mockEnqueueProcessingJob = jest.fn();
 const mockTriggerWorkerProcessing = jest.fn();
 const mockGetServerSession = jest.fn();
-const mockGenerateSrtFromYoutubeUrl = jest.fn();
+const mockFetchYoutubeSrtViaApify = jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -69,7 +71,7 @@ beforeEach(() => {
   require('../../lib/processingJobs').enqueueProcessingJob = mockEnqueueProcessingJob;
   require('../../lib/workerTrigger').triggerWorkerProcessing = mockTriggerWorkerProcessing;
   require('next-auth/next').getServerSession = mockGetServerSession;
-  require('../../lib/youtubeIngest').generateSrtFromYoutubeUrl = mockGenerateSrtFromYoutubeUrl;
+  require('../../lib/apifyTranscript').fetchYoutubeSrtViaApify = mockFetchYoutubeSrtViaApify;
 
   mockNanoid.mockReturnValue('mock-id-12345');
   mockPut.mockResolvedValue({ url: 'https://blob.example.com/mock-id-12345-test.srt' });
@@ -104,7 +106,7 @@ describe('Upload API Tests', () => {
     expect(data.success).toBe(true);
     expect(data.data.id).toBe('mock-id-12345');
     expect(data.data.youtubeIngest).toBeUndefined();
-    expect(mockGenerateSrtFromYoutubeUrl).not.toHaveBeenCalled();
+    expect(mockFetchYoutubeSrtViaApify).not.toHaveBeenCalled();
     expect(mockSavePodcast).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'test',
@@ -146,14 +148,14 @@ describe('Upload API Tests', () => {
     expect(data.error).toBe('No file uploaded');
   });
 
-  it('should process youtube captions when available', async () => {
-    mockGenerateSrtFromYoutubeUrl.mockResolvedValue({
+  it('should process youtube transcript via apify chain', async () => {
+    mockFetchYoutubeSrtViaApify.mockResolvedValue({
       srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
-      source: 'youtube_caption',
+      source: 'apify_text_with_timestamps',
       videoId: 'I9aGC6Ui3eE',
-      videoTitle: '20x Companies with Claude',
-      selectedLanguage: 'en',
-      availableLanguages: ['en'],
+      title: '20x Companies with Claude',
+      fullText: 'hello',
+      entries: 1,
     });
 
     const formData = new FormData();
@@ -169,12 +171,12 @@ describe('Upload API Tests', () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(mockGenerateSrtFromYoutubeUrl).toHaveBeenCalledWith('https://www.youtube.com/watch?v=I9aGC6Ui3eE');
+    expect(mockFetchYoutubeSrtViaApify).toHaveBeenCalledWith('https://www.youtube.com/watch?v=I9aGC6Ui3eE');
     expect(data.data.youtubeIngest).toEqual(
       expect.objectContaining({
-        source: 'youtube_caption',
+        source: 'apify_text_with_timestamps',
         videoId: 'I9aGC6Ui3eE',
-        selectedLanguage: 'en',
+        entries: 1,
       }),
     );
     expect(mockSavePodcast).toHaveBeenCalledWith(
@@ -186,13 +188,13 @@ describe('Upload API Tests', () => {
   });
 
   it('should fallback to videoId title when youtube title is unavailable', async () => {
-    mockGenerateSrtFromYoutubeUrl.mockResolvedValue({
+    mockFetchYoutubeSrtViaApify.mockResolvedValue({
       srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
-      source: 'youtube_caption',
+      source: 'apify_text_with_timestamps',
       videoId: 'I9aGC6Ui3eE',
-      videoTitle: '   ',
-      selectedLanguage: 'en',
-      availableLanguages: ['en'],
+      title: '   ',
+      fullText: 'hello',
+      entries: 1,
     });
 
     const formData = new FormData();
@@ -215,74 +217,10 @@ describe('Upload API Tests', () => {
     );
   });
 
-  it('should process youtube with volcano fallback metadata when captions unavailable', async () => {
-    mockGenerateSrtFromYoutubeUrl.mockResolvedValue({
-      srtContent: '1\n00:00:00,000 --> 00:00:03,000\nvolcano transcript',
-      source: 'volcano_asr',
-      videoId: 'I9aGC6Ui3eE',
-      availableLanguages: [],
-      audioBlobUrl: 'https://blob.vercel-storage.com/I9aGC6Ui3eE-12345.m4a',
-    });
-
-    const formData = new FormData();
-    formData.append('youtubeUrl', 'https://www.youtube.com/watch?v=I9aGC6Ui3eE');
-
-    const request = new NextRequest('http://localhost:3000/api/upload', {
-      method: 'POST',
-      body: formData,
-    });
-
-    const response = await POST(request);
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(data.data.youtubeIngest).toEqual(
-      expect.objectContaining({
-        source: 'volcano_asr',
-        videoId: 'I9aGC6Ui3eE',
-        audioBlobUrl: 'https://blob.vercel-storage.com/I9aGC6Ui3eE-12345.m4a',
-      }),
-    );
-  });
-
-  it('should process youtube with gladia fallback metadata when captions unavailable', async () => {
-    mockGenerateSrtFromYoutubeUrl.mockResolvedValue({
-      srtContent: '1\n00:00:00,000 --> 00:00:03,000\ngladia transcript',
-      source: 'gladia_asr',
-      videoId: 'I9aGC6Ui3eE',
-      availableLanguages: [],
-    });
-
-    const formData = new FormData();
-    formData.append('youtubeUrl', 'https://www.youtube.com/watch?v=I9aGC6Ui3eE');
-
-    const request = new NextRequest('http://localhost:3000/api/upload', {
-      method: 'POST',
-      body: formData,
-    });
-
-    const response = await POST(request);
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(data.data.youtubeIngest).toEqual(
-      expect.objectContaining({
-        source: 'gladia_asr',
-        videoId: 'I9aGC6Ui3eE',
-      }),
-    );
-  });
-
-  it('should return classified youtube ingest error', async () => {
-    const { YoutubeIngestError } = require('../../lib/youtubeIngest');
-    mockGenerateSrtFromYoutubeUrl.mockRejectedValue(
-      new YoutubeIngestError(
-        'YOUTUBE_LOGIN_REQUIRED',
-        'YouTube requires login verification for this video before subtitles can be fetched.',
-        'playability=LOGIN_REQUIRED',
-      ),
+  it('should return classified apify ingest error', async () => {
+    const { ApifyTranscriptError } = require('../../lib/apifyTranscript');
+    mockFetchYoutubeSrtViaApify.mockRejectedValue(
+      new ApifyTranscriptError('APIFY_TIMEOUT', 504, 'Timed out while waiting for APIFY transcript result.'),
     );
 
     const formData = new FormData();
@@ -296,10 +234,10 @@ describe('Upload API Tests', () => {
     const response = await POST(request);
     const data = await response.json();
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(504);
     expect(data.success).toBe(false);
-    expect(data.code).toBe('YOUTUBE_LOGIN_REQUIRED');
-    expect(data.error).toContain('login verification');
+    expect(data.code).toBe('APIFY_TIMEOUT');
+    expect(data.error).toContain('APIFY');
   });
 
   it('should reject unauthenticated request', async () => {
