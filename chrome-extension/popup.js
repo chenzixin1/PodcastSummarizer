@@ -50,6 +50,23 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function normalizeDashboardUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch (_error) {
+    return '';
+  }
+
+  return '';
+}
+
 function formatTime(timestamp) {
   const date = new Date(Number(timestamp || Date.now()));
   const hh = String(date.getHours()).padStart(2, '0');
@@ -100,10 +117,6 @@ function taskStatusLabel(task) {
 function taskActionsTemplate(task) {
   const actions = [];
 
-  if (task.dashboardUrl) {
-    actions.push(`<button type="button" data-action="open" data-url="${escapeHtml(task.dashboardUrl)}">打开结果</button>`);
-  }
-
   if (task.status === 'failed') {
     actions.push(`<button type="button" data-action="retry" data-task-id="${escapeHtml(task.taskId)}">重试</button>`);
   }
@@ -121,11 +134,16 @@ function taskActionsTemplate(task) {
 
 function taskTemplate(task) {
   const visibility = task.isPublic ? 'Public' : 'Private';
+  const safeDashboardUrl = normalizeDashboardUrl(task.dashboardUrl);
+  const title = escapeHtml(task.title);
+  const titleTemplate = safeDashboardUrl
+    ? `<a class="taskTitle taskTitleLink" href="${escapeHtml(safeDashboardUrl)}" target="_blank" rel="noopener noreferrer" title="${title}">${title}</a>`
+    : `<p class="taskTitle" title="${title}">${title}</p>`;
 
   return `
     <li class="task">
       <div class="taskTop">
-        <p class="taskTitle" title="${escapeHtml(task.title)}">${escapeHtml(task.title)}</p>
+        ${titleTemplate}
         <div class="taskTopRight">
           <span class="subtle">${formatTime(task.createdAt)}</span>
           <button
@@ -140,7 +158,7 @@ function taskTemplate(task) {
           </button>
         </div>
       </div>
-      <p class="taskMeta">${escapeHtml(task.videoId)} · ${visibility}</p>
+      <p class="taskMeta">${visibility}</p>
       <div class="statusRow">
         <span class="statusText">${escapeHtml(taskStatusLabel(task))}</span>
       </div>
@@ -315,11 +333,6 @@ async function onTaskAction(event) {
   }
 
   try {
-    if (action === 'open') {
-      await sendMessage({ type: 'PODSUM_OPEN_DASHBOARD', url: target.dataset.url || '' });
-      return;
-    }
-
     if (action === 'retry') {
       const taskId = target.dataset.taskId || '';
       await sendMessage({ type: 'PODSUM_RETRY_TASK', taskId });
