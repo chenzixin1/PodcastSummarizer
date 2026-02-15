@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     
     if (session.user?.email) {
       const userCheck = await sql`
-        SELECT id, email, name, created_at FROM users WHERE email = ${session.user.email}
+        SELECT id, email, name, credits, created_at FROM users WHERE email = ${session.user.email}
       `;
       userExists = userCheck.rows.length > 0;
       dbUser = userCheck.rows[0] || null;

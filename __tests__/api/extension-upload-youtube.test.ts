@@ -40,7 +40,7 @@ jest.mock('../../lib/extensionMonitor', () => ({
 }));
 
 jest.mock('../../lib/db', () => ({
-  savePodcast: jest.fn(),
+  savePodcastWithCreditDeduction: jest.fn(),
 }));
 
 jest.mock('../../lib/processingJobs', () => ({
@@ -76,7 +76,7 @@ const mockNanoid = jest.fn();
 const mockParseBearerToken = jest.fn();
 const mockVerifyExtensionAccessToken = jest.fn();
 const mockCreateExtensionMonitorTask = jest.fn();
-const mockSavePodcast = jest.fn();
+const mockSavePodcastWithCreditDeduction = jest.fn();
 const mockEnqueueProcessingJob = jest.fn();
 const mockFetchYoutubeSrtViaApify = jest.fn();
 
@@ -87,7 +87,7 @@ beforeEach(() => {
   require('../../lib/extensionAuth').parseBearerToken = mockParseBearerToken;
   require('../../lib/extensionAuth').verifyExtensionAccessToken = mockVerifyExtensionAccessToken;
   require('../../lib/extensionMonitor').createExtensionMonitorTask = mockCreateExtensionMonitorTask;
-  require('../../lib/db').savePodcast = mockSavePodcast;
+  require('../../lib/db').savePodcastWithCreditDeduction = mockSavePodcastWithCreditDeduction;
   require('../../lib/processingJobs').enqueueProcessingJob = mockEnqueueProcessingJob;
   require('../../lib/apifyTranscript').fetchYoutubeSrtViaApify = mockFetchYoutubeSrtViaApify;
 
@@ -98,7 +98,10 @@ beforeEach(() => {
     email: 'tester@example.com',
   });
   mockCreateExtensionMonitorTask.mockResolvedValue(null);
-  mockSavePodcast.mockResolvedValue({ success: true });
+  mockSavePodcastWithCreditDeduction.mockResolvedValue({
+    success: true,
+    data: { id: 'podcast-123', remainingCredits: 9 },
+  });
   mockEnqueueProcessingJob.mockResolvedValue({ success: false, error: 'queue unavailable' });
 });
 
@@ -133,7 +136,7 @@ describe('Extension upload-youtube API title handling', () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(mockSavePodcast).toHaveBeenCalledWith(
+    expect(mockSavePodcastWithCreditDeduction).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'podcast-123',
         title: '20x Companies with Claude',
@@ -161,10 +164,37 @@ describe('Extension upload-youtube API title handling', () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(mockSavePodcast).toHaveBeenCalledWith(
+    expect(mockSavePodcastWithCreditDeduction).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'I9aGC6Ui3eE',
       }),
     );
+  });
+
+  it('should return insufficient credits error', async () => {
+    mockFetchYoutubeSrtViaApify.mockResolvedValue({
+      videoId: 'I9aGC6Ui3eE',
+      title: 'Untitled',
+      source: 'apify_text_with_timestamps',
+      srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
+      fullText: 'hello',
+      entries: 1,
+    });
+    mockSavePodcastWithCreditDeduction.mockResolvedValueOnce({
+      success: false,
+      errorCode: 'INSUFFICIENT_CREDITS',
+      error: 'Insufficient credits.',
+    });
+
+    const response = await POST(
+      buildRequest({
+        youtubeUrl: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(402);
+    expect(data.success).toBe(false);
+    expect(data.code).toBe('INSUFFICIENT_CREDITS');
   });
 });

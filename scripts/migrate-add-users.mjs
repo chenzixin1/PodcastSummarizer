@@ -18,6 +18,7 @@ async function migrateDatabase() {
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         name TEXT NOT NULL,
+        credits INTEGER NOT NULL DEFAULT 10,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `;

@@ -9,6 +9,7 @@ export async function GET(request: NextRequest) {
         id, 
         email, 
         name, 
+        credits,
         created_at,
         CASE 
           WHEN password_hash = '' THEN 'Google OAuth'

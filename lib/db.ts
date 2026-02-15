@@ -21,6 +21,7 @@ export interface User {
   email: string;
   name: string;
   passwordHash: string;
+  credits: number;
   createdAt: string;
 }
 
@@ -62,10 +63,46 @@ export interface DbResult {
   success: boolean;
   error?: string;
   data?: unknown;
+  errorCode?: string;
+}
+
+export const DEFAULT_SRT_CREDITS = 10;
+export const SPECIAL_CREDITS_EMAIL = '1195021@qq.com';
+export const SPECIAL_SRT_CREDITS = 10000;
+
+function normalizeEmail(email: string): string {
+  return String(email || '').trim().toLowerCase();
+}
+
+export function getInitialSrtCreditsForEmail(email: string): number {
+  return normalizeEmail(email) === SPECIAL_CREDITS_EMAIL ? SPECIAL_SRT_CREDITS : DEFAULT_SRT_CREDITS;
 }
 
 let schemaUpgradeEnsured = false;
 let schemaUpgradePromise: Promise<void> | null = null;
+let userCreditsSchemaEnsured = false;
+let userCreditsSchemaPromise: Promise<void> | null = null;
+
+export async function ensureUserCreditsSchema(): Promise<void> {
+  if (userCreditsSchemaEnsured) {
+    return;
+  }
+
+  if (!userCreditsSchemaPromise) {
+    userCreditsSchemaPromise = (async () => {
+      await sql`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT ${DEFAULT_SRT_CREDITS}
+      `;
+      userCreditsSchemaEnsured = true;
+    })().catch((error) => {
+      userCreditsSchemaPromise = null;
+      throw error;
+    });
+  }
+
+  await userCreditsSchemaPromise;
+}
 
 function toJsonb(value: unknown): string | null {
   if (value === null || value === undefined) {
@@ -275,6 +312,7 @@ async function ensureSchemaUpgrades(): Promise<void> {
 
   if (!schemaUpgradePromise) {
     schemaUpgradePromise = (async () => {
+      await ensureUserCreditsSchema();
       await sql`
         ALTER TABLE podcasts
         ADD COLUMN IF NOT EXISTS source_reference TEXT
@@ -343,6 +381,7 @@ export async function initDatabase(): Promise<DbResult> {
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         name TEXT NOT NULL,
+        credits INTEGER NOT NULL DEFAULT ${DEFAULT_SRT_CREDITS},
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `;
@@ -459,6 +498,81 @@ export async function initDatabase(): Promise<DbResult> {
     return { success: true };
   } catch (error) {
     console.error('❌ 数据库表初始化失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// 保存播客信息并扣除 1 个转换积分（原子操作）
+export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<DbResult> {
+  try {
+    await ensureSchemaUpgrades();
+
+    if (!podcast.userId) {
+      return { success: false, errorCode: 'USER_REQUIRED', error: 'userId is required for credit deduction.' };
+    }
+
+    const result = await sql`
+      WITH charged AS (
+        UPDATE users
+        SET credits = credits - 1
+        WHERE id = ${podcast.userId}
+          AND credits >= 1
+        RETURNING id, credits
+      ),
+      inserted AS (
+        INSERT INTO podcasts
+          (id, title, original_filename, file_size, blob_url, source_reference, is_public, user_id)
+        SELECT
+          ${podcast.id},
+          ${podcast.title},
+          ${podcast.originalFileName},
+          ${podcast.fileSize},
+          ${podcast.blobUrl},
+          ${podcast.sourceReference ?? null},
+          ${podcast.isPublic},
+          ${podcast.userId}
+        FROM charged
+        RETURNING id
+      )
+      SELECT
+        (SELECT id FROM inserted LIMIT 1) AS podcast_id,
+        (SELECT credits FROM charged LIMIT 1) AS remaining_credits
+    `;
+
+    const podcastId = result.rows[0]?.podcast_id as string | null;
+    if (podcastId) {
+      const remainingCreditsRaw = result.rows[0]?.remaining_credits;
+      const remainingCredits =
+        typeof remainingCreditsRaw === 'number' ? remainingCreditsRaw : Number.parseInt(String(remainingCreditsRaw), 10);
+
+      return {
+        success: true,
+        data: {
+          id: podcastId,
+          remainingCredits: Number.isFinite(remainingCredits) ? remainingCredits : null,
+        },
+      };
+    }
+
+    const userCheck = await sql`
+      SELECT id FROM users WHERE id = ${podcast.userId}
+    `;
+
+    if (userCheck.rows.length === 0) {
+      return {
+        success: false,
+        errorCode: 'USER_NOT_FOUND',
+        error: 'User not found.',
+      };
+    }
+
+    return {
+      success: false,
+      errorCode: 'INSUFFICIENT_CREDITS',
+      error: 'Insufficient credits.',
+    };
+  } catch (error) {
+    console.error('保存播客并扣除积分失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -885,7 +999,9 @@ export async function updatePodcastMetadata(id: string, updates: PodcastMetadata
   try {
     await ensureSchemaUpgrades();
     const hasIsPublicUpdate = typeof updates.isPublic === 'boolean';
-    const hasSourceUpdate = Object.prototype.hasOwnProperty.call(updates, 'sourceReference');
+    const hasSourceUpdate =
+      Object.prototype.hasOwnProperty.call(updates, 'sourceReference') &&
+      updates.sourceReference !== undefined;
 
     if (!hasIsPublicUpdate && !hasSourceUpdate) {
       return { success: false, error: 'No fields to update' };
@@ -928,12 +1044,19 @@ export async function updatePodcastMetadata(id: string, updates: PodcastMetadata
 }
 
 // 创建用户
-export async function createUser(user: Omit<User, 'createdAt'>): Promise<DbResult> {
+export async function createUser(
+  user: Omit<User, 'createdAt' | 'credits'> & { credits?: number },
+): Promise<DbResult> {
   try {
+    await ensureSchemaUpgrades();
+    const credits = Number.isFinite(user.credits as number)
+      ? Math.max(0, Math.floor(user.credits as number))
+      : getInitialSrtCreditsForEmail(user.email);
+
     const result = await sql`
-      INSERT INTO users (id, email, password_hash, name)
-      VALUES (${user.id}, ${user.email}, ${user.passwordHash}, ${user.name})
-      RETURNING id, email, name, created_at
+      INSERT INTO users (id, email, password_hash, name, credits)
+      VALUES (${user.id}, ${user.email}, ${user.passwordHash}, ${user.name}, ${credits})
+      RETURNING id, email, name, credits, created_at
     `;
     
     return { success: true, data: result.rows[0] };
@@ -946,8 +1069,9 @@ export async function createUser(user: Omit<User, 'createdAt'>): Promise<DbResul
 // 根据邮箱获取用户
 export async function getUserByEmail(email: string): Promise<DbResult> {
   try {
+    await ensureSchemaUpgrades();
     const result = await sql`
-      SELECT id, email, password_hash, name, created_at
+      SELECT id, email, password_hash, name, credits, created_at
       FROM users
       WHERE email = ${email}
     `;
@@ -966,8 +1090,9 @@ export async function getUserByEmail(email: string): Promise<DbResult> {
 // 根据ID获取用户
 export async function getUserById(id: string): Promise<DbResult> {
   try {
+    await ensureSchemaUpgrades();
     const result = await sql`
-      SELECT id, email, name, created_at
+      SELECT id, email, name, credits, created_at
       FROM users
       WHERE id = ${id}
     `;

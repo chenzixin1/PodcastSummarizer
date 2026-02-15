@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { sql } from '@vercel/postgres'
 import { nanoid } from 'nanoid'
 import type { NextAuthOptions } from 'next-auth'
+import { ensureUserCreditsSchema, getInitialSrtCreditsForEmail } from './db'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -77,9 +78,11 @@ export const authOptions: NextAuthOptions = {
           if (existingUser.rows.length === 0) {
             // 创建新用户
             const userId = nanoid()
+            const initialCredits = getInitialSrtCreditsForEmail(user.email || '')
+            await ensureUserCreditsSchema()
             await sql`
-              INSERT INTO users (id, email, name, password_hash, created_at)
-              VALUES (${userId}, ${user.email}, ${user.name || user.email}, '', NOW())
+              INSERT INTO users (id, email, name, password_hash, credits, created_at)
+              VALUES (${userId}, ${user.email}, ${user.name || user.email}, '', ${initialCredits}, NOW())
             `
             user.id = userId
           } else {

@@ -11,7 +11,7 @@ import {
   recordExtensionMonitorEvent,
   updateExtensionMonitorTask,
 } from '../../../../lib/extensionMonitor';
-import { savePodcast } from '../../../../lib/db';
+import { savePodcastWithCreditDeduction } from '../../../../lib/db';
 import { enqueueProcessingJob } from '../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
 import { ApifyTranscriptError, fetchYoutubeSrtViaApify } from '../../../../lib/apifyTranscript';
@@ -233,7 +233,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const saveResult = await savePodcast({
+    const saveResult = await savePodcastWithCreditDeduction({
       id,
       title,
       originalFileName,
@@ -245,6 +245,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (!saveResult.success) {
+      if (saveResult.errorCode === 'INSUFFICIENT_CREDITS') {
+        return failAndRespond('INSUFFICIENT_CREDITS', '积分不足，无法继续转换 SRT。', 402);
+      }
       return failAndRespond('SAVE_FAILED', 'Failed to save podcast.', 500, saveResult.error || null);
     }
 
@@ -306,6 +309,7 @@ export async function POST(request: NextRequest) {
         processingQueued: queueResult.success,
         monitorTaskId,
         fileName: originalFileName,
+        remainingCredits: (saveResult.data as { remainingCredits?: number } | undefined)?.remainingCredits ?? null,
         youtubeIngest: {
           source: transcriptResult.source,
           videoId: transcriptResult.videoId,

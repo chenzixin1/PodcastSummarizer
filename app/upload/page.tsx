@@ -9,6 +9,17 @@ import ThemeModeSwitch from '../../components/ThemeModeSwitch';
 
 type ThemeMode = 'light' | 'dark';
 
+function parseCredits(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (Number.isFinite(parsed)) {
+    return Math.max(0, parsed);
+  }
+  return null;
+}
+
 export default function UploadPage() {
   const { data: session, status } = useSession();
   const [file, setFile] = useState<File | null>(null);
@@ -17,6 +28,8 @@ export default function UploadPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isPublic, setIsPublic] = useState(false);
+  const [remainingCredits, setRemainingCredits] = useState<number | null>(null);
+  const [creditsLoading, setCreditsLoading] = useState(true);
   const [themeMode, setThemeMode] = useState<ThemeMode>('light');
   const router = useRouter();
 
@@ -39,6 +52,41 @@ export default function UploadPage() {
     }
     window.localStorage.setItem('podsum-dashboard-theme', themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    if (status !== 'authenticated') {
+      return;
+    }
+
+    let cancelled = false;
+    const loadCredits = async () => {
+      setCreditsLoading(true);
+      try {
+        const response = await fetch('/api/auth-status', {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        const result = await response.json();
+        if (cancelled) {
+          return;
+        }
+        const parsedCredits = parseCredits(result?.database?.user?.credits);
+        setRemainingCredits(parsedCredits);
+      } catch (creditsError) {
+        console.error('Failed to load credits:', creditsError);
+      } finally {
+        if (!cancelled) {
+          setCreditsLoading(false);
+        }
+      }
+    };
+
+    loadCredits();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [status]);
 
   if (status === 'loading') {
     return (
@@ -112,6 +160,11 @@ export default function UploadPage() {
         throw new Error('Upload succeeded but podcast id is missing.');
       }
 
+      const updatedCredits = parseCredits(result?.data?.remainingCredits);
+      if (updatedCredits !== null) {
+        setRemainingCredits(updatedCredits);
+      }
+
       setUploadProgress(100);
       router.push(`/dashboard/${id}`);
     } catch (uploadError) {
@@ -124,7 +177,8 @@ export default function UploadPage() {
     setUploading(false);
   };
 
-  const isSubmitDisabled = uploading || (!file && !youtubeUrl.trim());
+  const isSubmitDisabled =
+    uploading || (!file && !youtubeUrl.trim()) || (remainingCredits !== null && remainingCredits <= 0);
 
   return (
     <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
@@ -152,6 +206,16 @@ export default function UploadPage() {
           <div className="mb-6 space-y-2">
             <h1 className="text-2xl sm:text-3xl font-bold text-[var(--heading)]">Upload SRT or YouTube</h1>
             <p className="text-sm text-[var(--text-muted)]">Signed in as <span className="font-semibold text-[var(--heading)]">{session?.user?.email}</span></p>
+            <p className="text-sm text-[var(--text-secondary)]">
+              Remaining credits:{' '}
+              <span className="font-semibold text-[var(--heading)]">
+                {creditsLoading ? 'Loading...' : remainingCredits ?? '--'}
+              </span>
+              <span className="ml-2 text-[var(--text-muted)]">(1 credit = 1 SRT conversion)</span>
+            </p>
+            {!creditsLoading && remainingCredits === 0 && (
+              <p className="text-sm text-[var(--danger)]">No credits left. Please contact support to add credits.</p>
+            )}
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">

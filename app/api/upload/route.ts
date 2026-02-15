@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
-import { savePodcast } from '../../../lib/db';
+import { savePodcastWithCreditDeduction } from '../../../lib/db';
 import { enqueueProcessingJob } from '../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
       console.warn('[UPLOAD] BLOB_READ_WRITE_TOKEN not configured, using mock storage');
     }
 
-    const dbResult = await savePodcast({
+    const dbResult = await savePodcastWithCreditDeduction({
       id,
       title,
       originalFileName: file.name,
@@ -177,6 +177,16 @@ export async function POST(request: NextRequest) {
     console.log('[UPLOAD] savePodcast result:', dbResult);
 
     if (!dbResult.success) {
+      if (dbResult.errorCode === 'INSUFFICIENT_CREDITS') {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'INSUFFICIENT_CREDITS',
+            error: '积分不足，无法继续转换 SRT。',
+          },
+          { status: 402 },
+        );
+      }
       console.error('[UPLOAD] Error saving to database:', dbResult.error);
       return NextResponse.json(
         {
@@ -210,6 +220,7 @@ export async function POST(request: NextRequest) {
           fileName: file.name,
           fileSize,
           userId,
+          remainingCredits: (dbResult.data as { remainingCredits?: number } | undefined)?.remainingCredits ?? null,
           processingQueued: queueResult.success,
           youtubeIngest: youtubeIngestMeta,
         },

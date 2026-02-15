@@ -11,7 +11,7 @@ import {
   recordExtensionMonitorEvent,
   updateExtensionMonitorTask,
 } from '../../../../lib/extensionMonitor';
-import { savePodcast } from '../../../../lib/db';
+import { savePodcastWithCreditDeduction } from '../../../../lib/db';
 import { enqueueProcessingJob } from '../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
 
@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const saveResult = await savePodcast({
+    const saveResult = await savePodcastWithCreditDeduction({
       id,
       title,
       originalFileName,
@@ -207,6 +207,39 @@ export async function POST(request: NextRequest) {
     });
 
     if (!saveResult.success) {
+      if (saveResult.errorCode === 'INSUFFICIENT_CREDITS') {
+        if (monitorTaskId) {
+          await updateExtensionMonitorTask(monitorTaskId, {
+            status: 'failed',
+            stage: 'failed',
+            podcastId: id,
+            lastErrorCode: 'INSUFFICIENT_CREDITS',
+            lastErrorMessage: 'Insufficient credits.',
+            lastHttpStatus: 402,
+          });
+          await recordExtensionMonitorEvent({
+            taskId: monitorTaskId,
+            level: 'error',
+            stage: 'failed',
+            endpoint,
+            httpStatus: 402,
+            message: 'Insufficient credits.',
+            responseBody: {
+              success: false,
+              code: 'INSUFFICIENT_CREDITS',
+              error: '积分不足，无法继续转换 SRT。',
+            },
+          });
+        }
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'INSUFFICIENT_CREDITS',
+            error: '积分不足，无法继续转换 SRT。',
+          },
+          { status: 402 },
+        );
+      }
       if (monitorTaskId) {
         await updateExtensionMonitorTask(monitorTaskId, {
           status: 'failed',
@@ -297,6 +330,7 @@ export async function POST(request: NextRequest) {
         dashboardUrl: `${getAppBaseUrl(request)}/dashboard/${id}`,
         processingQueued: queueResult.success,
         monitorTaskId,
+        remainingCredits: (saveResult.data as { remainingCredits?: number } | undefined)?.remainingCredits ?? null,
       },
     });
   } catch (error) {

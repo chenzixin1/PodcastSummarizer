@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { sql } from '@vercel/postgres'
 import { nanoid } from 'nanoid'
+import { ensureUserCreditsSchema, getInitialSrtCreditsForEmail } from '../../../../lib/db'
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,16 +47,18 @@ export async function POST(request: NextRequest) {
 
     // 加密密码
     const hashedPassword = await bcrypt.hash(password, 12)
+    const initialCredits = getInitialSrtCreditsForEmail(email)
+    await ensureUserCreditsSchema()
 
     // 创建用户
     const userId = nanoid()
     await sql`
-      INSERT INTO users (id, email, password_hash, name)
-      VALUES (${userId}, ${email}, ${hashedPassword}, ${name})
+      INSERT INTO users (id, email, password_hash, name, credits)
+      VALUES (${userId}, ${email}, ${hashedPassword}, ${name}, ${initialCredits})
     `
 
     return NextResponse.json(
-      { message: 'User created successfully', userId },
+      { message: 'User created successfully', userId, credits: initialCredits },
       { status: 201 }
     )
   } catch (error) {
