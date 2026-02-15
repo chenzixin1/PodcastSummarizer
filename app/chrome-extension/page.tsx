@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import ThemeModeSwitch from '../../components/ThemeModeSwitch';
 
 type ThemeMode = 'light' | 'dark';
 
@@ -48,28 +49,7 @@ export default function ChromeExtensionPage() {
             <Link href="/upload" className="bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
               + Upload SRT
             </Link>
-            <div className="inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
-              <button
-                onClick={() => setThemeMode('light')}
-                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
-                  themeMode === 'light'
-                    ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                }`}
-              >
-                Light Mode
-              </button>
-              <button
-                onClick={() => setThemeMode('dark')}
-                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
-                  themeMode === 'dark'
-                    ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                }`}
-              >
-                Dark Mode
-              </button>
-            </div>
+            <ThemeModeSwitch themeMode={themeMode} onToggle={setThemeMode} />
           </div>
         </div>
       </header>

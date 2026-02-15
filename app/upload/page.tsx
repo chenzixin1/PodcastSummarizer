@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Image from 'next/image';
+import ThemeModeSwitch from '../../components/ThemeModeSwitch';
 
 type ThemeMode = 'light' | 'dark';
 
@@ -138,28 +139,7 @@ export default function UploadPage() {
             <span className="app-breadcrumb-current">Upload</span>
           </nav>
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <div className="inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
-              <button
-                onClick={() => setThemeMode('light')}
-                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
-                  themeMode === 'light'
-                    ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                }`}
-              >
-                Light Mode
-              </button>
-              <button
-                onClick={() => setThemeMode('dark')}
-                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
-                  themeMode === 'dark'
-                    ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                }`}
-              >
-                Dark Mode
-              </button>
-            </div>
+            <ThemeModeSwitch themeMode={themeMode} onToggle={setThemeMode} />
             <Link href="/my" className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
               Back to History
             </Link>

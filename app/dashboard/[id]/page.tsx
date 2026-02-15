@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getClientErrors } from '../../../lib/debugUtils';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
+import ThemeModeSwitch from '../../../components/ThemeModeSwitch';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 import { extractPodcastTags } from '../../../lib/podcastTags';
 
@@ -1535,28 +1536,7 @@ export default function DashboardPage() {
               </span>
             </nav>
             <div className="flex items-center gap-2 flex-wrap justify-end w-full md:w-auto">
-              <div className="inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
-                <button
-                  onClick={() => setThemeMode('light')}
-                  className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
-                    themeMode === 'light'
-                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                  }`}
-                >
-                  Light Mode
-                </button>
-                <button
-                  onClick={() => setThemeMode('dark')}
-                  className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
-                    themeMode === 'dark'
-                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
-                  }`}
-                >
-                  Dark Mode
-                </button>
-              </div>
+              <ThemeModeSwitch themeMode={themeMode} onToggle={setThemeMode} />
             </div>
           </div>
         </header>
