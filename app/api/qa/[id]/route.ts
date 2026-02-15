@@ -26,6 +26,9 @@ interface QaRequestBody {
 const QA_MODEL = process.env.OPENROUTER_QA_MODEL || modelConfig.MODEL;
 const MAX_QUESTION_LENGTH = 1000;
 const MAX_RETRIEVED_CHUNKS = Math.max(4, Math.min(12, Number.parseInt(process.env.QA_MAX_RETRIEVED_CHUNKS || '8', 10)));
+const QA_MODEL_TIMEOUT_MS = Math.max(10_000, Number.parseInt(process.env.QA_MODEL_TIMEOUT_MS || '45000', 10) || 45_000);
+const QA_MODEL_MAX_RETRIES = Math.max(0, Number.parseInt(process.env.QA_MODEL_MAX_RETRIES || '1', 10) || 1);
+const QA_MODEL_RETRY_DELAY_MS = Math.max(0, Number.parseInt(process.env.QA_MODEL_RETRY_DELAY_MS || '800', 10) || 800);
 
 const ENGLISH_STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'what', 'with', 'from', 'about', 'have', 'will',
@@ -201,49 +204,81 @@ async function callQaModel(question: string, context: string, mode: 'hybrid' | '
       : '你是播客问答助手。只能基于提供的上下文回答，不要编造。请用中文输出，结构为：' +
         '1) 直接答案；2) 依据要点（最多3条）。如果上下文不足，请明确写“在当前上下文中未找到明确依据”。';
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': getRefererValue(),
-      'X-Title': 'PodSum.cc QA',
-    },
-    body: JSON.stringify({
-      model: QA_MODEL,
-      temperature: 0.2,
-      max_tokens: 1800,
-      messages: [
-        {
-          role: 'system',
-          content: systemPrompt,
-        },
-        {
-          role: 'user',
-          content: `问题：${question}\n\n上下文：\n${context}`,
-        },
-      ],
-    }),
-  });
+  let lastError: Error | null = null;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`QA model request failed: ${response.status} ${errorText}`);
-  }
+  for (let attempt = 0; attempt <= QA_MODEL_MAX_RETRIES; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), QA_MODEL_TIMEOUT_MS);
 
-  const data = (await response.json()) as {
-    choices?: Array<{
-      message?: {
-        content?: string;
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': getRefererValue(),
+          'X-Title': 'PodSum.cc QA',
+        },
+        body: JSON.stringify({
+          model: QA_MODEL,
+          temperature: 0.2,
+          max_tokens: 1800,
+          messages: [
+            {
+              role: 'system',
+              content: systemPrompt,
+            },
+            {
+              role: 'user',
+              content: `问题：${question}\n\n上下文：\n${context}`,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const error = new Error(`QA model request failed: ${response.status} ${errorText}`);
+        const isRetriable = response.status === 429 || response.status >= 500;
+        if (isRetriable && attempt < QA_MODEL_MAX_RETRIES) {
+          await new Promise((resolve) => setTimeout(resolve, QA_MODEL_RETRY_DELAY_MS));
+          continue;
+        }
+        throw error;
+      }
+
+      const data = (await response.json()) as {
+        choices?: Array<{
+          message?: {
+            content?: string;
+          };
+        }>;
       };
-    }>;
-  };
 
-  const answer = data.choices?.[0]?.message?.content;
-  if (!answer || typeof answer !== 'string') {
-    throw new Error('No answer generated');
+      const answer = data.choices?.[0]?.message?.content;
+      if (!answer || typeof answer !== 'string') {
+        throw new Error('No answer generated');
+      }
+      return answer.trim();
+    } catch (error) {
+      const isTimeout = error instanceof Error && error.name === 'AbortError';
+      lastError = isTimeout
+        ? new Error(`QA model request timed out after ${QA_MODEL_TIMEOUT_MS}ms`)
+        : (error instanceof Error ? error : new Error(String(error)));
+
+      if (attempt < QA_MODEL_MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, QA_MODEL_RETRY_DELAY_MS));
+        continue;
+      }
+
+      throw lastError;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
-  return answer.trim();
+
+  throw lastError || new Error('QA model request failed');
 }
 
 async function ensureAccess(

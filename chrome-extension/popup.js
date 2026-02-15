@@ -14,8 +14,6 @@ const tasksListEl = document.getElementById('tasksList');
 const openSiteButtonEl = document.getElementById('openSiteButton');
 const logoutButtonEl = document.getElementById('logoutButton');
 
-let currentState = null;
-
 class PopupError extends Error {
   constructor(code, message, details = null) {
     super(message);
@@ -75,13 +73,15 @@ function taskStatusLabel(task) {
     return task.statusMessage;
   }
 
+  if (String(task.status || '').startsWith('awaiting_')) {
+    return '任务失败，可重试';
+  }
+
   switch (task.status) {
     case 'queued':
       return '等待处理';
     case 'running':
       return '处理中';
-    case 'awaiting_path2_confirm':
-      return '可启动 Path2';
     case 'uploaded':
       return '上传完成';
     case 'transcribing':
@@ -97,18 +97,6 @@ function taskStatusLabel(task) {
   }
 }
 
-const STEP_TIPS = Object.freeze({
-  S: 'S：字幕获取',
-  D: 'D：下载（Path1 为字幕文件，Path2 为音频）',
-  U: 'U：上传到 PodSum',
-  P: 'P：转写/分析处理',
-});
-
-function lightTemplate(label, state) {
-  const tip = STEP_TIPS[label] || label;
-  return `<span class="light ${state}" title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">${label}</span>`;
-}
-
 function taskActionsTemplate(task) {
   const actions = [];
 
@@ -116,19 +104,7 @@ function taskActionsTemplate(task) {
     actions.push(`<button type="button" data-action="open" data-url="${escapeHtml(task.dashboardUrl)}">打开结果</button>`);
   }
 
-  if (task.status === 'awaiting_path2_confirm' && task.errorCode === 'PATH2_NOT_ENABLED') {
-    actions.push(
-      `<button type="button" data-action="start-path2" data-task-id="${escapeHtml(task.taskId)}">启动 Path2</button>`,
-    );
-  }
-
-  if (task.status === 'failed' && task.path === 'path2') {
-    actions.push(
-      `<button type="button" data-action="retry-path2" data-task-id="${escapeHtml(task.taskId)}">重试 Path2</button>`,
-    );
-  }
-
-  if (task.status === 'failed' && task.path !== 'path2') {
+  if (task.status === 'failed') {
     actions.push(`<button type="button" data-action="retry" data-task-id="${escapeHtml(task.taskId)}">重试</button>`);
   }
 
@@ -145,13 +121,6 @@ function taskActionsTemplate(task) {
 
 function taskTemplate(task) {
   const visibility = task.isPublic ? 'Public' : 'Private';
-  const pathLabel = task.path === 'path2' ? 'P2' : 'P1';
-  const stackLabel =
-    task.path2Stack === 'youtubejs'
-      ? 'youtubejs'
-      : task.path2Stack === 'local_decsig'
-        ? 'local_decsig'
-        : '';
 
   return `
     <li class="task">
@@ -171,14 +140,8 @@ function taskTemplate(task) {
           </button>
         </div>
       </div>
-      <p class="taskMeta">${escapeHtml(task.videoId)} · ${visibility} · ${pathLabel}${stackLabel ? `/${stackLabel}` : ''}</p>
+      <p class="taskMeta">${escapeHtml(task.videoId)} · ${visibility}</p>
       <div class="statusRow">
-        <div class="lights">
-          ${lightTemplate('S', task.steps.subtitle)}
-          ${lightTemplate('D', task.steps.download)}
-          ${lightTemplate('U', task.steps.upload)}
-          ${lightTemplate('P', task.steps.process)}
-        </div>
         <span class="statusText">${escapeHtml(taskStatusLabel(task))}</span>
       </div>
       ${taskActionsTemplate(task)}
@@ -196,7 +159,6 @@ function renderTasks(tasks) {
 }
 
 function renderState(state) {
-  currentState = state;
   const auth = state?.auth || null;
   const settings = state?.settings || { isPublic: false };
   const tasks = Array.isArray(state?.tasks) ? state.tasks : [];
@@ -343,8 +305,6 @@ async function onTaskAction(event) {
   clearError();
   const shouldLockButton =
     action === 'retry' ||
-    action === 'start-path2' ||
-    action === 'retry-path2' ||
     action === 'delete';
   const originalText = target.textContent;
   if (shouldLockButton) {
@@ -364,22 +324,6 @@ async function onTaskAction(event) {
       const taskId = target.dataset.taskId || '';
       await sendMessage({ type: 'PODSUM_RETRY_TASK', taskId });
       showInfo('已重新发起任务');
-      await refreshState();
-      return;
-    }
-
-    if (action === 'start-path2') {
-      const taskId = target.dataset.taskId || '';
-      await sendMessage({ type: 'PODSUM_START_PATH2', taskId });
-      showInfo('Path2 已启动');
-      await refreshState();
-      return;
-    }
-
-    if (action === 'retry-path2') {
-      const taskId = target.dataset.taskId || '';
-      await sendMessage({ type: 'PODSUM_RETRY_PATH2', taskId });
-      showInfo('Path2 重试已启动');
       await refreshState();
       return;
     }

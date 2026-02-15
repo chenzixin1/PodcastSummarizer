@@ -8,6 +8,7 @@ import { authOptions } from '../../../lib/auth';
 import { Blob } from 'buffer';
 import { triggerWorkerProcessing } from '../../../lib/workerTrigger';
 import { generateSrtFromYoutubeUrl, YoutubeIngestError } from '../../../lib/youtubeIngest';
+import { resolveFilePodcastTitle, resolveYoutubePodcastTitle } from '../../../lib/podcastTitle';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -69,6 +70,7 @@ export async function POST(request: NextRequest) {
         videoId: string;
       }
     | undefined;
+  let youtubeVideoTitle: string | undefined;
 
   if (!file && youtubeUrl) {
     try {
@@ -82,6 +84,7 @@ export async function POST(request: NextRequest) {
         audioBlobUrl: youtubeResult.audioBlobUrl,
         videoId: youtubeResult.videoId,
       };
+      youtubeVideoTitle = youtubeResult.videoTitle;
 
       console.log('[UPLOAD] YouTube transcript resolved', {
         source: youtubeResult.source,
@@ -153,7 +156,12 @@ export async function POST(request: NextRequest) {
     const id = nanoid();
     const filename = `${id}-${file.name}`;
     const fileSize = `${(file.size / 1024).toFixed(2)} KB`;
-    const title = `Transcript Analysis: ${file.name.split('.')[0]}`;
+    const title = youtubeIngestMeta
+      ? resolveYoutubePodcastTitle({
+          videoTitle: youtubeVideoTitle,
+          videoId: youtubeIngestMeta.videoId,
+        })
+      : resolveFilePodcastTitle(file.name);
 
     const isPublicRaw = formData.get('isPublic');
     const isPublic = String(isPublicRaw) === 'true';

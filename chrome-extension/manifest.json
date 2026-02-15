@@ -3,23 +3,17 @@
   "name": "PodSum 字幕助手",
   "version": "0.1.11",
   "version_name": "git-d499510-r11",
-  "description": "在 YouTube 页面一键抓取字幕，保存本地并上传到 PodSum。",
+  "description": "在 YouTube 页面一键提交链接到 PodSum，自动抓取字幕并分析。",
   "permissions": [
     "storage",
-    "downloads",
     "notifications",
-    "tabs",
-    "activeTab",
-    "offscreen",
-    "scripting"
+    "tabs"
   ],
   "host_permissions": [
     "https://youtube.com/*",
     "https://www.youtube.com/*",
     "https://*.youtube.com/*",
     "https://youtu.be/*",
-    "https://*.googlevideo.com/*",
-    "https://*.ytimg.com/*",
     "https://podsum.cc/*",
     "http://localhost:3000/*"
   ],
@@ -43,19 +37,5 @@
     "48": "assets/icons/icon-48.png",
     "128": "assets/icons/icon-128.png"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://youtube.com/*",
-        "https://www.youtube.com/*",
-        "https://*.youtube.com/*",
-        "https://youtu.be/*"
-      ],
-      "js": [
-        "content.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ],
   "options_page": "options.html"
 }

@@ -1,15 +1,18 @@
 /* eslint-disable */
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
+import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getClientErrors } from '../../../lib/debugUtils';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
+import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 
 // VERCEL DEBUG: Add version number to help track deployments
 const APP_VERSION = '1.0.5'; // Increment version for tracking
@@ -23,6 +26,7 @@ interface ProcessedData {
   summary: string;
   translation: string;
   fullTextHighlights: string;
+  mindMapJson?: MindMapData | null;
   processedAt?: string;
   tokenCount?: number | null;
   wordCount?: number | null;
@@ -39,7 +43,7 @@ interface ProcessingJobData {
   lastError?: string | null;
 }
 
-type ViewMode = 'summary' | 'translate' | 'fullText';
+type ViewMode = 'summary' | 'translate' | 'fullText' | 'mindMap';
 type ProcessingTask = 'summary' | 'translation' | 'highlights';
 type ThemeMode = 'light' | 'dark';
 
@@ -84,6 +88,93 @@ const normalizePlainTextOutput = (text: string) => {
     .replace(/\u00A0/g, ' ');
 };
 
+const MindMapCanvas = dynamic(() => import('../../../components/MindMapCanvas'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full w-full flex items-center justify-center text-sm text-[var(--text-muted)]">
+      Loading mind map...
+    </div>
+  ),
+});
+
+const normalizeMindMapNode = (value: unknown, depth: number): MindMapNode | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const source = value as Record<string, unknown>;
+  const label = typeof source.label === 'string' ? source.label.trim() : '';
+  if (!label) {
+    return null;
+  }
+
+  const node: MindMapNode = {
+    label: label.slice(0, 64),
+  };
+  if (depth >= 3) {
+    return node;
+  }
+
+  const childrenRaw = Array.isArray(source.children) ? source.children : [];
+  const children = childrenRaw
+    .map((child) => normalizeMindMapNode(child, depth + 1))
+    .filter((child): child is MindMapNode => Boolean(child))
+    .slice(0, 10);
+
+  if (children.length > 0) {
+    node.children = children;
+  }
+  return node;
+};
+
+const parseMindMapData = (value: unknown): MindMapData | null => {
+  if (!value) {
+    return null;
+  }
+
+  let parsed: unknown = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  const rootCandidate = (parsed as Record<string, unknown>).root ?? parsed;
+  const root = normalizeMindMapNode(rootCandidate, 0);
+  if (!root || !root.children || root.children.length === 0) {
+    return null;
+  }
+
+  return { root };
+};
+
+const TIMESTAMP_ONLY_PATTERN = /^\[[0-9]{2}:[0-9]{2}:[0-9]{1,3}(?:\s*-->\s*[0-9]{2}:[0-9]{2}:[0-9]{1,3})?\]$/;
+
+const flattenReactNodeText = (node: ReactNode): string => {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(flattenReactNodeText).join('');
+  }
+  if (node && typeof node === 'object' && 'props' in node) {
+    return flattenReactNodeText((node as { props?: { children?: ReactNode } }).props?.children ?? '');
+  }
+  return '';
+};
+
+const markdownComponents: Components = {
+  strong({ children }) {
+    const normalized = flattenReactNodeText(children).replace(/\s+/g, ' ').trim();
+    const isTimestampOnly = TIMESTAMP_ONLY_PATTERN.test(normalized);
+    return <strong className={isTimestampOnly ? 'markdown-timestamp-strong' : undefined}>{children}</strong>;
+  },
+};
+
 const isValidHttpUrl = (value: string) => {
   try {
     const parsed = new URL(value);
@@ -98,6 +189,18 @@ const formatMetricValue = (value: number | null | undefined) => {
     return '-';
   }
   return value.toLocaleString();
+};
+
+const resolveDashboardTitle = (podcast: { title?: string | null; originalFileName?: string | null }) => {
+  const normalizedTitle = typeof podcast.title === 'string' ? podcast.title.trim() : '';
+  if (normalizedTitle) {
+    return normalizedTitle;
+  }
+
+  const fileBaseName = String(podcast.originalFileName || '')
+    .replace(/\.[^.]+$/g, '')
+    .trim();
+  return fileBaseName || 'Transcript';
 };
 
 // Debug interface to track application state
@@ -165,6 +268,7 @@ export default function DashboardPage() {
     summary: 0,
     translate: 0,
     fullText: 0,
+    mindMap: 0,
   });
   const lastHeightRef = useRef(0);
   const requestSentRef = useRef(false);
@@ -661,7 +765,7 @@ export default function DashboardPage() {
             // 数据库中有完整的分析结果
             console.log('[DEBUG] 从数据库加载完整分析结果');
             const loadedData: ProcessedData = {
-              title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
+              title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
               summary: normalizeMarkdownOutput(analysis.summary || 'Summary not available.'),
@@ -669,6 +773,7 @@ export default function DashboardPage() {
               fullTextHighlights: normalizeMarkdownOutput(
                 enforceLineBreaks(analysis.highlights || 'Highlights not available.')
               ),
+              mindMapJson: parseMindMapData(analysis.mindMapJson),
               processedAt: analysis.processedAt,
               tokenCount: analysis.tokenCount ?? null,
               wordCount: analysis.wordCount ?? null,
@@ -700,7 +805,7 @@ export default function DashboardPage() {
             // 数据库中有播客信息但没有分析结果，需要处理
             console.log('[DEBUG] 数据库中有播客信息但无分析结果，开始处理');
             setData(prev => ({
-              title: `Transcript Analysis: ${podcast.originalFileName.split('.')[0]} (${id.substring(0,6)}...)`,
+              title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
               summary: analysis?.summary
@@ -714,6 +819,7 @@ export default function DashboardPage() {
                     enforceLineBreaks(analysis.highlights)
                   )
                 : prev?.fullTextHighlights || '',
+              mindMapJson: parseMindMapData(analysis?.mindMapJson) ?? prev?.mindMapJson ?? null,
               processedAt: analysis?.processedAt || prev?.processedAt || undefined,
               tokenCount: analysis?.tokenCount ?? prev?.tokenCount ?? null,
               wordCount: analysis?.wordCount ?? prev?.wordCount ?? null,
@@ -838,6 +944,9 @@ export default function DashboardPage() {
     if (activeView === 'translate') {
       return data.translation;
     }
+    if (activeView === 'mindMap') {
+      return data.mindMapJson ? JSON.stringify(data.mindMapJson, null, 2) : '';
+    }
     return data.fullTextHighlights;
   }, [activeView, data]);
 
@@ -892,7 +1001,7 @@ export default function DashboardPage() {
           <div className="p-4 sm:p-6 lg:p-8">
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
               <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {data.summary || '正在生成摘要...'}
                 </ReactMarkdown>
               </div>
@@ -904,7 +1013,7 @@ export default function DashboardPage() {
           <div className="p-4 sm:p-6 lg:p-8">
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
               <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {data.translation || '正在生成翻译...'}
                 </ReactMarkdown>
               </div>
@@ -916,23 +1025,35 @@ export default function DashboardPage() {
             <div className="p-4 sm:p-6 lg:p-8">
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
                   <div className="markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                       {data.fullTextHighlights || '正在生成重点内容...'}
                     </ReactMarkdown>
                   </div>
                 </div>
             </div>
         );
+      case 'mindMap':
+        return (
+          <div className="p-2 sm:p-3 lg:p-4 h-[62vh] min-h-[440px] max-h-[840px]">
+            {data.mindMapJson ? (
+              <MindMapCanvas data={data.mindMapJson} themeMode={themeMode} />
+            ) : (
+              <div className="h-full w-full flex items-center justify-center rounded-xl border border-dashed border-[var(--border-medium)] bg-[var(--paper-base)] px-6 text-center text-sm text-[var(--text-muted)] leading-7">
+                {isProcessing ? '脑图正在生成中，请稍候...' : '当前内容还没有脑图数据，可点击“重新处理文件”后生成。'}
+              </div>
+            )}
+          </div>
+        );
       default:
         return null;
     }
   };
 
-  const getButtonClass = (view: ViewMode) => 
-    `px-3.5 sm:px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide border transition-all duration-200 whitespace-nowrap
-     ${activeView === view 
-       ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)] border-[var(--border-medium)] shadow-[0_12px_30px_-20px_rgba(63,122,104,0.72)]'
-       : 'bg-[var(--paper-base)] text-[var(--text-secondary)] border-[var(--border-soft)] hover:bg-[var(--paper-muted)] hover:text-[var(--text-main)] hover:border-[var(--border-medium)]'}`;
+  const getButtonClass = (view: ViewMode) =>
+    `shrink-0 px-3 sm:px-4 py-2 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap
+     ${activeView === view
+       ? 'text-[var(--heading)] border-[var(--btn-primary)]'
+       : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)] hover:border-[var(--border-medium)]'}`;
 
   // Add Debug Status Panel component
   const DebugStatusPanel = () => {
@@ -992,16 +1113,16 @@ export default function DashboardPage() {
     <ErrorBoundary>
       <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
         <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
-          <div className="container mx-auto px-3 py-3.5 md:px-4 md:py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+          <div className="mx-auto w-full max-w-[1900px] px-3 sm:px-4 md:px-6 lg:px-8 py-3.5 md:py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
             {/* Breadcrumb Navigation */}
-            <nav className="flex items-center space-x-2 text-sm sm:text-base lg:text-xl min-w-0 w-full md:w-auto">
-              <Link href="/" className="inline-flex items-center gap-2 text-[var(--heading)] hover:text-[var(--text-main)] transition-colors font-bold shrink-0 tracking-wide">
-                <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={22} height={22} />
+            <nav className="app-breadcrumb-nav w-full md:w-auto">
+              <Link href="/" className="app-breadcrumb-link tracking-wide">
+                <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} />
                 <span>PodSum.cc</span>
               </Link>
-              <span className="text-[var(--text-muted)]">/</span>
+              <span className="app-breadcrumb-divider">/</span>
               <span
-                className="text-[var(--text-main)] font-medium truncate max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
+                className="app-breadcrumb-current max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
                 title={data?.title || ''}
               >
                 {data?.title || ''}
@@ -1030,16 +1151,6 @@ export default function DashboardPage() {
                   Dark Mode
                 </button>
               </div>
-              <button 
-                onClick={() => setDebugMode(!debugMode)}
-                className="hidden sm:inline-flex text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 rounded-lg text-[var(--text-secondary)] transition-colors"
-              >
-                {debugMode ? 'Hide Debug' : 'Debug Mode'}
-              </button>
-              <Link href="/my" className="text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-3 rounded-lg text-[var(--text-secondary)] transition-colors">
-                View All Files
-              </Link>
-              {id && <span className="hidden md:inline text-xs text-[var(--text-muted)] font-medium">ID: {id}</span>}
             </div>
           </div>
         </header>
@@ -1075,117 +1186,104 @@ export default function DashboardPage() {
         )}
 
         {data && (
-          <main className="container mx-auto w-full max-w-[1900px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col xl:grid xl:grid-cols-[320px_minmax(0,1fr)_380px] 2xl:grid-cols-[340px_minmax(0,1fr)_420px] gap-4 md:gap-6 xl:items-start">
-            {/* Left Sidebar */} 
-            <aside className="w-full dashboard-panel p-4 sm:p-5 md:p-6 rounded-2xl self-start">
-              <h2 className="text-lg sm:text-xl font-semibold mb-1 text-[var(--heading)] truncate leading-8" title={data.title}>{data.title}</h2>
-              <p className="text-xs text-[var(--text-muted)] mb-5 tracking-wide">ID: {id}</p>
-              
-              <div className="space-y-4 text-sm">
-                <div>
-                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Original File</span> 
-                  <p className="text-[var(--text-main)] mt-1 break-words leading-6" title={data.originalFileName}>{data.originalFileName}</p>
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">File Size</span> 
-                  <p className="text-[var(--text-main)] mt-1">{data.originalFileSize}</p>
-                </div>
-                {data.processedAt && (
-                  <div>
-                    <span className="font-semibold text-[var(--text-muted)] tracking-wide">Processed</span> 
-                    <p className="text-[var(--text-main)] mt-1">{new Date(data.processedAt).toLocaleString()}</p>
+          <main className="container mx-auto w-full max-w-[1900px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col gap-4 md:gap-6">
+            <section className="dashboard-panel rounded-2xl p-3 sm:p-4">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs">
+                    <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
+                      <span className="text-[var(--text-muted)]">Original</span>
+                      <span className="truncate max-w-[200px] sm:max-w-[300px]" title={data.originalFileName}>{data.originalFileName}</span>
+                    </span>
+                    {data.processedAt && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
+                        <span className="text-[var(--text-muted)]">Time</span>
+                        <span>{new Date(data.processedAt).toLocaleString()}</span>
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
+                      <span className="text-[var(--text-muted)]">Tokens</span>
+                      <span>{formatMetricValue(data.tokenCount)}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
+                      <span className="text-[var(--text-muted)]">Words</span>
+                      <span>{formatMetricValue(data.wordCount)}</span>
+                    </span>
                   </div>
-                )}
-                <div>
-                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Token Count</span>
-                  <p className="text-[var(--text-main)] mt-1">{formatMetricValue(data.tokenCount)}</p>
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Word Count</span>
-                  <p className="text-[var(--text-main)] mt-1">{formatMetricValue(data.wordCount)}</p>
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Character Count</span>
-                  <p className="text-[var(--text-main)] mt-1">{formatMetricValue(data.characterCount)}</p>
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--text-muted)] tracking-wide">Source</span>
-                  {canEdit ? (
-                    <div className="mt-2 space-y-2">
-                      <input
-                        type="text"
-                        value={sourceInput}
-                        onChange={(event) => {
-                          setSourceInput(event.target.value);
-                          setSourceSaveStatus('idle');
-                          setSourceSaveError(null);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault();
-                            void saveSourceReference();
-                          }
-                        }}
-                        placeholder="粘贴 YouTube URL 或备注"
-                        className="w-full rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-[var(--text-main)] text-sm focus:outline-none focus:border-[var(--border-medium)]"
-                      />
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={saveSourceReference}
-                          disabled={isSavingSource}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          {isSavingSource ? 'Saving...' : 'Save Source'}
-                        </button>
-                        {sourceSaveStatus === 'saved' && (
-                          <span className="text-xs text-emerald-700">Saved</span>
-                        )}
-                        {sourceSaveStatus === 'failed' && (
-                          <span className="text-xs text-[var(--danger)]">{sourceSaveError || 'Save failed'}</span>
+
+                  <div>
+                    {canEdit ? (
+                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                        <input
+                          type="text"
+                          value={sourceInput}
+                          onChange={(event) => {
+                            setSourceInput(event.target.value);
+                            setSourceSaveStatus('idle');
+                            setSourceSaveError(null);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              void saveSourceReference();
+                            }
+                          }}
+                          placeholder="Source URL 或备注"
+                          className="w-full rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-[var(--text-main)] text-sm focus:outline-none focus:border-[var(--border-medium)]"
+                        />
+                        <div className="flex items-center gap-2 flex-wrap shrink-0">
+                          <button
+                            onClick={saveSourceReference}
+                            disabled={isSavingSource}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {isSavingSource ? 'Saving...' : 'Save Source'}
+                          </button>
+                          {sourceSaveStatus === 'saved' && (
+                            <span className="text-xs text-emerald-700">Saved</span>
+                          )}
+                          {sourceSaveStatus === 'failed' && (
+                            <span className="text-xs text-[var(--danger)]">{sourceSaveError || 'Save failed'}</span>
+                          )}
+                          {currentSourceReference && sourceReferenceIsUrl && (
+                            <a
+                              href={currentSourceReference}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-[var(--btn-primary)] underline"
+                            >
+                              打开来源链接
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm">
+                        {currentSourceReference ? (
+                          sourceReferenceIsUrl ? (
+                            <a
+                              href={currentSourceReference}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[var(--btn-primary)] underline break-all"
+                            >
+                              {currentSourceReference}
+                            </a>
+                          ) : (
+                            <p className="text-[var(--text-main)] break-words leading-6">{currentSourceReference}</p>
+                          )
+                        ) : (
+                          <p className="text-[var(--text-muted)]">-</p>
                         )}
                       </div>
-                    </div>
-                  ) : (
-                    <div className="mt-1">
-                      {currentSourceReference ? (
-                        sourceReferenceIsUrl ? (
-                          <a
-                            href={currentSourceReference}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[var(--btn-primary)] underline break-all"
-                          >
-                            {currentSourceReference}
-                          </a>
-                        ) : (
-                          <p className="text-[var(--text-main)] break-words leading-6">{currentSourceReference}</p>
-                        )
-                      ) : (
-                        <p className="text-[var(--text-muted)]">-</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-                {canEdit && currentSourceReference && sourceReferenceIsUrl && (
-                  <div>
-                    <a
-                      href={currentSourceReference}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-[var(--btn-primary)] underline break-all"
-                    >
-                      打开来源链接
-                    </a>
+                    )}
                   </div>
-                )}
-              </div>
-              
-              {/* 添加重新处理按钮 */}
-              {canEdit && (
-                <div className="mt-6">
-                  <button 
+                </div>
+
+                {canEdit && (
+                  <button
                     onClick={retryProcessing}
-                    className="w-full py-2.5 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] rounded-xl text-[var(--btn-primary-text)] text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-20px_rgba(63,122,104,0.8)]"
+                    className="w-full lg:w-auto lg:min-w-[140px] py-2 px-4 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] rounded-xl text-[var(--btn-primary-text)] text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-20px_rgba(63,122,104,0.8)]"
                     disabled={isProcessing}
                   >
                     {isProcessing ? (
@@ -1195,18 +1293,17 @@ export default function DashboardPage() {
                       </>
                     ) : '重新处理文件'}
                   </button>
-                </div>
-              )}
-              
-              {/* Debug Mode 显示调试信息 */}
+                )}
+              </div>
+
               {debugMode && (
-                <div className="mt-6 p-4 bg-[var(--paper-subtle)] border border-[var(--border-soft)] rounded-xl text-xs text-[var(--text-secondary)]">
+                <div className="mt-4 p-3 bg-[var(--paper-subtle)] border border-[var(--border-soft)] rounded-xl text-xs text-[var(--text-secondary)]">
                   <h3 className="font-bold mb-2 tracking-wide">Debug Info</h3>
                   <div>canEdit: {canEdit.toString()}</div>
                   <div>isLoading: {isLoading.toString()}</div>
                   <div>isProcessing: {isProcessing.toString()}</div>
                   <div>hasError: {!!error}</div>
-                  <button 
+                  <button
                     onClick={() => console.log('window.__PODSUM_DEBUG__:', window.__PODSUM_DEBUG__)}
                     className="mt-2 px-2.5 py-1 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] rounded-lg text-xs transition-colors"
                   >
@@ -1214,83 +1311,63 @@ export default function DashboardPage() {
                   </button>
                 </div>
               )}
-              
-              {/* Placeholder for future elements like download original, re-process options, etc. */}
-            </aside>
-
-            {/* Center Content Area */} 
-            <section className="w-full min-w-0">
-              <div className="mb-4 sm:mb-6 space-y-3">
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
-                      <button onClick={() => switchActiveView('translate')} className={`${getButtonClass('translate')} shrink-0`}>Translate</button>
-                      <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={copyCurrentView}
-                      className="text-[11px] sm:text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 sm:px-3 rounded-lg text-[var(--text-secondary)] transition-colors"
-                    >
-                      {copyStatus === 'copied' ? 'Copied' : (copyStatus === 'failed' ? 'No Content' : 'Copy View')}
-                    </button>
-                    <button
-                      onClick={scrollCurrentViewToTop}
-                      className="text-[11px] sm:text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 sm:px-3 rounded-lg text-[var(--text-secondary)] transition-colors"
-                    >
-                      Top
-                    </button>
-                    <button
-                      onClick={scrollCurrentViewToBottom}
-                      className="text-[11px] sm:text-xs bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] py-1.5 px-2.5 sm:px-3 rounded-lg text-[var(--text-secondary)] transition-colors"
-                    >
-                      Bottom
-                    </button>
-                  </div>
-              </div>
-
-              {isProcessing && (
-                <div className="mb-4 rounded-2xl border border-[#bed3c9] bg-[var(--paper-base)] p-3.5 sm:p-4 shadow-[0_12px_28px_-24px_rgba(73,93,83,0.5)]">
-                  <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
-                    <div className="text-[var(--text-secondary)] flex items-center gap-2">
-                      <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
-                      <span>{processingStatus || '处理中...'}</span>
-                    </div>
-                    <span className="text-[var(--text-muted)] tracking-wide">
-                      {processingProgress.task ? TASK_LABELS[processingProgress.task] : 'Preparing'}
-                      {processingProgress.total > 0 ? ` · ${processingProgress.completed}/${processingProgress.total}` : ''}
-                    </span>
-                  </div>
-                  {processingProgress.total > 0 && (
-                    <div className="mt-2.5 h-2 w-full rounded-full bg-[#d9d3c7] overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#7ea08f] to-[#3f7a68] transition-all duration-300 ease-out"
-                        style={{ width: `${Math.min(100, Math.round((processingProgress.completed / processingProgress.total) * 100))}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-              
-              <div ref={contentPanelRef} className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl overflow-hidden">
-                {renderContent()}
-              </div>
             </section>
 
-            <div className="w-full self-start">
-              {isQaAssistantEnabled ? (
-                <FloatingQaAssistant
-                  podcastId={id}
-                  enabled={isQaAssistantEnabled}
-                  panelHeight={contentPanelHeight}
-                />
-              ) : (
-                <aside
-                  className="dashboard-panel w-full min-h-[320px] rounded-2xl overflow-hidden flex flex-col justify-center px-5 text-sm text-[var(--text-secondary)]"
-                  style={typeof contentPanelHeight === 'number' && contentPanelHeight > 0 ? { height: contentPanelHeight } : undefined}
-                >
-                  Copilot 会在当前文件处理完成后启用。
-                </aside>
-              )}
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px] gap-4 md:gap-6 xl:items-start">
+              <section className="w-full min-w-0">
+                <div className="mb-4 sm:mb-6">
+                  <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border-soft)] pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
+                    <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text Translated</button>
+                    <button onClick={() => switchActiveView('translate')} className={`${getButtonClass('translate')} shrink-0`}>Full Text</button>
+                    <button onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
+                  </div>
+                </div>
+
+                {isProcessing && (
+                  <div className="mb-4 rounded-2xl border border-[#bed3c9] bg-[var(--paper-base)] p-3.5 sm:p-4 shadow-[0_12px_28px_-24px_rgba(73,93,83,0.5)]">
+                    <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                      <div className="text-[var(--text-secondary)] flex items-center gap-2">
+                        <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
+                        <span>{processingStatus || '处理中...'}</span>
+                      </div>
+                      <span className="text-[var(--text-muted)] tracking-wide">
+                        {processingProgress.task ? TASK_LABELS[processingProgress.task] : 'Preparing'}
+                        {processingProgress.total > 0 ? ` · ${processingProgress.completed}/${processingProgress.total}` : ''}
+                      </span>
+                    </div>
+                    {processingProgress.total > 0 && (
+                      <div className="mt-2.5 h-2 w-full rounded-full bg-[#d9d3c7] overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-[#7ea08f] to-[#3f7a68] transition-all duration-300 ease-out"
+                          style={{ width: `${Math.min(100, Math.round((processingProgress.completed / processingProgress.total) * 100))}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div ref={contentPanelRef} className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl overflow-hidden">
+                  {renderContent()}
+                </div>
+              </section>
+
+              <div className="w-full self-start">
+                {isQaAssistantEnabled ? (
+                  <FloatingQaAssistant
+                    podcastId={id}
+                    enabled={isQaAssistantEnabled}
+                    panelHeight={contentPanelHeight}
+                  />
+                ) : (
+                  <aside
+                    className="dashboard-panel w-full min-h-[320px] rounded-2xl overflow-hidden flex flex-col justify-center px-5 text-sm text-[var(--text-secondary)]"
+                    style={typeof contentPanelHeight === 'number' && contentPanelHeight > 0 ? { height: contentPanelHeight } : undefined}
+                  >
+                    Copilot 会在当前文件处理完成后启用。
+                  </aside>
+                )}
+              </div>
             </div>
           </main>
         )}

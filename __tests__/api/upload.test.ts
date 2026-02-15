@@ -105,6 +105,11 @@ describe('Upload API Tests', () => {
     expect(data.data.id).toBe('mock-id-12345');
     expect(data.data.youtubeIngest).toBeUndefined();
     expect(mockGenerateSrtFromYoutubeUrl).not.toHaveBeenCalled();
+    expect(mockSavePodcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'test',
+      }),
+    );
   });
 
   it('should reject invalid file type', async () => {
@@ -146,6 +151,7 @@ describe('Upload API Tests', () => {
       srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
       source: 'youtube_caption',
       videoId: 'I9aGC6Ui3eE',
+      videoTitle: '20x Companies with Claude',
       selectedLanguage: 'en',
       availableLanguages: ['en'],
     });
@@ -173,7 +179,38 @@ describe('Upload API Tests', () => {
     );
     expect(mockSavePodcast).toHaveBeenCalledWith(
       expect.objectContaining({
+        title: '20x Companies with Claude',
         sourceReference: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
+      }),
+    );
+  });
+
+  it('should fallback to videoId title when youtube title is unavailable', async () => {
+    mockGenerateSrtFromYoutubeUrl.mockResolvedValue({
+      srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
+      source: 'youtube_caption',
+      videoId: 'I9aGC6Ui3eE',
+      videoTitle: '   ',
+      selectedLanguage: 'en',
+      availableLanguages: ['en'],
+    });
+
+    const formData = new FormData();
+    formData.append('youtubeUrl', 'https://www.youtube.com/watch?v=I9aGC6Ui3eE');
+
+    const request = new NextRequest('http://localhost:3000/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockSavePodcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'I9aGC6Ui3eE',
       }),
     );
   });

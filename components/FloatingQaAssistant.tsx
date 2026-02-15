@@ -34,6 +34,35 @@ interface FloatingQaAssistantProps {
 }
 
 const MAX_INPUT_LENGTH = 1000;
+const HISTORY_REQUEST_TIMEOUT_MS = 15_000;
+const ASK_REQUEST_TIMEOUT_MS = 70_000;
+
+function normalizeRequestError(error: unknown, timeoutMs: number): string {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return `请求超时（>${Math.round(timeoutMs / 1000)}s），请重试`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function fetchJsonWithTimeout<T = unknown>(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<{ response: Response; result: T }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+    const result = (await response.json()) as T;
+    return { response, result };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export default function FloatingQaAssistant({
   podcastId,
@@ -89,13 +118,16 @@ export default function FloatingQaAssistant({
     setLoadingHistory(true);
     setError(null);
     try {
-      const response = await fetch(`/api/qa/${podcastId}?limit=60`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
+      const { response, result } = await fetchJsonWithTimeout<{ success?: boolean; data?: { messages?: QaHistoryEntry[] }; error?: string }>(
+        `/api/qa/${podcastId}?limit=60`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
         },
-      });
-      const result = await response.json();
+        HISTORY_REQUEST_TIMEOUT_MS
+      );
       if (!response.ok || !result.success) {
         throw new Error(result.error || `Failed to load QA history (${response.status})`);
       }
@@ -122,7 +154,7 @@ export default function FloatingQaAssistant({
       setMessages(restoredMessages);
       loadedHistoryPodcastIdRef.current = podcastId;
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
+      setError(normalizeRequestError(loadError, HISTORY_REQUEST_TIMEOUT_MS));
     } finally {
       setLoadingHistory(false);
     }
@@ -160,18 +192,20 @@ export default function FloatingQaAssistant({
       ]);
 
       try {
-        const response = await fetch(`/api/qa/${podcastId}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+        const { response, result } = await fetchJsonWithTimeout<{ success?: boolean; data?: { answer?: string; id?: string; createdAt?: string }; error?: string }>(
+          `/api/qa/${podcastId}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              question,
+              suggested: false,
+            }),
           },
-          body: JSON.stringify({
-            question,
-            suggested: false,
-          }),
-        });
-
-        const result = await response.json();
+          ASK_REQUEST_TIMEOUT_MS
+        );
         if (!response.ok || !result.success) {
           throw new Error(result.error || `Failed to get answer (${response.status})`);
         }
@@ -193,7 +227,7 @@ export default function FloatingQaAssistant({
           )
         );
       } catch (sendError) {
-        const message = sendError instanceof Error ? sendError.message : String(sendError);
+        const message = normalizeRequestError(sendError, ASK_REQUEST_TIMEOUT_MS);
         setError(message);
         setMessages(prev =>
           prev.map(item =>
@@ -244,7 +278,7 @@ export default function FloatingQaAssistant({
 
         {!loadingHistory && messages.length === 0 && (
           <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--paper-subtle)] px-3 py-2.5 text-xs leading-6 text-[var(--text-secondary)]">
-            处理完成后你可以在这里追问细节。问答会自动保存到数据库，刷新页面后仍可查看。
+            你可以在这里追问细节。问答会自动保存到数据库，刷新页面后仍可查看。
           </div>
         )}
 

@@ -5,6 +5,7 @@ import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { resolveFilePodcastTitle } from '../../lib/podcastTitle';
 
 interface FileRecord {
   id: string;
@@ -32,10 +33,10 @@ export default function MyPage() {
   // 如果用户未登录，显示登录提示
   if (status === 'loading') {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+      <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)] mx-auto mb-4"></div>
+          <p className="text-[var(--text-muted)]">Loading...</p>
         </div>
       </div>
     );
@@ -68,9 +69,11 @@ export default function MyPage() {
       }
       
       const result = await response.json();
-      const dbRecords: FileRecord[] = result.data.map((item: { id: string; originalFileName: string; fileSize: string; blobUrl: string; isProcessed: boolean; createdAt: string; processedAt?: string; isPublic?: boolean; }) => ({
+      const dbRecords: FileRecord[] = result.data.map((item: { id: string; title?: string | null; originalFileName: string; fileSize: string; blobUrl: string; isProcessed: boolean; createdAt: string; processedAt?: string; isPublic?: boolean; }) => ({
         id: item.id,
-        name: item.originalFileName,
+        name:
+          (typeof item.title === 'string' ? item.title.trim() : '') ||
+          resolveFilePodcastTitle(String(item.originalFileName || '')),
         size: item.fileSize,
         url: item.blobUrl,
         uploadDate: item.createdAt,
@@ -140,156 +143,133 @@ export default function MyPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      <header className="p-4 bg-slate-800/50 backdrop-blur-md shadow-lg sticky top-0 z-10">
-        <div className="container mx-auto">
-          {/* Breadcrumb Navigation */}
-          <nav className="flex items-center space-x-2 text-xl mb-4">
-            <Link href="/" className="inline-flex items-center gap-2 text-sky-400 hover:underline font-semibold">
-              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={22} height={22} />
+    <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col">
+      <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
+        <div className="container mx-auto px-4 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+          <nav className="app-breadcrumb-nav">
+            <Link href="/" className="app-breadcrumb-link">
+              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} />
               <span>PodSum.cc</span>
             </Link>
-            <span className="text-slate-400">/</span>
-            <span className="text-white font-medium">My Podcast Summaries</span>
+            <span className="app-breadcrumb-divider">/</span>
+            <span className="app-breadcrumb-current">My Podcast Summaries</span>
           </nav>
-          
-          {/* User Info and Actions */}
-          <div className="flex justify-between items-center">
-            <div className="text-sm text-slate-300">
-              Signed in as: <span className="text-sky-400 font-medium">{session?.user?.email}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Link 
-                href="/upload" 
-                className="bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
-              >
-                + Upload New File
-              </Link>
-              <button
-                onClick={handleSignOut}
-                className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2 px-4 rounded-md transition-colors"
-              >
-                Sign Out
-              </button>
-            </div>
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <Link
+              href="/upload"
+              className="bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors"
+            >
+              + Upload New File
+            </Link>
+            <button
+              onClick={handleSignOut}
+              className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] text-sm font-medium py-2 px-4 rounded-lg transition-colors"
+            >
+              Sign Out
+            </button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold">My Podcast Summaries</h2>
-        </div>
-
-        {/* 搜索和排序控件 */}
-        <div className="mb-6 flex flex-col sm:flex-row gap-4">
-          <div className="flex-1">
-            <input
-              type="text"
-              placeholder="Search files..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-md text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500"
-            />
-          </div>
-          <div className="flex gap-2">
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as 'date' | 'name' | 'size')}
-              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-            >
-              <option value="date">Sort by Date</option>
-              <option value="name">Sort by Name</option>
-              <option value="size">Sort by Size</option>
-            </select>
-            <button
-              onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
-              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-md text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
-            >
-              {sortDirection === 'asc' ? '↑' : '↓'}
-            </button>
-          </div>
-        </div>
-
-        {/* 错误显示 */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-900/50 border border-red-500 rounded-md text-red-200">
-            {error}
-          </div>
-        )}
-
-        {/* 文件列表 */}
-        {isLoading && files.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading your files...</p>
-          </div>
-        ) : filteredAndSortedFiles.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-slate-400 mb-4">
-              {searchQuery ? 'No files match your search.' : 'No files uploaded yet.'}
-            </p>
-            {!searchQuery && (
-              <Link 
-                href="/upload" 
-                className="inline-block bg-sky-600 hover:bg-sky-700 text-white font-medium py-2 px-6 rounded-md transition-colors"
+      <main className="container mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8 flex-grow">
+        <div className="dashboard-panel rounded-2xl p-5 sm:p-6 lg:p-8">
+          <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="text-sm text-[var(--text-secondary)]">
+              Signed in as: <span className="font-semibold text-[var(--heading)]">{session?.user?.email}</span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="text"
+                placeholder="Search files..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full md:w-[260px] rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--border-medium)]"
+              />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'date' | 'name' | 'size')}
+                className="px-3 py-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] text-sm text-[var(--text-secondary)] focus:outline-none focus:border-[var(--border-medium)]"
               >
-                Upload Your First File
-              </Link>
-            )}
+                <option value="date">Date</option>
+                <option value="name">Name</option>
+                <option value="size">Size</option>
+              </select>
+              <button
+                onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                className="px-3 py-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] text-sm text-[var(--text-secondary)] hover:bg-[var(--paper-muted)] transition-colors"
+              >
+                {sortDirection === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
           </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredAndSortedFiles.map((file) => (
-              <div key={file.id} className="bg-slate-800/50 backdrop-blur-md p-6 rounded-lg shadow-xl border border-slate-700">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-white mb-2">{file.name}</h3>
-                    <div className="flex flex-wrap gap-4 text-sm text-slate-400">
-                      <span>Size: {file.size}</span>
-                      <span>Uploaded: {new Date(file.uploadDate).toLocaleDateString()}</span>
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        file.processed 
-                          ? 'bg-green-900/50 text-green-400' 
-                          : 'bg-yellow-900/50 text-yellow-400'
-                      }`}>
-                        {file.processed ? 'Processed' : 'Pending'}
-                      </span>
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        file.isPublic 
-                          ? 'bg-blue-900/50 text-blue-400' 
-                          : 'bg-slate-700 text-slate-300'
-                      }`}>
-                        {file.isPublic ? 'Public' : 'Private'}
-                      </span>
+
+          {error && (
+            <div className="mb-6 border border-[#d8b7b7] bg-[#fff5f5] text-[var(--danger)] p-4 rounded-xl">
+              {error}
+            </div>
+          )}
+
+          {isLoading && files.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)] mx-auto mb-4"></div>
+              <p className="text-[var(--text-muted)]">Loading your files...</p>
+            </div>
+          ) : filteredAndSortedFiles.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-[var(--text-muted)] mb-4">
+                {searchQuery ? 'No files match your search.' : 'No files uploaded yet.'}
+              </p>
+              {!searchQuery && (
+                <Link
+                  href="/upload"
+                  className="inline-block bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] font-medium py-2 px-6 rounded-lg transition-colors"
+                >
+                  Upload Your First File
+                </Link>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {filteredAndSortedFiles.map((file) => (
+                <div key={file.id} className="bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-xl p-4 sm:p-5 hover:bg-[var(--paper-muted)] transition-colors">
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-lg font-semibold text-[var(--heading)] mb-2 break-words">{file.name}</h3>
+                      <div className="flex flex-wrap gap-3 text-xs text-[var(--text-muted)]">
+                        <span>Size: {file.size}</span>
+                        <span>Uploaded: {new Date(file.uploadDate).toLocaleDateString()}</span>
+                        <span className={file.processed ? 'text-emerald-700' : 'text-amber-700'}>
+                          {file.processed ? '✓ Processed' : '⟳ Pending'}
+                        </span>
+                        <span className={file.isPublic ? 'text-emerald-700' : 'text-[var(--text-secondary)]'}>
+                          {file.isPublic ? 'Public' : 'Private'}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Link 
+                    <Link
                       href={`/dashboard/${file.id}`}
-                      className="bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                      className="shrink-0 bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] rounded-md px-3 py-1.5 text-xs hover:bg-[var(--paper-muted)] transition-colors"
                     >
                       View
                     </Link>
                   </div>
                 </div>
-              </div>
-            ))}
-            
-            {/* 加载更多按钮 */}
-            {hasMore && (
-              <div className="text-center pt-6">
-                <button
-                  onClick={handleLoadMore}
-                  disabled={isLoading}
-                  className="bg-slate-700 hover:bg-slate-600 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isLoading ? 'Loading...' : 'Load More'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              ))}
+
+              {hasMore && (
+                <div className="text-center pt-4">
+                  <button
+                    onClick={handleLoadMore}
+                    disabled={isLoading}
+                    className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isLoading ? 'Loading...' : 'Load More'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );

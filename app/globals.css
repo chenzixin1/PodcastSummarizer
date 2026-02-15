@@ -78,7 +78,7 @@ body {
   --panel-shadow: 0 18px 40px -28px rgba(0, 0, 0, 0.7);
   --border-soft: #2b3542;
   --border-medium: #3a4657;
-  --text-main: #f4f5f7;
+  --text-main: #f6f8fc;
   --text-secondary: #e6e8ec;
   --text-muted: #a8b1be;
   --heading: #ffffff;
@@ -115,6 +115,49 @@ body {
   background: var(--panel-bg);
   border: 1px solid var(--border-soft);
   box-shadow: var(--panel-shadow);
+}
+
+.app-breadcrumb-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: flex-start;
+  text-align: left;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+@media (min-width: 640px) {
+  .app-breadcrumb-nav {
+    font-size: 1.5rem;
+  }
+}
+
+.app-breadcrumb-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--heading);
+  transition: color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.app-breadcrumb-link:hover {
+  color: var(--link-hover);
+}
+
+.app-breadcrumb-divider {
+  color: var(--text-muted);
+}
+
+.app-breadcrumb-current {
+  color: var(--heading);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dashboard-reading {
@@ -207,6 +250,21 @@ body {
 .markdown-body strong {
   color: #234f41;
   font-weight: 600;
+}
+
+.markdown-body .markdown-timestamp-strong {
+  color: var(--accent-strong);
+}
+
+.dashboard-shell[data-theme='dark'] .markdown-body strong,
+.dashboard-shell[data-theme='dark'] .qa-markdown strong {
+  color: #eaf2ff;
+  font-weight: 600;
+}
+
+.dashboard-shell[data-theme='dark'] .markdown-body .markdown-timestamp-strong,
+.dashboard-shell[data-theme='dark'] .qa-markdown .markdown-timestamp-strong {
+  color: #8fcdb8;
 }
 
 .markdown-body blockquote {
@@ -343,6 +401,34 @@ body {
 
 .qa-markdown a {
   color: #2f6656;
+}
+
+.mindmap-canvas .react-flow {
+  background:
+    radial-gradient(44rem 28rem at 8% 0%, rgba(198, 176, 136, 0.14), transparent 65%),
+    radial-gradient(44rem 28rem at 100% 0%, rgba(126, 158, 144, 0.14), transparent 65%),
+    #fbf8f1;
+}
+
+.mindmap-canvas .react-flow__controls-button {
+  color: var(--text-main);
+}
+
+.mindmap-canvas .react-flow__edge path {
+  transition: stroke 0.2s ease;
+}
+
+.dashboard-shell[data-theme='dark'] .mindmap-canvas .react-flow {
+  background:
+    radial-gradient(46rem 30rem at 8% 0%, rgba(104, 123, 151, 0.18), transparent 65%),
+    radial-gradient(46rem 30rem at 100% 0%, rgba(82, 99, 123, 0.2), transparent 65%),
+    #121922;
+}
+
+.dashboard-shell[data-theme='dark'] .mindmap-canvas .react-flow__controls-button {
+  color: #f4f6fa;
+  background: #1a2330;
+  border-color: #3a4657;
 }
 
 @media (max-width: 640px) {

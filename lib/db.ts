@@ -1,4 +1,6 @@
 import { sql } from '@vercel/postgres';
+import { extractPodcastTags } from './podcastTags';
+import type { MindMapData } from './mindMap';
 
 // 播客类型
 export interface Podcast {
@@ -10,6 +12,7 @@ export interface Podcast {
   isPublic: boolean;
   userId?: string;
   sourceReference?: string | null;
+  tags?: string[];
 }
 
 // 用户类型
@@ -27,6 +30,7 @@ export interface AnalysisResult {
   summary: string;
   translation: string;
   highlights: string;
+  mindMapJson?: MindMapData | null;
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
@@ -37,6 +41,7 @@ export interface PartialAnalysisResult {
   summary?: string | null;
   translation?: string | null;
   highlights?: string | null;
+  mindMapJson?: MindMapData | null;
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
@@ -51,6 +56,18 @@ export interface DbResult {
 
 let schemaUpgradeEnsured = false;
 let schemaUpgradePromise: Promise<void> | null = null;
+
+function toJsonb(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    console.error('JSONB serialization failed:', error);
+    return null;
+  }
+}
 
 export async function ensureExtensionTranscriptionJobsTable(): Promise<void> {
   await sql`
@@ -176,6 +193,10 @@ async function ensureSchemaUpgrades(): Promise<void> {
         ADD COLUMN IF NOT EXISTS source_reference TEXT
       `;
       await sql`
+        ALTER TABLE podcasts
+        ADD COLUMN IF NOT EXISTS tags_json JSONB DEFAULT '[]'::jsonb
+      `;
+      await sql`
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS token_count INTEGER
       `;
@@ -186,6 +207,10 @@ async function ensureSchemaUpgrades(): Promise<void> {
       await sql`
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS character_count INTEGER
+      `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS mind_map_json JSONB
       `;
       await ensureExtensionTranscriptionJobsTable();
       await ensureExtensionMonitorTables();
@@ -224,6 +249,7 @@ export async function initDatabase(): Promise<DbResult> {
         file_size TEXT NOT NULL,
         blob_url TEXT,
         source_reference TEXT,
+        tags_json JSONB DEFAULT '[]'::jsonb,
         is_public BOOLEAN DEFAULT FALSE,
         user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -237,6 +263,7 @@ export async function initDatabase(): Promise<DbResult> {
         summary TEXT,
         translation TEXT,
         highlights TEXT,
+        mind_map_json JSONB,
         token_count INTEGER,
         word_count INTEGER,
         character_count INTEGER,
@@ -358,13 +385,14 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
     await ensureSchemaUpgrades();
     const dbResult = await sql`
       INSERT INTO analysis_results 
-        (podcast_id, summary, translation, highlights, token_count, word_count, character_count)
+        (podcast_id, summary, translation, highlights, mind_map_json, token_count, word_count, character_count)
       VALUES 
         (
           ${result.podcastId},
           ${result.summary},
           ${result.translation},
           ${result.highlights},
+          ${toJsonb(result.mindMapJson)}::jsonb,
           ${result.tokenCount ?? null},
           ${result.wordCount ?? null},
           ${result.characterCount ?? null}
@@ -374,12 +402,39 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
         summary = ${result.summary},
         translation = ${result.translation},
         highlights = ${result.highlights},
+        mind_map_json = ${toJsonb(result.mindMapJson)}::jsonb,
         token_count = ${result.tokenCount ?? null},
         word_count = ${result.wordCount ?? null},
         character_count = ${result.characterCount ?? null},
         processed_at = CURRENT_TIMESTAMP
       RETURNING podcast_id
     `;
+
+    // 根据最新摘要重建标签并写回 podcasts
+    const podcastInfo = await sql`
+      SELECT title, original_filename as "originalFileName", source_reference as "sourceReference"
+      FROM podcasts
+      WHERE id = ${result.podcastId}
+      LIMIT 1
+    `;
+    if (podcastInfo.rows.length > 0) {
+      const row = podcastInfo.rows[0] as {
+        title?: string | null;
+        originalFileName?: string | null;
+        sourceReference?: string | null;
+      };
+      const tags = extractPodcastTags({
+        title: row.title || null,
+        fallbackName: row.originalFileName || null,
+        summary: result.summary || '',
+        sourceReference: row.sourceReference || null,
+      });
+      await sql`
+        UPDATE podcasts
+        SET tags_json = ${JSON.stringify(tags)}::jsonb
+        WHERE id = ${result.podcastId}
+      `;
+    }
     
     return { success: true, data: dbResult.rows[0] };
   } catch (error) {
@@ -394,13 +449,14 @@ export async function saveAnalysisPartialResults(result: PartialAnalysisResult):
     await ensureSchemaUpgrades();
     const dbResult = await sql`
       INSERT INTO analysis_results
-        (podcast_id, summary, translation, highlights, token_count, word_count, character_count)
+        (podcast_id, summary, translation, highlights, mind_map_json, token_count, word_count, character_count)
       VALUES
         (
           ${result.podcastId},
           ${result.summary ?? null},
           ${result.translation ?? null},
           ${result.highlights ?? null},
+          ${toJsonb(result.mindMapJson)}::jsonb,
           ${result.tokenCount ?? null},
           ${result.wordCount ?? null},
           ${result.characterCount ?? null}
@@ -410,6 +466,7 @@ export async function saveAnalysisPartialResults(result: PartialAnalysisResult):
         summary = COALESCE(EXCLUDED.summary, analysis_results.summary),
         translation = COALESCE(EXCLUDED.translation, analysis_results.translation),
         highlights = COALESCE(EXCLUDED.highlights, analysis_results.highlights),
+        mind_map_json = COALESCE(EXCLUDED.mind_map_json, analysis_results.mind_map_json),
         token_count = COALESCE(EXCLUDED.token_count, analysis_results.token_count),
         word_count = COALESCE(EXCLUDED.word_count, analysis_results.word_count),
         character_count = COALESCE(EXCLUDED.character_count, analysis_results.character_count),
@@ -433,6 +490,7 @@ export async function getPodcast(id: string): Promise<DbResult> {
         id, title, original_filename as "originalFileName", 
         file_size as "fileSize", blob_url as "blobUrl", 
         source_reference as "sourceReference",
+        tags_json as "tags",
         is_public as "isPublic", user_id as "userId", created_at as "createdAt"
       FROM podcasts 
       WHERE id = ${id}
@@ -457,6 +515,7 @@ export async function getAnalysisResults(podcastId: string): Promise<DbResult> {
       SELECT 
         podcast_id as "podcastId", summary, translation, 
         highlights,
+        mind_map_json as "mindMapJson",
         token_count as "tokenCount",
         word_count as "wordCount",
         character_count as "characterCount",
@@ -488,8 +547,15 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           p.id, p.title, p.original_filename as "originalFileName", 
           p.file_size as "fileSize", p.blob_url as "blobUrl", 
           p.source_reference as "sourceReference",
+          p.tags_json as "tags",
           p.is_public as "isPublic", p.created_at as "createdAt",
-          CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed"
+          CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
+          ar.word_count as "wordCount",
+          CASE
+            WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
+              THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
+            ELSE NULL
+          END as "durationSec"
         FROM podcasts p
         LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
         ORDER BY p.created_at DESC 
@@ -501,8 +567,15 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           p.id, p.title, p.original_filename as "originalFileName", 
           p.file_size as "fileSize", p.blob_url as "blobUrl", 
           p.source_reference as "sourceReference",
+          p.tags_json as "tags",
           p.is_public as "isPublic", p.created_at as "createdAt",
-          CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed"
+          CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
+          ar.word_count as "wordCount",
+          CASE
+            WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
+              THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
+            ELSE NULL
+          END as "durationSec"
         FROM podcasts p
         LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
         WHERE p.is_public = true
@@ -529,9 +602,16 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
         p.id, p.title, p.original_filename as "originalFileName", 
         p.file_size as "fileSize", p.blob_url as "blobUrl", 
         p.source_reference as "sourceReference",
+        p.tags_json as "tags",
         p.is_public as "isPublic", p.created_at as "createdAt",
         p.user_id as "userId",
-        CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed"
+        CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
+        ar.word_count as "wordCount",
+        CASE
+          WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
+            THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
+          ELSE NULL
+        END as "durationSec"
       FROM podcasts p
       LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
       WHERE p.user_id = ${userId}

@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { isWorkerAuthorizedBySecret } from '../../../lib/workerAuth';
 import { rebuildQaContextChunksForPodcast } from '../../../lib/qaContextChunks';
+import { generateMindMapData, type MindMapData } from '../../../lib/mindMap';
 
 // VERCEL DEBUG: Add version number to help track deployments
 const API_VERSION = modelConfig.API_VERSION;
@@ -26,6 +27,7 @@ export interface ProcessStreamUpdate {
     summary?: string;
     translation?: string;
     highlights?: string;
+    mindMapJson?: MindMapData | null;
   };
   processingErrors?: string[]; // Add this for all_done or error types
 }
@@ -520,6 +522,10 @@ async function generateSummary(
 ): Promise<string> {
   await sendUpdate({ type: 'status', task: 'summary', message: 'Starting summary generation...' });
   let accumulatedSummary = '';
+  const summaryChunkTokenBudget = Math.max(
+    2000,
+    Math.floor(MAX_TOKENS.summary * 0.75)
+  );
 
   // 如果内容较短，直接处理
   if (plainText.length <= SUMMARY_CHUNK_LENGTH) {
@@ -555,7 +561,7 @@ async function generateSummary(
       callModelWithRetry(
         prompts.summarySystem, 
         prompts.summaryUserSegment(chunks[i], i + 1, chunks.length),
-        MAX_TOKENS.summary / 2, // Or a different token limit for chunks
+        summaryChunkTokenBudget,
         0.5,
         async (token) => {
           await sendUpdate({ type: 'summary_token', content: token, chunkIndex: i, totalChunks: chunks.length });
@@ -881,12 +887,16 @@ export async function POST(request: NextRequest) {
   if (!podcastResult.success) {
     return NextResponse.json({ error: 'Podcast not found' }, { status: 404 });
   }
+  const podcast = podcastResult.data as {
+    title?: string | null;
+    sourceReference?: string | null;
+    userId?: string | null;
+  };
   if (!isWorkerRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
-    const podcast = podcastResult.data as any;
     if (!podcast.userId || podcast.userId !== session.user.id) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
@@ -984,6 +994,7 @@ export async function POST(request: NextRequest) {
         let summary: string;
         let translation: string;
         let highlights: string;
+        let mindMapJson: MindMapData | null = null;
 
         if (ENABLE_PARALLEL_TASKS) {
           await sendUpdate({
@@ -1004,6 +1015,32 @@ export async function POST(request: NextRequest) {
           translation = await translationTask();
           highlights = await highlightsTask();
         }
+
+        await sendUpdate({
+          type: 'status',
+          message: 'Generating mind map...'
+        });
+
+        const mindMapResult = await generateMindMapData({
+          title: podcast.title ?? null,
+          sourceReference: podcast.sourceReference ?? null,
+          summary,
+          highlights,
+        });
+
+        if (mindMapResult.success && mindMapResult.data) {
+          mindMapJson = mindMapResult.data;
+          await sendUpdate({
+            type: 'status',
+            message: 'Mind map generated.'
+          });
+        } else {
+          console.warn('脑图生成失败，继续保存主分析结果:', mindMapResult.error);
+          await sendUpdate({
+            type: 'status',
+            message: 'Mind map generation skipped.'
+          });
+        }
         
         // 保存处理结果到数据库
         console.log(`准备保存分析结果，podcastId: ${id}, 类型: ${typeof id}`);
@@ -1013,6 +1050,7 @@ export async function POST(request: NextRequest) {
             summary,
             translation,
             highlights,
+            mindMapJson,
             tokenCount: textStats.tokenCount,
             wordCount: textStats.wordCount,
             characterCount: textStats.characterCount,
@@ -1047,7 +1085,8 @@ export async function POST(request: NextRequest) {
           finalResults: {
             summary,
             translation,
-            highlights
+            highlights,
+            mindMapJson,
           }
         });
         
