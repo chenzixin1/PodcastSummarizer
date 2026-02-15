@@ -37,6 +37,7 @@ interface ProcessedData {
   wordCount?: number | null;
   characterCount?: number | null;
   sourceReference?: string | null;
+  isPublic?: boolean;
 }
 
 interface ProcessingJobData {
@@ -505,6 +506,8 @@ export default function DashboardPage() {
   const [isSavingSource, setIsSavingSource] = useState(false);
   const [sourceSaveStatus, setSourceSaveStatus] = useState<'idle' | 'saved' | 'failed'>('idle');
   const [sourceSaveError, setSourceSaveError] = useState<string | null>(null);
+  const [isSavingVisibility, setIsSavingVisibility] = useState(false);
+  const [visibilitySaveError, setVisibilitySaveError] = useState<string | null>(null);
   
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
@@ -1073,6 +1076,7 @@ export default function DashboardPage() {
               wordCount: analysis.wordCount ?? null,
               characterCount: analysis.characterCount ?? null,
               sourceReference: podcast.sourceReference ?? null,
+              isPublic: Boolean(podcast.isPublic),
             };
             setData(loadedData);
             setIsSummaryFinal(true);
@@ -1135,6 +1139,7 @@ export default function DashboardPage() {
               wordCount: analysis?.wordCount ?? prev?.wordCount ?? null,
               characterCount: analysis?.characterCount ?? prev?.characterCount ?? null,
               sourceReference: podcast.sourceReference ?? prev?.sourceReference ?? null,
+              isPublic: typeof podcast.isPublic === 'boolean' ? podcast.isPublic : prev?.isPublic ?? false,
             });
             });
             setIsSummaryFinal(false);
@@ -1244,6 +1249,39 @@ export default function DashboardPage() {
 
   const currentSourceReference = (data?.sourceReference || '').trim();
   const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
+
+  const toggleVisibility = async () => {
+    if (!id || !canEdit || !data || isSavingVisibility) {
+      return;
+    }
+
+    const nextIsPublic = !Boolean(data.isPublic);
+    setIsSavingVisibility(true);
+    setVisibilitySaveError(null);
+
+    try {
+      const response = await fetch(`/api/podcasts/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          isPublic: nextIsPublic,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Visibility update failed (${response.status})`);
+      }
+
+      setData((prev) => (prev ? { ...prev, isPublic: nextIsPublic } : prev));
+    } catch (saveError) {
+      setVisibilitySaveError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setIsSavingVisibility(false);
+    }
+  };
 
   useEffect(() => {
     const blobUrl = data?.blobUrl;
@@ -1485,7 +1523,7 @@ export default function DashboardPage() {
             {/* Breadcrumb Navigation */}
             <nav className="app-breadcrumb-nav w-full md:w-auto">
               <Link href="/" className="app-breadcrumb-link tracking-wide">
-                <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} />
+                <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
                 <span>PodSum.cc</span>
               </Link>
               <span className="app-breadcrumb-divider">/</span>
@@ -1649,18 +1687,35 @@ export default function DashboardPage() {
                 </div>
 
                 {canEdit && (
-                  <button
-                    onClick={retryProcessing}
-                    className="w-full lg:w-auto lg:min-w-[140px] py-2 px-4 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] rounded-xl text-[var(--btn-primary-text)] text-sm font-semibold transition-colors flex items-center justify-center shadow-[0_16px_36px_-20px_rgba(63,122,104,0.8)]"
-                    disabled={isProcessing}
-                  >
-                    {isProcessing ? (
-                      <>
-                        <div className="animate-spin mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-                        处理中...
-                      </>
-                    ) : '重新处理文件'}
-                  </button>
+                  <div className="w-full lg:w-auto lg:min-w-[132px] flex flex-col items-stretch gap-2">
+                    <button
+                      onClick={retryProcessing}
+                      className="w-full py-1.5 px-3 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] rounded-lg text-[var(--btn-primary-text)] text-xs font-semibold transition-colors flex items-center justify-center shadow-[0_12px_28px_-20px_rgba(63,122,104,0.85)]"
+                      disabled={isProcessing}
+                    >
+                      {isProcessing ? (
+                        <>
+                          <div className="animate-spin mr-1.5 h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full"></div>
+                          处理中...
+                        </>
+                      ) : '重新处理文件'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleVisibility()}
+                      disabled={isSavingVisibility}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-[var(--paper-subtle)] disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                      aria-pressed={Boolean(data.isPublic)}
+                    >
+                      <span className={`relative h-5 w-9 rounded-full transition-colors ${data.isPublic ? 'bg-[var(--btn-primary)]' : 'bg-[var(--border-medium)]'}`}>
+                        <span className={`absolute left-1 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${data.isPublic ? 'translate-x-4' : ''}`}></span>
+                      </span>
+                      <span>{data.isPublic ? 'Public' : 'Private'}</span>
+                    </button>
+                    {visibilitySaveError && (
+                      <p className="text-[11px] text-[var(--danger)] leading-4">{visibilitySaveError}</p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1681,7 +1736,7 @@ export default function DashboardPage() {
               )}
             </section>
 
-            <div className="mb-4 sm:mb-6">
+            <div className="mb-1 sm:mb-2">
               <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border-soft)] pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
                 <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
