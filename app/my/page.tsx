@@ -40,6 +40,7 @@ function normalizeBriefSummary(value: unknown): string | null {
 export default function MyPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const userId = session?.user?.id ?? null;
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,30 +50,9 @@ export default function MyPage() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
 
-  // 如果用户未登录，显示登录提示
-  if (status === 'loading') {
-    return (
-      <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)] mx-auto mb-4"></div>
-          <p className="text-[var(--text-muted)]">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (status === 'unauthenticated') {
-    if (typeof window !== 'undefined') {
-      router.replace(`/auth/signin?callbackUrl=/my`);
-      return null;
-    }
-    // SSR fallback
-    return null;
-  }
-
   // 从数据库加载用户的文件
   const loadFiles = useCallback(async () => {
-    if (!session?.user?.id) return;
+    if (!userId) return;
     
     setIsLoading(true);
     setError(null);
@@ -120,13 +100,30 @@ export default function MyPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, session?.user?.id]);
+  }, [page, userId]);
 
   useEffect(() => {
-    if (session?.user?.id) {
+    if (status === 'unauthenticated') {
+      router.replace('/auth/signin?callbackUrl=/my');
+    }
+  }, [status, router]);
+
+  useEffect(() => {
+    if (status === 'authenticated' && userId) {
       loadFiles();
     }
-  }, [loadFiles, session?.user?.id]);
+  }, [status, loadFiles, userId]);
+
+  if (status === 'loading' || status === 'unauthenticated') {
+    return (
+      <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)] mx-auto mb-4"></div>
+          <p className="text-[var(--text-muted)]">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   // 过滤和排序文件
   const filteredAndSortedFiles = files
@@ -165,16 +162,16 @@ export default function MyPage() {
   return (
     <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col">
       <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
-        <div className="container mx-auto px-4 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
-          <nav className="app-breadcrumb-nav">
+        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+          <nav className="app-breadcrumb-nav w-full md:w-auto">
             <Link href="/" className="app-breadcrumb-link">
-              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} />
+              <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
               <span>PodSum.cc</span>
             </Link>
             <span className="app-breadcrumb-divider">/</span>
             <span className="app-breadcrumb-current">My Podcast Summaries</span>
           </nav>
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end w-full md:w-auto">
             <Link
               href="/upload"
               className="bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors"
@@ -263,9 +260,11 @@ export default function MyPage() {
                 <div key={file.id} className="bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-xl p-4 hover:bg-[var(--paper-muted)] transition-colors">
                   <div className="flex justify-between items-start gap-4">
                     <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold text-[var(--heading)] mb-2 whitespace-normal break-words leading-8">
-                        {file.name}
-                      </h3>
+                      <Link href={`/dashboard/${file.id}`} className="block">
+                        <h3 className="font-semibold text-[var(--heading)] mb-2 whitespace-normal break-words leading-8" title={file.name}>
+                          {file.name}
+                        </h3>
+                      </Link>
                       <p className="mb-2.5 text-sm leading-6 text-[var(--text-secondary)] whitespace-pre-wrap break-words">
                         {file.briefSummary || (file.processed ? '暂无摘要。' : '摘要生成中...')}
                       </p>

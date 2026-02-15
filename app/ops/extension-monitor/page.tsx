@@ -258,8 +258,8 @@ export default function ExtensionMonitorPage() {
       <header className="p-4 bg-slate-800/60 backdrop-blur-md shadow-lg sticky top-0 z-10">
         <div className="container mx-auto">
           <nav className="flex items-center space-x-2 text-xl mb-3">
-            <Link href="/" className="inline-flex items-center gap-2 text-sky-400 hover:underline font-semibold">
-              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={22} height={22} />
+            <Link href="/" className="inline-flex items-center gap-2 text-[#5f9582] hover:text-[#79ae9c] hover:underline font-semibold transition-colors">
+              <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={22} height={22} className="app-breadcrumb-logo" />
               <span>PodSum.cc</span>
             </Link>
             <span className="text-slate-400">/</span>

@@ -183,7 +183,7 @@ export default function PublicPodcastSummaryPage() {
           {/* Breadcrumb Navigation */}
           <nav className="app-breadcrumb-nav w-full md:w-auto">
             <Link href="/" className="app-breadcrumb-link">
-              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
+              <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
               <span>PodSum.cc</span>
             </Link>
             <span className="app-breadcrumb-divider">/</span>

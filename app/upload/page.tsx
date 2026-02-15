@@ -131,7 +131,7 @@ export default function UploadPage() {
         <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
           <nav className="app-breadcrumb-nav">
             <Link href="/" className="app-breadcrumb-link">
-              <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} />
+              <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
               <span>PodSum.cc</span>
             </Link>
             <span className="app-breadcrumb-divider">/</span>

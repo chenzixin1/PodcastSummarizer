@@ -144,6 +144,13 @@ body {
   flex-shrink: 0;
 }
 
+.app-breadcrumb-logo {
+  width: 1.35em;
+  height: 1.35em;
+  min-width: 1.35em;
+  flex-shrink: 0;
+}
+
 .app-breadcrumb-link:hover {
   color: var(--link-hover);
 }
