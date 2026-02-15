@@ -20,6 +20,21 @@ interface FileRecord {
   tags: string[];
 }
 
+interface ApiPodcastRecord {
+  id: string;
+  title?: string | null;
+  originalFileName?: string | null;
+  briefSummary?: unknown;
+  createdAt: string;
+  isProcessed?: boolean;
+  processedAt?: string | null;
+  isPublic?: boolean;
+  sourceReference?: string | null;
+  wordCount?: number | null;
+  durationSec?: number | null;
+  tags?: unknown;
+}
+
 type ThemeMode = 'light' | 'dark';
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -77,7 +92,7 @@ export default function PublicPodcastSummaryPage() {
           throw new Error('Failed to fetch public podcast list');
         }
         const result = await response.json();
-        const dbRecords: FileRecord[] = result.data.map((item: any) => {
+        const dbRecords: FileRecord[] = (result.data as ApiPodcastRecord[]).map((item) => {
           const resolvedName =
             (typeof item.title === 'string' ? item.title.trim() : '') ||
             resolveFilePodcastTitle(String(item.originalFileName || ''));
@@ -166,7 +181,7 @@ export default function PublicPodcastSummaryPage() {
       <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
         <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
           {/* Breadcrumb Navigation */}
-          <nav className="app-breadcrumb-nav">
+          <nav className="app-breadcrumb-nav w-full md:w-auto">
             <Link href="/" className="app-breadcrumb-link">
               <Image src="/podcast-summarizer-icon.svg" alt="PodSum logo" width={28} height={28} />
               <span>PodSum.cc</span>
@@ -174,7 +189,13 @@ export default function PublicPodcastSummaryPage() {
             <span className="app-breadcrumb-divider">/</span>
             <span className="app-breadcrumb-current">Public Podcast Summary</span>
           </nav>
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end w-full md:w-auto">
+            <Link href="/my" className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
+              My Summaries
+            </Link>
+            <Link href="/upload" className="bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
+              + Upload SRT
+            </Link>
             <div className="inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
               <button
                 onClick={() => setThemeMode('light')}
@@ -197,12 +218,6 @@ export default function PublicPodcastSummaryPage() {
                 Dark Mode
               </button>
             </div>
-            <Link href="/my" className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
-              My Summaries
-            </Link>
-            <Link href="/upload" className="bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
-              + Upload SRT
-            </Link>
           </div>
         </div>
       </header>
@@ -259,7 +274,7 @@ export default function PublicPodcastSummaryPage() {
             </div>
           ) : filteredFiles.length === 0 ? (
             <div className="bg-[var(--paper-subtle)] border border-[var(--border-soft)] rounded-xl p-8 text-center">
-              <p className="text-[var(--text-muted)]">No results for "{searchQuery.trim()}".</p>
+              <p className="text-[var(--text-muted)]">No results for &quot;{searchQuery.trim()}&quot;.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
