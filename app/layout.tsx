@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 import SessionWrapper from '../components/SessionWrapper';
 
@@ -26,11 +27,18 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col`}
       >
-        <SessionWrapper>
-          {children}
-        </SessionWrapper>
+        <div className="flex-1">
+          <SessionWrapper>
+            {children}
+          </SessionWrapper>
+        </div>
+        <footer className="border-t border-[rgba(128,112,86,0.22)] bg-[rgba(248,243,234,0.82)] px-4 py-3 text-center text-sm text-[#5f5547]">
+          <Link href="/about" className="font-medium text-[#2f6656] hover:text-[#255648] hover:underline underline-offset-4 transition-colors">
+            About
+          </Link>
+        </footer>
       </body>
     </html>
   );
