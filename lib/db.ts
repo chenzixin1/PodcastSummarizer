@@ -28,9 +28,14 @@ export interface User {
 export interface AnalysisResult {
   podcastId: string;
   summary: string;
+  summaryZh?: string | null;
+  summaryEn?: string | null;
+  briefSummary?: string | null;
   translation: string;
   highlights: string;
   mindMapJson?: MindMapData | null;
+  mindMapJsonZh?: MindMapData | null;
+  mindMapJsonEn?: MindMapData | null;
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
@@ -39,9 +44,14 @@ export interface AnalysisResult {
 export interface PartialAnalysisResult {
   podcastId: string;
   summary?: string | null;
+  summaryZh?: string | null;
+  summaryEn?: string | null;
+  briefSummary?: string | null;
   translation?: string | null;
   highlights?: string | null;
   mindMapJson?: MindMapData | null;
+  mindMapJsonZh?: MindMapData | null;
+  mindMapJsonEn?: MindMapData | null;
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
@@ -67,6 +77,83 @@ function toJsonb(value: unknown): string | null {
     console.error('JSONB serialization failed:', error);
     return null;
   }
+}
+
+const LIST_BRIEF_SUMMARY_MAX_CHARS = 220;
+
+function stripMarkdownToPlainText(input: string): string {
+  return input
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/[*_~>#]/g, ' ')
+    .replace(/\r/g, ' ')
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function trimToNaturalBoundary(input: string, maxChars: number): string {
+  const normalized = input.trim();
+  if (!normalized || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const candidate = normalized.slice(0, maxChars);
+  const punctuation = ['。', '！', '？', '.', '!', '?', '；', ';', '，', ','];
+  let best = -1;
+  for (const token of punctuation) {
+    const index = candidate.lastIndexOf(token);
+    if (index > best) {
+      best = index;
+    }
+  }
+  if (best >= Math.floor(maxChars * 0.6)) {
+    return candidate.slice(0, best + 1).trim();
+  }
+  return candidate.trim();
+}
+
+function extractChineseSummaryBody(summary: string): string {
+  const normalized = String(summary || '');
+  if (!normalized) {
+    return '';
+  }
+  const chineseHeaderIndex = normalized.indexOf('# 中文总结');
+  if (chineseHeaderIndex >= 0) {
+    return normalized.slice(chineseHeaderIndex);
+  }
+  return normalized;
+}
+
+function buildListBriefSummary(rawBrief: unknown, rawSummary: unknown): string | null {
+  const brief = typeof rawBrief === 'string' ? rawBrief.trim() : '';
+  if (brief) {
+    return trimToNaturalBoundary(stripMarkdownToPlainText(brief), LIST_BRIEF_SUMMARY_MAX_CHARS) || null;
+  }
+
+  const summary = typeof rawSummary === 'string' ? rawSummary.trim() : '';
+  if (!summary) {
+    return null;
+  }
+
+  const chineseSource = extractChineseSummaryBody(summary);
+  const lines = chineseSource
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const bullets = lines
+    .filter((line) => line.startsWith('- '))
+    .map((line) => line.replace(/^-+\s*/, '').trim())
+    .filter(Boolean);
+  const base = bullets.length > 0 ? bullets.slice(0, 4).join('；') : chineseSource;
+  const plain = stripMarkdownToPlainText(base);
+  const finalText = trimToNaturalBoundary(plain, LIST_BRIEF_SUMMARY_MAX_CHARS);
+  return finalText || null;
 }
 
 export async function ensureExtensionTranscriptionJobsTable(): Promise<void> {
@@ -202,6 +289,18 @@ async function ensureSchemaUpgrades(): Promise<void> {
       `;
       await sql`
         ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS brief_summary TEXT
+      `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS summary_zh TEXT
+      `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS summary_en TEXT
+      `;
+      await sql`
+        ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS word_count INTEGER
       `;
       await sql`
@@ -211,6 +310,14 @@ async function ensureSchemaUpgrades(): Promise<void> {
       await sql`
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS mind_map_json JSONB
+      `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS mind_map_json_zh JSONB
+      `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS mind_map_json_en JSONB
       `;
       await ensureExtensionTranscriptionJobsTable();
       await ensureExtensionMonitorTables();
@@ -261,9 +368,14 @@ export async function initDatabase(): Promise<DbResult> {
       CREATE TABLE IF NOT EXISTS analysis_results (
         podcast_id TEXT REFERENCES podcasts(id),
         summary TEXT,
+        summary_zh TEXT,
+        summary_en TEXT,
+        brief_summary TEXT,
         translation TEXT,
         highlights TEXT,
         mind_map_json JSONB,
+        mind_map_json_zh JSONB,
+        mind_map_json_en JSONB,
         token_count INTEGER,
         word_count INTEGER,
         character_count INTEGER,
@@ -383,26 +495,57 @@ export async function savePodcast(podcast: Podcast): Promise<DbResult> {
 export async function saveAnalysisResults(result: AnalysisResult): Promise<DbResult> {
   try {
     await ensureSchemaUpgrades();
+    const summaryZh = result.summaryZh ?? result.summary ?? null;
+    const summaryEn = result.summaryEn ?? null;
+    const summaryLegacy = summaryZh ?? result.summary ?? '';
+    const mindMapZh = result.mindMapJsonZh ?? result.mindMapJson ?? null;
+    const mindMapEn = result.mindMapJsonEn ?? null;
+    const mindMapLegacy = result.mindMapJson ?? mindMapZh ?? null;
+
     const dbResult = await sql`
       INSERT INTO analysis_results 
-        (podcast_id, summary, translation, highlights, mind_map_json, token_count, word_count, character_count)
+        (
+          podcast_id,
+          summary,
+          summary_zh,
+          summary_en,
+          brief_summary,
+          translation,
+          highlights,
+          mind_map_json,
+          mind_map_json_zh,
+          mind_map_json_en,
+          token_count,
+          word_count,
+          character_count
+        )
       VALUES 
         (
           ${result.podcastId},
-          ${result.summary},
+          ${summaryLegacy},
+          ${summaryZh},
+          ${summaryEn},
+          ${result.briefSummary ?? null},
           ${result.translation},
           ${result.highlights},
-          ${toJsonb(result.mindMapJson)}::jsonb,
+          ${toJsonb(mindMapLegacy)}::jsonb,
+          ${toJsonb(mindMapZh)}::jsonb,
+          ${toJsonb(mindMapEn)}::jsonb,
           ${result.tokenCount ?? null},
           ${result.wordCount ?? null},
           ${result.characterCount ?? null}
         )
       ON CONFLICT (podcast_id) 
       DO UPDATE SET
-        summary = ${result.summary},
+        summary = ${summaryLegacy},
+        summary_zh = ${summaryZh},
+        summary_en = ${summaryEn},
+        brief_summary = ${result.briefSummary ?? null},
         translation = ${result.translation},
         highlights = ${result.highlights},
-        mind_map_json = ${toJsonb(result.mindMapJson)}::jsonb,
+        mind_map_json = ${toJsonb(mindMapLegacy)}::jsonb,
+        mind_map_json_zh = ${toJsonb(mindMapZh)}::jsonb,
+        mind_map_json_en = ${toJsonb(mindMapEn)}::jsonb,
         token_count = ${result.tokenCount ?? null},
         word_count = ${result.wordCount ?? null},
         character_count = ${result.characterCount ?? null},
@@ -426,7 +569,7 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
       const tags = extractPodcastTags({
         title: row.title || null,
         fallbackName: row.originalFileName || null,
-        summary: result.summary || '',
+        summary: summaryLegacy || '',
         sourceReference: row.sourceReference || null,
       });
       await sql`
@@ -447,16 +590,42 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
 export async function saveAnalysisPartialResults(result: PartialAnalysisResult): Promise<DbResult> {
   try {
     await ensureSchemaUpgrades();
+    const summaryZh = result.summaryZh ?? null;
+    const summaryEn = result.summaryEn ?? null;
+    const summaryLegacy = result.summary ?? summaryZh ?? null;
+    const mindMapZh = result.mindMapJsonZh ?? null;
+    const mindMapEn = result.mindMapJsonEn ?? null;
+    const mindMapLegacy = result.mindMapJson ?? mindMapZh ?? null;
+
     const dbResult = await sql`
       INSERT INTO analysis_results
-        (podcast_id, summary, translation, highlights, mind_map_json, token_count, word_count, character_count)
+        (
+          podcast_id,
+          summary,
+          summary_zh,
+          summary_en,
+          brief_summary,
+          translation,
+          highlights,
+          mind_map_json,
+          mind_map_json_zh,
+          mind_map_json_en,
+          token_count,
+          word_count,
+          character_count
+        )
       VALUES
         (
           ${result.podcastId},
-          ${result.summary ?? null},
+          ${summaryLegacy},
+          ${summaryZh},
+          ${summaryEn},
+          ${result.briefSummary ?? null},
           ${result.translation ?? null},
           ${result.highlights ?? null},
-          ${toJsonb(result.mindMapJson)}::jsonb,
+          ${toJsonb(mindMapLegacy)}::jsonb,
+          ${toJsonb(mindMapZh)}::jsonb,
+          ${toJsonb(mindMapEn)}::jsonb,
           ${result.tokenCount ?? null},
           ${result.wordCount ?? null},
           ${result.characterCount ?? null}
@@ -464,9 +633,14 @@ export async function saveAnalysisPartialResults(result: PartialAnalysisResult):
       ON CONFLICT (podcast_id)
       DO UPDATE SET
         summary = COALESCE(EXCLUDED.summary, analysis_results.summary),
+        summary_zh = COALESCE(EXCLUDED.summary_zh, analysis_results.summary_zh),
+        summary_en = COALESCE(EXCLUDED.summary_en, analysis_results.summary_en),
+        brief_summary = COALESCE(EXCLUDED.brief_summary, analysis_results.brief_summary),
         translation = COALESCE(EXCLUDED.translation, analysis_results.translation),
         highlights = COALESCE(EXCLUDED.highlights, analysis_results.highlights),
         mind_map_json = COALESCE(EXCLUDED.mind_map_json, analysis_results.mind_map_json),
+        mind_map_json_zh = COALESCE(EXCLUDED.mind_map_json_zh, analysis_results.mind_map_json_zh),
+        mind_map_json_en = COALESCE(EXCLUDED.mind_map_json_en, analysis_results.mind_map_json_en),
         token_count = COALESCE(EXCLUDED.token_count, analysis_results.token_count),
         word_count = COALESCE(EXCLUDED.word_count, analysis_results.word_count),
         character_count = COALESCE(EXCLUDED.character_count, analysis_results.character_count),
@@ -513,9 +687,16 @@ export async function getAnalysisResults(podcastId: string): Promise<DbResult> {
     await ensureSchemaUpgrades();
     const result = await sql`
       SELECT 
-        podcast_id as "podcastId", summary, translation, 
+        podcast_id as "podcastId",
+        summary,
+        summary_zh as "summaryZh",
+        summary_en as "summaryEn",
+        brief_summary as "briefSummary",
+        translation, 
         highlights,
         mind_map_json as "mindMapJson",
+        mind_map_json_zh as "mindMapJsonZh",
+        mind_map_json_en as "mindMapJsonEn",
         token_count as "tokenCount",
         word_count as "wordCount",
         character_count as "characterCount",
@@ -550,6 +731,8 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           p.tags_json as "tags",
           p.is_public as "isPublic", p.created_at as "createdAt",
           CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
+          ar.brief_summary as "__briefSummaryRaw",
+          COALESCE(ar.summary_zh, ar.summary) as "__summaryRaw",
           ar.word_count as "wordCount",
           CASE
             WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
@@ -570,6 +753,8 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           p.tags_json as "tags",
           p.is_public as "isPublic", p.created_at as "createdAt",
           CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
+          ar.brief_summary as "__briefSummaryRaw",
+          COALESCE(ar.summary_zh, ar.summary) as "__summaryRaw",
           ar.word_count as "wordCount",
           CASE
             WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
@@ -585,8 +770,18 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
     }
     
     const result = await query;
-    
-    return { success: true, data: result.rows };
+
+    const rows = result.rows.map((row) => {
+      const normalized = {
+        ...row,
+        briefSummary: buildListBriefSummary(row.__briefSummaryRaw, row.__summaryRaw),
+      } as Record<string, unknown>;
+      delete normalized.__briefSummaryRaw;
+      delete normalized.__summaryRaw;
+      return normalized;
+    });
+
+    return { success: true, data: rows };
   } catch (error) {
     console.error('获取所有播客信息失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -606,6 +801,8 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
         p.is_public as "isPublic", p.created_at as "createdAt",
         p.user_id as "userId",
         CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
+        ar.brief_summary as "__briefSummaryRaw",
+        COALESCE(ar.summary_zh, ar.summary) as "__summaryRaw",
         ar.word_count as "wordCount",
         CASE
           WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
@@ -620,7 +817,16 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
     `;
     
     const result = await query;
-    return { success: true, data: result.rows };
+    const rows = result.rows.map((row) => {
+      const normalized = {
+        ...row,
+        briefSummary: buildListBriefSummary(row.__briefSummaryRaw, row.__summaryRaw),
+      } as Record<string, unknown>;
+      delete normalized.__briefSummaryRaw;
+      delete normalized.__summaryRaw;
+      return normalized;
+    });
+    return { success: true, data: rows };
   } catch (error) {
     console.error('获取用户播客信息失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };

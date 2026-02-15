@@ -10,12 +10,31 @@ import { resolveFilePodcastTitle } from '../../lib/podcastTitle';
 interface FileRecord {
   id: string;
   name: string;
+  briefSummary: string | null;
   size: string;
   url: string;
   uploadDate: string;
   processed: boolean;
   processedAt?: string;
   isPublic: boolean;
+}
+
+function normalizeBriefSummary(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value
+    .replace(/#\s*English Summary/gi, ' ')
+    .replace(/#\s*中文总结/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/[*_~>#]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized ? normalized : null;
 }
 
 export default function MyPage() {
@@ -69,11 +88,12 @@ export default function MyPage() {
       }
       
       const result = await response.json();
-      const dbRecords: FileRecord[] = result.data.map((item: { id: string; title?: string | null; originalFileName: string; fileSize: string; blobUrl: string; isProcessed: boolean; createdAt: string; processedAt?: string; isPublic?: boolean; }) => ({
+      const dbRecords: FileRecord[] = result.data.map((item: { id: string; title?: string | null; briefSummary?: string | null; originalFileName: string; fileSize: string; blobUrl: string; isProcessed: boolean; createdAt: string; processedAt?: string; isPublic?: boolean; }) => ({
         id: item.id,
         name:
           (typeof item.title === 'string' ? item.title.trim() : '') ||
           resolveFilePodcastTitle(String(item.originalFileName || '')),
+        briefSummary: normalizeBriefSummary(item.briefSummary),
         size: item.fileSize,
         url: item.blobUrl,
         uploadDate: item.createdAt,
@@ -173,33 +193,42 @@ export default function MyPage() {
 
       <main className="container mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8 flex-grow">
         <div className="dashboard-panel rounded-2xl p-5 sm:p-6 lg:p-8">
-          <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="mb-5 space-y-3">
             <div className="text-sm text-[var(--text-secondary)]">
               Signed in as: <span className="font-semibold text-[var(--heading)]">{session?.user?.email}</span>
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="text"
-                placeholder="Search files..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full md:w-[260px] rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--border-medium)]"
-              />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'date' | 'name' | 'size')}
-                className="px-3 py-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] text-sm text-[var(--text-secondary)] focus:outline-none focus:border-[var(--border-medium)]"
-              >
-                <option value="date">Date</option>
-                <option value="name">Name</option>
-                <option value="size">Size</option>
-              </select>
-              <button
-                onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
-                className="px-3 py-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] text-sm text-[var(--text-secondary)] hover:bg-[var(--paper-muted)] transition-colors"
-              >
-                {sortDirection === 'asc' ? '↑' : '↓'}
-              </button>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3 min-w-0 md:w-[320px]">
+                <input
+                  type="text"
+                  placeholder="Search files..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-transparent border-0 border-b border-[var(--border-soft)] px-0 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--border-medium)]"
+                />
+                {!isLoading && (
+                  <span className="shrink-0 text-xs text-[var(--text-muted)]">
+                    {filteredAndSortedFiles.length}/{files.length}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'date' | 'name' | 'size')}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] text-sm text-[var(--text-secondary)] focus:outline-none focus:border-[var(--border-medium)]"
+                >
+                  <option value="date">Date</option>
+                  <option value="name">Name</option>
+                  <option value="size">Size</option>
+                </select>
+                <button
+                  onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] text-sm text-[var(--text-secondary)] hover:bg-[var(--paper-muted)] transition-colors"
+                >
+                  {sortDirection === 'asc' ? '↑' : '↓'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -231,24 +260,34 @@ export default function MyPage() {
           ) : (
             <div className="space-y-4">
               {filteredAndSortedFiles.map((file) => (
-                <div key={file.id} className="bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-xl p-4 sm:p-5 hover:bg-[var(--paper-muted)] transition-colors">
-                  <div className="flex justify-between items-start gap-3">
+                <div key={file.id} className="bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-xl p-4 hover:bg-[var(--paper-muted)] transition-colors">
+                  <div className="flex justify-between items-start gap-4">
                     <div className="min-w-0 flex-1">
-                      <h3 className="text-lg font-semibold text-[var(--heading)] mb-2 break-words">{file.name}</h3>
+                      <h3 className="font-semibold text-[var(--heading)] mb-2 whitespace-normal break-words leading-8">
+                        {file.name}
+                      </h3>
+                      <p className="mb-2.5 text-sm leading-6 text-[var(--text-secondary)] whitespace-pre-wrap break-words">
+                        {file.briefSummary || (file.processed ? '暂无摘要。' : '摘要生成中...')}
+                      </p>
                       <div className="flex flex-wrap gap-3 text-xs text-[var(--text-muted)]">
                         <span>Size: {file.size}</span>
-                        <span>Uploaded: {new Date(file.uploadDate).toLocaleDateString()}</span>
-                        <span className={file.processed ? 'text-emerald-700' : 'text-amber-700'}>
-                          {file.processed ? '✓ Processed' : '⟳ Pending'}
-                        </span>
-                        <span className={file.isPublic ? 'text-emerald-700' : 'text-[var(--text-secondary)]'}>
+                        {file.processed && (
+                          <span className="text-emerald-600">✓ Processed</span>
+                        )}
+                        {!file.processed && (
+                          <span className="text-amber-600">⟳ Processing</span>
+                        )}
+                        <span className={file.isPublic ? 'text-emerald-600' : 'text-[var(--text-secondary)]'}>
                           {file.isPublic ? 'Public' : 'Private'}
                         </span>
+                      </div>
+                      <div className="text-xs text-[var(--text-muted)] mt-1.5">
+                        Uploaded: {new Date(file.uploadDate).toLocaleString()}
                       </div>
                     </div>
                     <Link
                       href={`/dashboard/${file.id}`}
-                      className="shrink-0 bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] rounded-md px-3 py-1.5 text-xs hover:bg-[var(--paper-muted)] transition-colors"
+                      className="shrink-0 bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] rounded-md px-3 py-1 text-xs hover:bg-[var(--paper-muted)] transition-colors"
                     >
                       View
                     </Link>

@@ -25,9 +25,14 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS analysis_results (
         podcast_id UUID REFERENCES podcasts(id),
         summary TEXT,
+        summary_zh TEXT,
+        summary_en TEXT,
+        brief_summary TEXT,
         translation TEXT,
         highlights TEXT,
         mind_map_json JSONB,
+        mind_map_json_zh JSONB,
+        mind_map_json_en JSONB,
         token_count INTEGER,
         word_count INTEGER,
         character_count INTEGER,
@@ -68,9 +73,14 @@ async function initDatabase() {
     await sql`ALTER TABLE podcasts ADD COLUMN IF NOT EXISTS source_reference TEXT`;
     await sql`ALTER TABLE podcasts ADD COLUMN IF NOT EXISTS tags_json JSONB DEFAULT '[]'::jsonb`;
     await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS token_count INTEGER`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS brief_summary TEXT`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS summary_zh TEXT`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS summary_en TEXT`;
     await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS word_count INTEGER`;
     await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS character_count INTEGER`;
     await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS mind_map_json JSONB`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS mind_map_json_zh JSONB`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS mind_map_json_en JSONB`;
 
     // 测试查询
     const result = await sql`SELECT NOW() as current_time`;

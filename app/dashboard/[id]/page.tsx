@@ -13,6 +13,7 @@ import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getC
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
+import { extractPodcastTags } from '../../../lib/podcastTags';
 
 // VERCEL DEBUG: Add version number to help track deployments
 const APP_VERSION = '1.0.5'; // Increment version for tracking
@@ -23,10 +24,14 @@ interface ProcessedData {
   title: string;
   originalFileName: string;
   originalFileSize: string;
-  summary: string;
+  blobUrl?: string | null;
+  summaryZh: string;
+  summaryEn: string;
   translation: string;
   fullTextHighlights: string;
-  mindMapJson?: MindMapData | null;
+  fullTextOriginal: string;
+  mindMapJsonZh?: MindMapData | null;
+  mindMapJsonEn?: MindMapData | null;
   processedAt?: string;
   tokenCount?: number | null;
   wordCount?: number | null;
@@ -43,9 +48,10 @@ interface ProcessingJobData {
   lastError?: string | null;
 }
 
-type ViewMode = 'summary' | 'translate' | 'fullText' | 'mindMap';
+type ViewMode = 'summary' | 'fullText' | 'mindMap';
 type ProcessingTask = 'summary' | 'translation' | 'highlights';
 type ThemeMode = 'light' | 'dark';
+type ContentLanguage = 'zh' | 'en';
 
 interface ProcessingProgress {
   task: ProcessingTask | null;
@@ -56,22 +62,29 @@ interface ProcessingProgress {
 const COPY_STATUS_RESET_MS = 1500;
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 64;
 const ANALYSIS_POLL_INTERVAL_MS = 5000;
+const DASHBOARD_CONTENT_LANGUAGE_KEY = 'podsum-dashboard-content-language';
 const TASK_LABELS: Record<ProcessingTask, string> = {
   summary: 'Summary',
   translation: 'Translation',
   highlights: 'Highlights',
 };
 
-// Normalize highlight text by ensuring each timestamp starts on a new line
-// Supports patterns like "** [00:00:00]**" as well as plain "[00:00:00]"
+// Normalize full-text notes by forcing each timestamp entry into its own markdown paragraph.
+// Supports patterns like "** [00:00:00]**" as well as plain "[00:00:00]".
 const enforceLineBreaks = (text: string) => {
-  // Split by timestamps and ensure each timestamp starts on a new line
+  const normalized = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00A0/g, ' ');
+
   const timestampRegex = /(\*\*\s*)?(\[[0-9]{2}:[0-9]{2}:[0-9]{1,3}\])(\*\*)?/g;
-  let result = text.replace(timestampRegex, (match, boldStart, timestamp, boldEnd) => {
-    return `\n${boldStart || ''}${timestamp}${boldEnd || ''}`;
+  const result = normalized.replace(timestampRegex, (_match, boldStart, timestamp, boldEnd) => {
+    return `\n\n${boldStart || ''}${timestamp}${boldEnd || ''}`;
   });
-  // Remove leading newlines and trim
-  return result.replace(/^\n+/, '').trim();
+
+  return result
+    .replace(/^\n+/, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 };
 
 const normalizeMarkdownOutput = (text: string) => {
@@ -82,10 +95,242 @@ const normalizeMarkdownOutput = (text: string) => {
     .trim();
 };
 
-const normalizePlainTextOutput = (text: string) => {
-  return text
-    .replace(/\r\n/g, '\n')
-    .replace(/\u00A0/g, ' ');
+const extractLegacyBilingualSummary = (summaryRaw: string): { zh: string; en: string } => {
+  const normalized = String(summaryRaw || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return { zh: '', en: '' };
+  }
+
+  const markerEn = '<<<SUMMARY_EN>>>';
+  const markerZh = '<<<SUMMARY_ZH>>>';
+  const markerEnIndex = normalized.indexOf(markerEn);
+  const markerZhIndex = normalized.indexOf(markerZh);
+  if (markerEnIndex >= 0 && markerZhIndex > markerEnIndex) {
+    return {
+      en: normalizeMarkdownOutput(normalized.slice(markerEnIndex + markerEn.length, markerZhIndex)),
+      zh: normalizeMarkdownOutput(normalized.slice(markerZhIndex + markerZh.length)),
+    };
+  }
+
+  const englishHeaderIndex = normalized.search(/#\s*English Summary/i);
+  const chineseHeaderIndex = normalized.search(/#\s*中文总结/i);
+  if (englishHeaderIndex >= 0 && chineseHeaderIndex > englishHeaderIndex) {
+    return {
+      en: normalizeMarkdownOutput(normalized.slice(englishHeaderIndex, chineseHeaderIndex)),
+      zh: normalizeMarkdownOutput(normalized.slice(chineseHeaderIndex)),
+    };
+  }
+  if (chineseHeaderIndex >= 0) {
+    return {
+      en: normalizeMarkdownOutput(normalized.slice(0, chineseHeaderIndex)),
+      zh: normalizeMarkdownOutput(normalized.slice(chineseHeaderIndex)),
+    };
+  }
+
+  return {
+    en: '',
+    zh: normalizeMarkdownOutput(normalized),
+  };
+};
+
+const EMPHASIS_EXCLUDED_KEYWORDS = new Set([
+  'youtube',
+  'transcript',
+  'summary',
+  'podsum',
+  'full',
+  'text',
+  'translated',
+  'analysis',
+]);
+
+interface ParsedSrtLine {
+  timestamp: string;
+  text: string;
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizeSrtTime = (raw: string): string | null => {
+  const matched = raw.trim().match(/^(\d{2}):(\d{2}):(\d{2})(?:[.,]\d{1,3})?$/);
+  if (!matched) {
+    return null;
+  }
+  return `${matched[1]}:${matched[2]}:${matched[3]}`;
+};
+
+const parseSrtForDisplay = (srtContent: string): ParsedSrtLine[] => {
+  const normalized = srtContent.replace(/\r\n/g, '\n').replace(/^\uFEFF/, '').trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const blocks = normalized.split(/\n\s*\n+/g);
+  const lines: ParsedSrtLine[] = [];
+  for (const block of blocks) {
+    const blockLines = block
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (blockLines.length === 0) {
+      continue;
+    }
+
+    let cursor = 0;
+    if (/^\d+$/.test(blockLines[0])) {
+      cursor = 1;
+    }
+
+    const timeLine = blockLines[cursor];
+    if (!timeLine || !timeLine.includes('-->')) {
+      continue;
+    }
+
+    const [startRaw] = timeLine.split('-->').map((part) => part.trim());
+    const startTime = normalizeSrtTime(startRaw);
+    if (!startTime) {
+      continue;
+    }
+
+    const text = blockLines
+      .slice(cursor + 1)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) {
+      continue;
+    }
+
+    lines.push({
+      timestamp: startTime,
+      text,
+    });
+  }
+
+  return lines;
+};
+
+const extractBoldKeywords = (markdown: string): string[] => {
+  const matched = Array.from(markdown.matchAll(/\*\*([^*]+)\*\*/g))
+    .map((item) => item[1]?.trim() || '')
+    .filter(Boolean);
+
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const keyword of matched) {
+    const normalized = keyword.replace(/\s+/g, ' ').trim();
+    if (!normalized || normalized.length < 2 || normalized.length > 32) {
+      continue;
+    }
+    if (TIMESTAMP_ONLY_PATTERN.test(normalized)) {
+      continue;
+    }
+    const lower = normalized.toLowerCase();
+    if (seen.has(lower) || EMPHASIS_EXCLUDED_KEYWORDS.has(lower)) {
+      continue;
+    }
+    seen.add(lower);
+    result.push(normalized);
+    if (result.length >= 16) {
+      break;
+    }
+  }
+  return result;
+};
+
+const buildOriginalTextKeywords = (input: {
+  title: string;
+  sourceReference?: string | null;
+  srtContent: string;
+  translatedHighlights: string;
+}): string[] => {
+  const merged = [
+    ...extractBoldKeywords(input.translatedHighlights),
+    ...extractPodcastTags({
+      title: input.title,
+      sourceReference: input.sourceReference ?? null,
+      summary: input.srtContent,
+    }),
+  ];
+
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const rawKeyword of merged) {
+    const keyword = rawKeyword.replace(/^#+/, '').replace(/\s+/g, ' ').trim();
+    if (!keyword || keyword.length < 2 || keyword.length > 32) {
+      continue;
+    }
+    if (/^\d+$/.test(keyword)) {
+      continue;
+    }
+    if (/^[^A-Za-z0-9\u4E00-\u9FFF]+$/.test(keyword)) {
+      continue;
+    }
+    const lower = keyword.toLowerCase();
+    if (seen.has(lower) || EMPHASIS_EXCLUDED_KEYWORDS.has(lower)) {
+      continue;
+    }
+    seen.add(lower);
+    result.push(keyword);
+    if (result.length >= 16) {
+      break;
+    }
+  }
+  return result;
+};
+
+const emphasizeLineKeywords = (line: string, keywords: string[]): string => {
+  if (!line.trim()) {
+    return line;
+  }
+
+  let output = line;
+  let emphasizedCount = 0;
+  for (const keyword of keywords) {
+    if (emphasizedCount >= 2) {
+      break;
+    }
+
+    if (!keyword || output.includes(`**${keyword}**`)) {
+      continue;
+    }
+
+    if (/[A-Za-z]/.test(keyword)) {
+      const regex = new RegExp(`\\b(${escapeRegExp(keyword)})\\b`, 'i');
+      if (regex.test(output)) {
+        output = output.replace(regex, '**$1**');
+        emphasizedCount += 1;
+      }
+      continue;
+    }
+
+    const index = output.indexOf(keyword);
+    if (index >= 0) {
+      output = `${output.slice(0, index)}**${keyword}**${output.slice(index + keyword.length)}`;
+      emphasizedCount += 1;
+    }
+  }
+  return output;
+};
+
+const formatOriginalSrtAsMarkdown = (input: {
+  title: string;
+  sourceReference?: string | null;
+  srtContent: string;
+  translatedHighlights: string;
+}): string => {
+  const lines = parseSrtForDisplay(input.srtContent);
+  if (lines.length === 0) {
+    return normalizeMarkdownOutput(input.srtContent);
+  }
+
+  const keywords = buildOriginalTextKeywords(input);
+  return lines
+    .map(({ timestamp, text }) => {
+      const emphasizedText = emphasizeLineKeywords(text, keywords);
+      return `**[${timestamp}]** ${emphasizedText}`;
+    })
+    .join('\n\n');
 };
 
 const MindMapCanvas = dynamic(() => import('../../../components/MindMapCanvas'), {
@@ -108,9 +353,9 @@ const normalizeMindMapNode = (value: unknown, depth: number): MindMapNode | null
   }
 
   const node: MindMapNode = {
-    label: label.slice(0, 64),
+    label: label.slice(0, 280),
   };
-  if (depth >= 3) {
+  if (depth >= 5) {
     return node;
   }
 
@@ -118,7 +363,7 @@ const normalizeMindMapNode = (value: unknown, depth: number): MindMapNode | null
   const children = childrenRaw
     .map((child) => normalizeMindMapNode(child, depth + 1))
     .filter((child): child is MindMapNode => Boolean(child))
-    .slice(0, 10);
+    .slice(0, 14);
 
   if (children.length > 0) {
     node.children = children;
@@ -249,6 +494,7 @@ export default function DashboardPage() {
   const [pollTick, setPollTick] = useState(0);
   const [contentPanelHeight, setContentPanelHeight] = useState<number | undefined>(undefined);
   const [themeMode, setThemeMode] = useState<ThemeMode>('light');
+  const [contentLanguage, setContentLanguage] = useState<ContentLanguage>('zh');
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgress>({
     task: null,
     completed: 0,
@@ -266,7 +512,6 @@ export default function DashboardPage() {
   const isAutoScrollEnabledRef = useRef(true);
   const viewScrollPositionsRef = useRef<Record<ViewMode, number>>({
     summary: 0,
-    translate: 0,
     fullText: 0,
     mindMap: 0,
   });
@@ -275,6 +520,7 @@ export default function DashboardPage() {
   const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasResolvedInitialFetchRef = useRef(false);
   const lastLoadedIdRef = useRef<string | null>(null);
+  const transcriptCacheRef = useRef<Map<string, string>>(new Map());
 
   // Debug state
   const [debugMode, setDebugMode] = useState(false);
@@ -543,6 +789,23 @@ export default function DashboardPage() {
   }, [themeMode]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const savedLanguage = window.localStorage.getItem(DASHBOARD_CONTENT_LANGUAGE_KEY);
+    if (savedLanguage === 'zh' || savedLanguage === 'en') {
+      setContentLanguage(savedLanguage);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(DASHBOARD_CONTENT_LANGUAGE_KEY, contentLanguage);
+  }, [contentLanguage]);
+
+  useEffect(() => {
     if (!data) {
       setSourceInput('');
       setSourceSaveStatus('idle');
@@ -595,7 +858,7 @@ export default function DashboardPage() {
         appVersion: APP_VERSION,
         initialized: true,
         lastAction: action,
-        processingState: isProcessing ? 'processing' : (data?.summary ? 'complete' : 'idle'),
+        processingState: isProcessing ? 'processing' : (data?.summaryZh ? 'complete' : 'idle'),
         errors: getClientErrors(),
         networkRequests: networkRequestsRef.current,
         sessionInfo: {
@@ -678,7 +941,7 @@ export default function DashboardPage() {
           requestSent: requestSentRef.current,
           hasError: !!error,
           errorMessage: error,
-          dataSummaryLength: data?.summary?.length
+          dataSummaryLength: data?.summaryZh?.length
         },
         debug: debugState,
         browser: getBrowserInfo(),
@@ -711,13 +974,13 @@ export default function DashboardPage() {
 
   // Monitor content changes and scroll
   useEffect(() => {
-    console.log(`[DEBUG] Content change detected, summary length: ${data?.summary?.length}, isProcessing: ${isProcessingRef.current}`);
-    if (activeView === 'summary' && data?.summary && isProcessingRef.current) {
+    console.log(`[DEBUG] Content change detected, summary length: ${data?.summaryZh?.length}, isProcessing: ${isProcessingRef.current}`);
+    if (activeView === 'summary' && data?.summaryZh && isProcessingRef.current) {
       requestAnimationFrame(() => {
         scrollToBottom();
       });
     }
-  }, [activeView, data?.summary, scrollToBottom]);
+  }, [activeView, data?.summaryZh, scrollToBottom]);
 
   // Main data loading effect - only use database
   useEffect(() => {
@@ -764,16 +1027,27 @@ export default function DashboardPage() {
           if (isProcessed && analysis) {
             // 数据库中有完整的分析结果
             console.log('[DEBUG] 从数据库加载完整分析结果');
+            const legacySummary = extractLegacyBilingualSummary(analysis.summary || '');
             const loadedData: ProcessedData = {
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
-              summary: normalizeMarkdownOutput(analysis.summary || 'Summary not available.'),
-              translation: normalizePlainTextOutput(analysis.translation || 'Translation not available.'),
+              blobUrl: podcast.blobUrl ?? null,
+              summaryZh: normalizeMarkdownOutput(
+                analysis.summaryZh || legacySummary.zh || analysis.summary || 'Summary not available.'
+              ),
+              summaryEn: normalizeMarkdownOutput(
+                analysis.summaryEn || legacySummary.en || 'English summary not available.'
+              ),
+              translation: normalizeMarkdownOutput(
+                enforceLineBreaks(analysis.translation || 'Translation not available.')
+              ),
               fullTextHighlights: normalizeMarkdownOutput(
                 enforceLineBreaks(analysis.highlights || 'Highlights not available.')
               ),
-              mindMapJson: parseMindMapData(analysis.mindMapJson),
+              fullTextOriginal: '',
+              mindMapJsonZh: parseMindMapData(analysis.mindMapJsonZh ?? analysis.mindMapJson),
+              mindMapJsonEn: parseMindMapData(analysis.mindMapJsonEn),
               processedAt: analysis.processedAt,
               tokenCount: analysis.tokenCount ?? null,
               wordCount: analysis.wordCount ?? null,
@@ -796,7 +1070,8 @@ export default function DashboardPage() {
             logPerformance('dashboard-load-database-data', loadTime, { 
               id, 
               dataSize: {
-                summary: analysis.summary?.length || 0,
+                summaryZh: (analysis.summaryZh || analysis.summary)?.length || 0,
+                summaryEn: analysis.summaryEn?.length || 0,
                 translation: analysis.translation?.length || 0,
                 highlights: analysis.highlights?.length || 0
               }
@@ -804,28 +1079,44 @@ export default function DashboardPage() {
           } else if (podcast) {
             // 数据库中有播客信息但没有分析结果，需要处理
             console.log('[DEBUG] 数据库中有播客信息但无分析结果，开始处理');
-            setData(prev => ({
+            setData(prev => {
+              const legacySummary = extractLegacyBilingualSummary(analysis?.summary || '');
+              return ({
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName,
               originalFileSize: podcast.fileSize,
-              summary: analysis?.summary
-                ? normalizeMarkdownOutput(analysis.summary)
-                : prev?.summary || '',
+              blobUrl: podcast.blobUrl ?? prev?.blobUrl ?? null,
+              summaryZh: analysis?.summaryZh || analysis?.summary
+                ? normalizeMarkdownOutput(analysis?.summaryZh || legacySummary.zh || analysis?.summary || '')
+                : prev?.summaryZh || '',
+              summaryEn: analysis?.summaryEn || analysis?.summary
+                ? normalizeMarkdownOutput(analysis?.summaryEn || legacySummary.en || '')
+                : prev?.summaryEn || '',
               translation: analysis?.translation
-                ? normalizePlainTextOutput(analysis.translation)
+                ? normalizeMarkdownOutput(
+                    enforceLineBreaks(analysis.translation)
+                  )
                 : prev?.translation || '',
               fullTextHighlights: analysis?.highlights
                 ? normalizeMarkdownOutput(
                     enforceLineBreaks(analysis.highlights)
                   )
                 : prev?.fullTextHighlights || '',
-              mindMapJson: parseMindMapData(analysis?.mindMapJson) ?? prev?.mindMapJson ?? null,
+              fullTextOriginal:
+                (podcast.blobUrl ?? null) === (prev?.blobUrl ?? null)
+                  ? prev?.fullTextOriginal || ''
+                  : '',
+              mindMapJsonZh:
+                parseMindMapData(analysis?.mindMapJsonZh ?? analysis?.mindMapJson) ?? prev?.mindMapJsonZh ?? null,
+              mindMapJsonEn:
+                parseMindMapData(analysis?.mindMapJsonEn) ?? prev?.mindMapJsonEn ?? null,
               processedAt: analysis?.processedAt || prev?.processedAt || undefined,
               tokenCount: analysis?.tokenCount ?? prev?.tokenCount ?? null,
               wordCount: analysis?.wordCount ?? prev?.wordCount ?? null,
               characterCount: analysis?.characterCount ?? prev?.characterCount ?? null,
               sourceReference: podcast.sourceReference ?? prev?.sourceReference ?? null,
-            }));
+            });
+            });
             setIsSummaryFinal(false);
             setIsHighlightsFinal(false);
             setProcessingStatus('等待后台处理...');
@@ -934,21 +1225,83 @@ export default function DashboardPage() {
   const currentSourceReference = (data?.sourceReference || '').trim();
   const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
 
+  useEffect(() => {
+    const blobUrl = data?.blobUrl;
+    if (!blobUrl) {
+      return;
+    }
+
+    let cancelled = false;
+    const applyOriginalMarkdown = (rawSrt: string) => {
+      const formatted = formatOriginalSrtAsMarkdown({
+        title: data?.title || '',
+        sourceReference: data?.sourceReference ?? null,
+        srtContent: rawSrt,
+        translatedHighlights: data?.fullTextHighlights || '',
+      });
+      if (cancelled) {
+        return;
+      }
+      setData(prev => {
+        if (!prev || prev.blobUrl !== blobUrl) {
+          return prev;
+        }
+        if (prev.fullTextOriginal === formatted) {
+          return prev;
+        }
+        return {
+          ...prev,
+          fullTextOriginal: formatted,
+        };
+      });
+    };
+
+    const cachedTranscript = transcriptCacheRef.current.get(blobUrl);
+    if (typeof cachedTranscript === 'string') {
+      applyOriginalMarkdown(cachedTranscript);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const fetchTranscript = async () => {
+      try {
+        const response = await fetch(blobUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch transcript (${response.status})`);
+        }
+        const rawSrt = (await response.text()).replace(/^\uFEFF/, '');
+        transcriptCacheRef.current.set(blobUrl, rawSrt);
+        applyOriginalMarkdown(rawSrt);
+      } catch (transcriptError) {
+        console.error('[DEBUG] Failed to prepare original full text:', transcriptError);
+      }
+    };
+
+    void fetchTranscript();
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.blobUrl, data?.title, data?.sourceReference, data?.fullTextHighlights]);
+
   const getActiveViewContent = useCallback(() => {
     if (!data) {
       return '';
     }
     if (activeView === 'summary') {
-      return data.summary;
-    }
-    if (activeView === 'translate') {
-      return data.translation;
+      return contentLanguage === 'zh' ? data.summaryZh : data.summaryEn;
     }
     if (activeView === 'mindMap') {
-      return data.mindMapJson ? JSON.stringify(data.mindMapJson, null, 2) : '';
+      const activeMindMap =
+        contentLanguage === 'zh'
+          ? (data.mindMapJsonZh ?? data.mindMapJsonEn ?? null)
+          : (data.mindMapJsonEn ?? data.mindMapJsonZh ?? null);
+      return activeMindMap ? JSON.stringify(activeMindMap, null, 2) : '';
     }
-    return data.fullTextHighlights;
-  }, [activeView, data]);
+    return contentLanguage === 'zh'
+      ? data.fullTextHighlights
+      : data.translation;
+  }, [activeView, contentLanguage, data]);
 
   const copyCurrentView = async () => {
     const content = getActiveViewContent().trim();
@@ -1002,19 +1355,7 @@ export default function DashboardPage() {
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
               <div className="markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {data.summary || '正在生成摘要...'}
-                </ReactMarkdown>
-              </div>
-            </div>
-          </div>
-        );
-      case 'translate':
-        return (
-          <div className="p-4 sm:p-6 lg:p-8">
-            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
-              <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {data.translation || '正在生成翻译...'}
+                  {(contentLanguage === 'zh' ? data.summaryZh : data.summaryEn) || '正在生成摘要...'}
                 </ReactMarkdown>
               </div>
             </div>
@@ -1026,17 +1367,23 @@ export default function DashboardPage() {
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
                   <div className="markdown-body">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                      {data.fullTextHighlights || '正在生成重点内容...'}
+                      {(contentLanguage === 'zh'
+                        ? data.fullTextHighlights
+                        : data.translation) || '正在生成重点内容...'}
                     </ReactMarkdown>
                   </div>
                 </div>
             </div>
         );
-      case 'mindMap':
+      case 'mindMap': {
+        const activeMindMap =
+          contentLanguage === 'zh'
+            ? (data.mindMapJsonZh ?? data.mindMapJsonEn ?? null)
+            : (data.mindMapJsonEn ?? data.mindMapJsonZh ?? null);
         return (
           <div className="p-2 sm:p-3 lg:p-4 h-[62vh] min-h-[440px] max-h-[840px]">
-            {data.mindMapJson ? (
-              <MindMapCanvas data={data.mindMapJson} themeMode={themeMode} />
+            {activeMindMap ? (
+              <MindMapCanvas data={activeMindMap} themeMode={themeMode} />
             ) : (
               <div className="h-full w-full flex items-center justify-center rounded-xl border border-dashed border-[var(--border-medium)] bg-[var(--paper-base)] px-6 text-center text-sm text-[var(--text-muted)] leading-7">
                 {isProcessing ? '脑图正在生成中，请稍候...' : '当前内容还没有脑图数据，可点击“重新处理文件”后生成。'}
@@ -1044,6 +1391,7 @@ export default function DashboardPage() {
             )}
           </div>
         );
+      }
       default:
         return null;
     }
@@ -1113,7 +1461,7 @@ export default function DashboardPage() {
     <ErrorBoundary>
       <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
         <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
-          <div className="mx-auto w-full max-w-[1900px] px-3 sm:px-4 md:px-6 lg:px-8 py-3.5 md:py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+          <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
             {/* Breadcrumb Navigation */}
             <nav className="app-breadcrumb-nav w-full md:w-auto">
               <Link href="/" className="app-breadcrumb-link tracking-wide">
@@ -1186,7 +1534,7 @@ export default function DashboardPage() {
         )}
 
         {data && (
-          <main className="container mx-auto w-full max-w-[1900px] p-3 sm:p-4 md:p-6 lg:p-8 flex-grow flex flex-col gap-4 md:gap-6">
+          <main className="container mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8 flex-grow flex flex-col gap-4 md:gap-6">
             <section className="dashboard-panel rounded-2xl p-3 sm:p-4">
               <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                 <div className="min-w-0 space-y-2">
@@ -1318,9 +1666,30 @@ export default function DashboardPage() {
                 <div className="mb-4 sm:mb-6">
                   <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border-soft)] pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
-                    <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text Translated</button>
-                    <button onClick={() => switchActiveView('translate')} className={`${getButtonClass('translate')} shrink-0`}>Full Text</button>
+                    <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
                     <button onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
+                  </div>
+                  <div className="mt-3 inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
+                    <button
+                      onClick={() => setContentLanguage('zh')}
+                      className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                        contentLanguage === 'zh'
+                          ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                      }`}
+                    >
+                      中文
+                    </button>
+                    <button
+                      onClick={() => setContentLanguage('en')}
+                      className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                        contentLanguage === 'en'
+                          ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                      }`}
+                    >
+                      English
+                    </button>
                   </div>
                 </div>
 

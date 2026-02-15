@@ -1,4 +1,3 @@
-import { modelConfig } from './modelConfig';
 import { prompts } from './prompts';
 
 export interface MindMapNode {
@@ -15,6 +14,7 @@ interface GenerateMindMapInput {
   summary?: string | null;
   highlights?: string | null;
   sourceReference?: string | null;
+  language?: 'zh' | 'en';
 }
 
 interface GenerateMindMapResult {
@@ -24,14 +24,16 @@ interface GenerateMindMapResult {
   error?: string;
 }
 
-const MAX_TREE_DEPTH = 3; // root depth = 0, max 4 levels
-const MAX_CHILDREN_PER_NODE = 10;
+const MIND_MAP_MODEL = process.env.OPENROUTER_MINDMAP_MODEL || 'google/gemini-3-flash-preview';
+const MAX_TREE_DEPTH = 5; // root depth = 0, max 6 levels
+const MAX_CHILDREN_PER_NODE = 14;
+const TARGET_MIN_DEPTH = 5; // root depth = 1
 
 function cleanLabel(value: unknown): string {
   if (typeof value !== 'string') {
     return '';
   }
-  return value.replace(/\s+/g, ' ').trim().slice(0, 64);
+  return value.replace(/\s+/g, ' ').trim().slice(0, 280);
 }
 
 function normalizeMindMapNode(value: unknown, depth: number): MindMapNode | null {
@@ -185,6 +187,13 @@ async function requestMindMapFromModel(payload: GenerateMindMapInput): Promise<s
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY is missing');
   }
+  const language = payload.language === 'en' ? 'en' : 'zh';
+  const systemPrompt = language === 'en' ? prompts.mindMapSystemEn : prompts.mindMapSystemZh;
+  const userPrompt = language === 'en' ? prompts.mindMapUserEn(payload) : prompts.mindMapUserZh(payload);
+  const depthRule =
+    language === 'en'
+      ? 'Additional hard requirement: at least two branches must reach level 5; if enough detail exists, level 6 is allowed.'
+      : '额外硬性要求：至少两个分支必须达到第5层；如果信息充足可达到第6层。';
 
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -195,13 +204,16 @@ async function requestMindMapFromModel(payload: GenerateMindMapInput): Promise<s
       'X-Title': 'PodSum.cc',
     },
     body: JSON.stringify({
-      model: modelConfig.MODEL,
+      model: MIND_MAP_MODEL,
       messages: [
-        { role: 'system', content: prompts.mindMapSystem },
-        { role: 'user', content: prompts.mindMapUser(payload) },
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: `${userPrompt}\n\n${depthRule}`,
+        },
       ],
-      temperature: 0.2,
-      max_tokens: 2600,
+      temperature: 0.35,
+      max_tokens: 6000,
       stream: false,
     }),
   });
@@ -223,6 +235,21 @@ export function isMindMapData(value: unknown): value is MindMapData {
   return Boolean(normalizeMindMapData(value));
 }
 
+function getMindMapDepth(data: MindMapData): number {
+  const walk = (node: MindMapNode, depth: number): number => {
+    const children = Array.isArray(node.children) ? node.children : [];
+    if (children.length === 0) {
+      return depth;
+    }
+    let maxDepth = depth;
+    for (const child of children) {
+      maxDepth = Math.max(maxDepth, walk(child, depth + 1));
+    }
+    return maxDepth;
+  };
+  return walk(data.root, 1);
+}
+
 export async function generateMindMapData(input: GenerateMindMapInput): Promise<GenerateMindMapResult> {
   const signalText = `${input.title || ''}\n${input.summary || ''}\n${input.highlights || ''}`.trim();
   if (!signalText) {
@@ -232,27 +259,47 @@ export async function generateMindMapData(input: GenerateMindMapInput): Promise<
     };
   }
 
-  try {
-    const rawOutput = await requestMindMapFromModel(input);
-    const jsonText = extractJsonObject(rawOutput);
-    const parsed = JSON.parse(jsonText);
-    const normalized = normalizeMindMapData(parsed);
-    if (!normalized) {
-      return {
-        success: false,
-        rawOutput,
-        error: 'Model output is not a valid mind map tree',
-      };
+  let bestCandidate: { data: MindMapData; rawOutput: string; depth: number } | null = null;
+  let lastError = '';
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const rawOutput = await requestMindMapFromModel(input);
+      const jsonText = extractJsonObject(rawOutput);
+      const parsed = JSON.parse(jsonText);
+      const normalized = normalizeMindMapData(parsed);
+      if (!normalized) {
+        lastError = 'Model output is not a valid mind map tree';
+        continue;
+      }
+
+      const depth = getMindMapDepth(normalized);
+      if (!bestCandidate || depth > bestCandidate.depth) {
+        bestCandidate = { data: normalized, rawOutput, depth };
+      }
+      if (depth >= TARGET_MIN_DEPTH) {
+        return {
+          success: true,
+          data: normalized,
+          rawOutput,
+        };
+      }
+      lastError = `Mind map depth ${depth} is shallower than target ${TARGET_MIN_DEPTH}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
     }
+  }
+
+  if (bestCandidate) {
     return {
       success: true,
-      data: normalized,
-      rawOutput,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
+      data: bestCandidate.data,
+      rawOutput: bestCandidate.rawOutput,
     };
   }
+
+  return {
+    success: false,
+    error: lastError || 'Failed to generate mind map',
+  };
 }

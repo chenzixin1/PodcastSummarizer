@@ -1,197 +1,250 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
-import {
-  Background,
-  Controls,
-  MarkerType,
-  MiniMap,
-  Position,
-  ReactFlow,
-  ReactFlowProvider,
-  useReactFlow,
-  type Edge,
-  type Node,
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
-import type { MindMapData, MindMapNode } from '../lib/mindMap';
+import { MindMap } from '@ant-design/graphs';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MindMapData } from '../lib/mindMap';
+import { buildAntvMindMapData, estimateMindMapNodeSize } from '../lib/mindMapAntv';
 
 interface MindMapCanvasProps {
   data: MindMapData;
   themeMode: 'light' | 'dark';
 }
 
-interface GraphBuildOutput {
-  nodes: Node[];
-  edges: Edge[];
+interface GraphLike {
+  fitView?: () => void;
 }
 
-const HORIZONTAL_GAP = 280;
-const VERTICAL_GAP = 170;
+function readNodeLabel(node: unknown): string {
+  if (!node || typeof node !== 'object') {
+    return '';
+  }
 
-function buildMindMapGraph(data: MindMapData, themeMode: 'light' | 'dark'): GraphBuildOutput {
-  let nodeCounter = 0;
-  const descriptors: Array<{
-    id: string;
-    label: string;
-    depth: number;
-    parentId: string | null;
-  }> = [];
-
-  const walk = (node: MindMapNode, depth: number, parentId: string | null) => {
-    const id = `mind-node-${nodeCounter++}`;
-    descriptors.push({
-      id,
-      label: String(node.label || '').trim() || 'Untitled',
-      depth,
-      parentId,
-    });
-
-    const children = Array.isArray(node.children) ? node.children : [];
-    for (const child of children) {
-      walk(child, depth + 1, id);
-    }
+  const source = node as {
+    label?: unknown;
+    id?: unknown;
+    data?: {
+      label?: unknown;
+    };
   };
 
-  walk(data.root, 0, null);
-
-  const byDepth = new Map<number, string[]>();
-  for (const item of descriptors) {
-    const existing = byDepth.get(item.depth) || [];
-    existing.push(item.id);
-    byDepth.set(item.depth, existing);
+  if (typeof source.data?.label === 'string') {
+    return source.data.label;
   }
-
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const [depth, ids] of byDepth.entries()) {
-    const totalWidth = (ids.length - 1) * HORIZONTAL_GAP;
-    ids.forEach((id, index) => {
-      const x = index * HORIZONTAL_GAP - totalWidth / 2;
-      const y = depth * VERTICAL_GAP;
-      positions.set(id, { x, y });
-    });
+  if (typeof source.label === 'string') {
+    return source.label;
   }
-
-  const nodes: Node[] = descriptors.map((item) => {
-    const palette =
-      themeMode === 'dark'
-        ? {
-            bg: item.depth === 0 ? '#4b5a70' : '#1c2430',
-            bgAlt: item.depth === 0 ? '#5f718e' : '#202b39',
-            border: item.depth === 0 ? '#8fa2be' : '#3a4657',
-            text: '#f5f7fb',
-            shadow: '0 16px 26px -22px rgba(0,0,0,0.85)',
-          }
-        : {
-            bg: item.depth === 0 ? '#f5efe2' : '#fffdf8',
-            bgAlt: item.depth === 0 ? '#f1e7d3' : '#f8f1e4',
-            border: item.depth === 0 ? '#cdbb9f' : '#d9cdbb',
-            text: '#332a1f',
-            shadow: '0 16px 28px -22px rgba(78,63,41,0.55)',
-          };
-
-    const width = Math.max(150, Math.min(320, item.label.length * 14 + 42));
-
-    return {
-      id: item.id,
-      data: { label: item.label },
-      position: positions.get(item.id) || { x: 0, y: 0 },
-      sourcePosition: Position.Bottom,
-      targetPosition: Position.Top,
-      draggable: true,
-      style: {
-        width,
-        borderRadius: 16,
-        border: `1px solid ${palette.border}`,
-        background: `linear-gradient(145deg, ${palette.bg} 0%, ${palette.bgAlt} 100%)`,
-        color: palette.text,
-        boxShadow: palette.shadow,
-        fontSize: 14,
-        fontWeight: item.depth === 0 ? 700 : 600,
-        lineHeight: 1.5,
-        padding: '10px 12px',
-        textAlign: 'center',
-      },
-    };
-  });
-
-  const edges: Edge[] = descriptors
-    .filter((item) => Boolean(item.parentId))
-    .map((item) => ({
-      id: `mind-edge-${item.parentId}-${item.id}`,
-      source: item.parentId as string,
-      target: item.id,
-      type: 'smoothstep',
-      animated: true,
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        width: 20,
-        height: 20,
-      },
-      style: {
-        strokeWidth: 1.8,
-        stroke: themeMode === 'dark' ? '#8194b0' : '#7ea08f',
-      },
-    }));
-
-  return { nodes, edges };
+  if (typeof source.id === 'string') {
+    return source.id;
+  }
+  return '';
 }
 
-function MindMapFlow({ nodes, edges, themeMode }: { nodes: Node[]; edges: Edge[]; themeMode: 'light' | 'dark' }) {
-  const { fitView } = useReactFlow();
+function FitViewIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M4 9V4H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M15 4H20V9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M20 15V20H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M9 20H4V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M8 8L16 16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M16 8L8 16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      fitView({ padding: 0.2, duration: 700 });
-    }, 20);
-    return () => clearTimeout(timer);
-  }, [edges, fitView, nodes]);
+function FullscreenIcon({ exit }: { exit: boolean }) {
+  if (exit) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path d="M9 9V4H4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M15 9V4H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M9 15V20H4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M15 15V20H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      fitView
-      minZoom={0.35}
-      maxZoom={1.8}
-      defaultEdgeOptions={{ type: 'smoothstep' }}
-      panOnScroll
-      zoomOnScroll
-      proOptions={{ hideAttribution: true }}
-    >
-      <Background
-        gap={20}
-        size={1.1}
-        color={themeMode === 'dark' ? 'rgba(140,160,190,0.22)' : 'rgba(114,143,130,0.22)'}
-      />
-      <MiniMap
-        pannable
-        zoomable
-        style={{
-          background: themeMode === 'dark' ? 'rgba(17,24,34,0.95)' : 'rgba(255,252,247,0.95)',
-          border: `1px solid ${themeMode === 'dark' ? '#3a4657' : '#d8ccb8'}`,
-        }}
-        maskColor={themeMode === 'dark' ? 'rgba(14,20,28,0.62)' : 'rgba(250,245,236,0.62)'}
-      />
-      <Controls
-        showInteractive={false}
-        style={{
-          border: `1px solid ${themeMode === 'dark' ? '#3a4657' : '#d8ccb8'}`,
-          background: themeMode === 'dark' ? '#1a2330' : '#fffaf2',
-        }}
-      />
-    </ReactFlow>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M4 9V4H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M20 9V4H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M4 15V20H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M20 15V20H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
   );
 }
 
 export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
-  const graph = useMemo(() => buildMindMapGraph(data, themeMode), [data, themeMode]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const graphRef = useRef<GraphLike | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const antvData = useMemo(() => buildAntvMindMapData(data), [data]);
+
+  const fitView = useCallback(() => {
+    try {
+      graphRef.current?.fitView?.();
+    } catch (error) {
+      console.error('[MindMap] fitView failed:', error);
+    }
+  }, []);
+
+  const handleGraphReady = useCallback(
+    (graph: unknown) => {
+      graphRef.current = (graph as GraphLike) || null;
+      setTimeout(() => {
+        fitView();
+      }, 32);
+    },
+    [fitView]
+  );
+
+  const toggleFullscreen = useCallback(async () => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    try {
+      if (document.fullscreenElement === container) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+      await container.requestFullscreen();
+    } catch (error) {
+      console.error('[MindMap] Fullscreen toggle failed:', error);
+    }
+  }, []);
+
+  const transforms = useCallback((prevTransforms: unknown) => {
+    const prev = Array.isArray(prevTransforms) ? prevTransforms : [];
+    let collapseConfigured = false;
+
+    const nextTransforms = prev.map((transform) => {
+      if (!transform || typeof transform !== 'object') {
+        return transform;
+      }
+
+      const candidate = transform as { key?: unknown };
+      if (candidate.key !== 'collapse-expand-react-node') {
+        return transform;
+      }
+
+      collapseConfigured = true;
+      return {
+        ...(transform as Record<string, unknown>),
+        type: 'collapse-expand-react-node',
+        key: 'collapse-expand-react-node',
+        enable: true,
+        trigger: 'node',
+        direction: 'out',
+        refreshLayout: true,
+      };
+    });
+
+    if (!collapseConfigured) {
+      nextTransforms.push({
+        type: 'collapse-expand-react-node',
+        key: 'collapse-expand-react-node',
+        enable: true,
+        trigger: 'node',
+        direction: 'out',
+        refreshLayout: true,
+      });
+    }
+
+    return nextTransforms;
+  }, []);
+
+  const layout = useMemo(
+    () => ({
+      type: 'mindmap' as const,
+      getHGap: () => 96,
+      getVGap: () => 40,
+      getWidth: (node: unknown) => estimateMindMapNodeSize(readNodeLabel(node)).width,
+      getHeight: (node: unknown) => estimateMindMapNodeSize(readNodeLabel(node)).height,
+    }),
+    []
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fitView();
+    }, 20);
+    return () => clearTimeout(timer);
+  }, [antvData, fitView, themeMode]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const onFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+      setTimeout(() => {
+        fitView();
+      }, 40);
+    };
+
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    onFullscreenChange();
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, [fitView]);
 
   return (
-    <div className="h-full w-full mindmap-canvas rounded-2xl overflow-hidden">
-      <ReactFlowProvider>
-        <MindMapFlow nodes={graph.nodes} edges={graph.edges} themeMode={themeMode} />
-      </ReactFlowProvider>
+    <div
+      ref={containerRef}
+      className={`h-full w-full mindmap-canvas mindmap-antv rounded-2xl overflow-hidden ${themeMode === 'dark' ? 'mindmap-antv-dark' : 'mindmap-antv-light'}`}
+    >
+      <div className="mindmap-toolbar" role="toolbar" aria-label="Mind map controls">
+        <button
+          type="button"
+          onClick={fitView}
+          aria-label="Fit View"
+          className={`mindmap-toolbar-btn mindmap-fullscreen-btn ${themeMode === 'dark' ? 'mindmap-fullscreen-btn-dark' : 'mindmap-fullscreen-btn-light'}`}
+        >
+          <FitViewIcon />
+          <span>Fit View</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void toggleFullscreen()}
+          aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+          className={`mindmap-toolbar-btn mindmap-fullscreen-btn ${themeMode === 'dark' ? 'mindmap-fullscreen-btn-dark' : 'mindmap-fullscreen-btn-light'}`}
+        >
+          <FullscreenIcon exit={isFullscreen} />
+          <span>{isFullscreen ? 'Exit Full Screen' : 'Full Screen'}</span>
+        </button>
+      </div>
+
+      <div className="mindmap-antv-surface">
+        <MindMap
+          data={antvData}
+          type="boxed"
+          direction="right"
+          labelField="label"
+          nodeMinWidth={280}
+          nodeMaxWidth={700}
+          transforms={transforms}
+          layout={layout as any}
+          animation={{ duration: 420 }}
+          containerStyle={{ width: '100%', height: '100%' }}
+          onInit={handleGraphReady}
+          onReady={handleGraphReady}
+        />
+      </div>
     </div>
   );
 }

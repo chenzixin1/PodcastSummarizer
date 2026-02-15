@@ -25,19 +25,26 @@ export interface ProcessStreamUpdate {
   isFinalChunk?: boolean; // To indicate the last chunk of a task
   finalResults?: { // Only with all_done type
     summary?: string;
+    summaryZh?: string;
+    summaryEn?: string;
+    briefSummary?: string;
     translation?: string;
     highlights?: string;
     mindMapJson?: MindMapData | null;
+    mindMapJsonZh?: MindMapData | null;
+    mindMapJsonEn?: MindMapData | null;
   };
   processingErrors?: string[]; // Add this for all_done or error types
 }
+
+type ModelTaskType = 'summary' | 'translation' | 'highlights' | 'brief_summary';
 
 
 
 // 添加计数器用于记录API调用次数
 const openRouterCallCounter = {
   count: 0,
-  calls: [] as { model: string, task: string, timestamp: number }[]
+  calls: [] as { model: string, task: ModelTaskType, timestamp: number }[]
 };
 
 // 指定模型 - 使用环境变量中的模型
@@ -229,7 +236,7 @@ async function callModelWithRetry(
   maxTokens: number = 1500, 
   temperature: number = 0.7,
   onTokenStream?: (token: string) => Promise<void>,
-  taskType: 'summary' | 'translation' | 'highlights' = 'summary' // 添加任务类型参数
+  taskType: ModelTaskType = 'summary' // 添加任务类型参数
 ): Promise<string> {
   let lastError = null;
   
@@ -512,6 +519,165 @@ function calculateTextStats(text: string): {
     wordCount,
     characterCount,
   };
+}
+
+interface ParsedSummaryResult {
+  summaryLegacy: string;
+  summaryZh: string;
+  summaryEn: string;
+}
+
+const SUMMARY_EN_MARKER = '<<<SUMMARY_EN>>>';
+const SUMMARY_ZH_MARKER = '<<<SUMMARY_ZH>>>';
+
+function normalizeSummaryMarkdown(input: string): string {
+  return String(input || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/^[ \t]*•[ \t]+/gm, '- ')
+    .trim();
+}
+
+function splitBilingualSummary(rawSummary: string): ParsedSummaryResult {
+  const normalized = normalizeSummaryMarkdown(rawSummary);
+  if (!normalized) {
+    return {
+      summaryLegacy: '',
+      summaryZh: '',
+      summaryEn: '',
+    };
+  }
+
+  let summaryEn = '';
+  let summaryZh = '';
+
+  const markerEnIndex = normalized.indexOf(SUMMARY_EN_MARKER);
+  const markerZhIndex = normalized.indexOf(SUMMARY_ZH_MARKER);
+  if (markerEnIndex >= 0 && markerZhIndex > markerEnIndex) {
+    summaryEn = normalizeSummaryMarkdown(
+      normalized.slice(markerEnIndex + SUMMARY_EN_MARKER.length, markerZhIndex)
+    );
+    summaryZh = normalizeSummaryMarkdown(
+      normalized.slice(markerZhIndex + SUMMARY_ZH_MARKER.length)
+    );
+  } else {
+    const englishHeaderIndex = normalized.search(/#\s*English Summary/i);
+    const chineseHeaderIndex = normalized.search(/#\s*中文总结/i);
+    if (englishHeaderIndex >= 0 && chineseHeaderIndex > englishHeaderIndex) {
+      summaryEn = normalizeSummaryMarkdown(normalized.slice(englishHeaderIndex, chineseHeaderIndex));
+      summaryZh = normalizeSummaryMarkdown(normalized.slice(chineseHeaderIndex));
+    } else if (chineseHeaderIndex >= 0) {
+      summaryZh = normalizeSummaryMarkdown(normalized.slice(chineseHeaderIndex));
+      summaryEn = normalizeSummaryMarkdown(normalized.slice(0, chineseHeaderIndex));
+    } else {
+      summaryZh = normalized;
+    }
+  }
+
+  const fallbackEn = summaryEn || normalizeSummaryMarkdown(normalized);
+  const fallbackZh = summaryZh || normalizeSummaryMarkdown(normalized);
+  return {
+    summaryLegacy: fallbackZh,
+    summaryZh: fallbackZh,
+    summaryEn: fallbackEn,
+  };
+}
+
+const BRIEF_SUMMARY_MIN_CHARS = 100;
+const BRIEF_SUMMARY_MAX_CHARS = 220;
+
+function toPlainPreviewText(input: string): string {
+  return input
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/[*_~>#]/g, ' ')
+    .replace(/\r/g, ' ')
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function trimToNaturalBoundary(input: string, maxChars: number): string {
+  const normalized = input.trim();
+  if (!normalized || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const candidate = normalized.slice(0, maxChars);
+  const punctuation = ['。', '！', '？', '.', '!', '?', '；', ';', '，', ','];
+  let best = -1;
+  for (const token of punctuation) {
+    const index = candidate.lastIndexOf(token);
+    if (index > best) {
+      best = index;
+    }
+  }
+  if (best >= Math.floor(maxChars * 0.6)) {
+    return candidate.slice(0, best + 1).trim();
+  }
+  return candidate.trim();
+}
+
+function buildFallbackBriefSummary(summaryZh: string, highlights: string): string {
+  const source = `${String(summaryZh || '')}\n${highlights || ''}`.trim();
+  if (!source) {
+    return '';
+  }
+  const plain = toPlainPreviewText(source);
+  return trimToNaturalBoundary(plain, BRIEF_SUMMARY_MAX_CHARS);
+}
+
+function finalizeBriefSummary(rawText: string, fallback: string): string {
+  const normalized = trimToNaturalBoundary(
+    toPlainPreviewText(rawText).replace(/^["“”']+|["“”']+$/g, '').trim(),
+    BRIEF_SUMMARY_MAX_CHARS
+  );
+  if (normalized.length >= BRIEF_SUMMARY_MIN_CHARS) {
+    return normalized;
+  }
+  if (!fallback) {
+    return normalized;
+  }
+  if (!normalized) {
+    return fallback;
+  }
+  return trimToNaturalBoundary(`${normalized} ${fallback}`, BRIEF_SUMMARY_MAX_CHARS);
+}
+
+async function generateBriefSummary(input: {
+  title?: string | null;
+  sourceReference?: string | null;
+  summaryZh: string;
+  highlights: string;
+}): Promise<string> {
+  const fallback = buildFallbackBriefSummary(input.summaryZh, input.highlights);
+  if (!(input.summaryZh || '').trim() && !(input.highlights || '').trim()) {
+    return '';
+  }
+
+  try {
+    const raw = await callModelWithRetry(
+      prompts.briefSummarySystem,
+      prompts.briefSummaryUser({
+        title: input.title ?? null,
+        sourceReference: input.sourceReference ?? null,
+        summary: input.summaryZh,
+        highlights: input.highlights,
+      }),
+      Math.min(400, MAX_TOKENS.summary),
+      0.2,
+      undefined,
+      'brief_summary'
+    );
+    return finalizeBriefSummary(raw, fallback);
+  } catch (error) {
+    console.warn('短摘要生成失败，使用回退摘要:', error);
+    return fallback;
+  }
 }
 
 // 修改generateSummary函数以支持模拟模式
@@ -920,12 +1086,18 @@ export async function POST(request: NextRequest) {
 
         const persistPartialResult = async (partial: {
           summary?: string;
+          summaryZh?: string;
+          summaryEn?: string;
+          briefSummary?: string;
           translation?: string;
           highlights?: string;
         }) => {
           const partialResult = await saveAnalysisPartialResults({
             podcastId: id,
             summary: partial.summary ?? null,
+            summaryZh: partial.summaryZh ?? null,
+            summaryEn: partial.summaryEn ?? null,
+            briefSummary: partial.briefSummary ?? null,
             translation: partial.translation ?? null,
             highlights: partial.highlights ?? null,
           });
@@ -955,16 +1127,21 @@ export async function POST(request: NextRequest) {
         // 发送状态更新
         await sendUpdate({ type: 'status', message: 'Content loaded. Starting analysis pipeline...' });
 
-        const summaryTask = async () => {
-          const summaryValue = await generateSummary(
+        const summaryTask = async (): Promise<ParsedSummaryResult> => {
+          const summaryRaw = await generateSummary(
             plainText,
             sendUpdate,
             async (partialSummary) => {
               await persistPartialResult({ summary: partialSummary });
             }
           );
-          await persistPartialResult({ summary: summaryValue });
-          return summaryValue;
+          const parsedSummary = splitBilingualSummary(summaryRaw);
+          await persistPartialResult({
+            summary: parsedSummary.summaryLegacy,
+            summaryZh: parsedSummary.summaryZh,
+            summaryEn: parsedSummary.summaryEn,
+          });
+          return parsedSummary;
         };
 
         const translationTask = async () => {
@@ -991,17 +1168,23 @@ export async function POST(request: NextRequest) {
           return highlightsValue;
         };
 
-        let summary: string;
+        let summary = '';
+        let summaryZh = '';
+        let summaryEn = '';
+        let briefSummary = '';
         let translation: string;
         let highlights: string;
         let mindMapJson: MindMapData | null = null;
+        let mindMapJsonZh: MindMapData | null = null;
+        let mindMapJsonEn: MindMapData | null = null;
+        let summaryResult: ParsedSummaryResult;
 
         if (ENABLE_PARALLEL_TASKS) {
           await sendUpdate({
             type: 'status',
             message: `Running summary, translation, and highlights in parallel. Model: ${MODEL}`
           });
-          [summary, translation, highlights] = await Promise.all([
+          [summaryResult, translation, highlights] = await Promise.all([
             summaryTask(),
             translationTask(),
             highlightsTask(),
@@ -1011,31 +1194,72 @@ export async function POST(request: NextRequest) {
             type: 'status',
             message: `Running summary, translation, and highlights sequentially. Model: ${MODEL}`
           });
-          summary = await summaryTask();
+          summaryResult = await summaryTask();
           translation = await translationTask();
           highlights = await highlightsTask();
         }
+        summary = summaryResult.summaryLegacy;
+        summaryZh = summaryResult.summaryZh;
+        summaryEn = summaryResult.summaryEn;
+
+        await sendUpdate({
+          type: 'status',
+          message: 'Generating brief list summary...'
+        });
+
+        briefSummary = await generateBriefSummary({
+          title: podcast.title ?? null,
+          sourceReference: podcast.sourceReference ?? null,
+          summaryZh,
+          highlights,
+        });
+        await persistPartialResult({ briefSummary });
+        await sendUpdate({
+          type: 'status',
+          message: 'Brief list summary generated.'
+        });
 
         await sendUpdate({
           type: 'status',
           message: 'Generating mind map...'
         });
 
-        const mindMapResult = await generateMindMapData({
+        const mindMapZhResult = await generateMindMapData({
           title: podcast.title ?? null,
           sourceReference: podcast.sourceReference ?? null,
-          summary,
+          summary: summaryZh || summary,
           highlights,
+          language: 'zh',
+        });
+        const mindMapEnResult = await generateMindMapData({
+          title: podcast.title ?? null,
+          sourceReference: podcast.sourceReference ?? null,
+          summary: summaryEn || summaryZh || summary,
+          highlights: translation || highlights,
+          language: 'en',
         });
 
-        if (mindMapResult.success && mindMapResult.data) {
-          mindMapJson = mindMapResult.data;
+        if (mindMapZhResult.success && mindMapZhResult.data) {
+          mindMapJsonZh = mindMapZhResult.data;
+          mindMapJson = mindMapZhResult.data;
+        }
+        if (mindMapEnResult.success && mindMapEnResult.data) {
+          mindMapJsonEn = mindMapEnResult.data;
+          if (!mindMapJson) {
+            mindMapJson = mindMapEnResult.data;
+          }
+        }
+
+        if (mindMapJsonZh || mindMapJsonEn) {
           await sendUpdate({
             type: 'status',
             message: 'Mind map generated.'
           });
         } else {
-          console.warn('脑图生成失败，继续保存主分析结果:', mindMapResult.error);
+          console.warn('脑图生成失败，继续保存主分析结果:', {
+            zhError: mindMapZhResult.error,
+            enError: mindMapEnResult.error,
+          });
           await sendUpdate({
             type: 'status',
             message: 'Mind map generation skipped.'
@@ -1048,9 +1272,14 @@ export async function POST(request: NextRequest) {
           await saveAnalysisResults({
             podcastId: id,
             summary,
+            summaryZh,
+            summaryEn,
+            briefSummary,
             translation,
             highlights,
             mindMapJson,
+            mindMapJsonZh,
+            mindMapJsonEn,
             tokenCount: textStats.tokenCount,
             wordCount: textStats.wordCount,
             characterCount: textStats.characterCount,
@@ -1068,7 +1297,7 @@ export async function POST(request: NextRequest) {
 
         const qaIndexResult = await rebuildQaContextChunksForPodcast({
           podcastId: id,
-          summary,
+          summary: summaryZh || summary,
           translation,
           highlights,
           transcriptSrt: cleanSrtContent,
@@ -1084,9 +1313,14 @@ export async function POST(request: NextRequest) {
           type: 'all_done',
           finalResults: {
             summary,
+            summaryZh,
+            summaryEn,
+            briefSummary,
             translation,
             highlights,
             mindMapJson,
+            mindMapJsonZh,
+            mindMapJsonEn,
           }
         });
         

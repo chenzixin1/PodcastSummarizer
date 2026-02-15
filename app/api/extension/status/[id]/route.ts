@@ -17,6 +17,8 @@ export const runtime = 'nodejs';
 
 interface AnalysisData {
   summary?: string | null;
+  summaryZh?: string | null;
+  summaryEn?: string | null;
   translation?: string | null;
   highlights?: string | null;
 }
@@ -28,14 +30,38 @@ interface ProcessingJobData {
   lastError?: string | null;
 }
 
+function extractLegacySummary(summary: string): { zh: string; en: string } {
+  const normalized = String(summary || '').trim();
+  if (!normalized) {
+    return { zh: '', en: '' };
+  }
+
+  const enIndex = normalized.search(/#\s*English Summary/i);
+  const zhIndex = normalized.search(/#\s*中文总结/i);
+  if (enIndex >= 0 && zhIndex > enIndex) {
+    return {
+      en: normalized.slice(enIndex, zhIndex).trim(),
+      zh: normalized.slice(zhIndex).trim(),
+    };
+  }
+  if (zhIndex >= 0) {
+    return {
+      en: normalized.slice(0, zhIndex).trim(),
+      zh: normalized.slice(zhIndex).trim(),
+    };
+  }
+  return { zh: normalized, en: '' };
+}
+
 function hasCompleteAnalysis(analysis: AnalysisData | null, processingStatus: string | null): boolean {
   if (!analysis) {
     return false;
   }
+  const legacySummary = extractLegacySummary(String(analysis.summary || ''));
+  const summaryZh = (analysis.summaryZh || legacySummary.zh || analysis.summary || '').trim();
 
   const hasAllFields = Boolean(
-    (analysis.summary || '').trim() &&
-      (analysis.translation || '').trim() &&
+    summaryZh &&
       (analysis.highlights || '').trim(),
   );
 

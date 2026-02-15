@@ -9,6 +9,7 @@ import { extractPodcastTags, normalizeDbTags } from '../../lib/podcastTags';
 interface FileRecord {
   id: string;
   name: string;
+  briefSummary: string | null;
   uploadDate: string;
   processed: boolean;
   processedAt?: string;
@@ -39,6 +40,24 @@ function inferDurationSec(wordCount: number | null | undefined): number | null {
     return null;
   }
   return Math.max(60, Math.round((wordCount / 155) * 60));
+}
+
+function normalizeBriefSummary(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value
+    .replace(/#\s*English Summary/gi, ' ')
+    .replace(/#\s*中文总结/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/[*_~>#]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized ? normalized : null;
 }
 
 export default function PublicPodcastSummaryPage() {
@@ -72,6 +91,7 @@ export default function PublicPodcastSummaryPage() {
           return {
             id: item.id,
             name: resolvedName,
+            briefSummary: normalizeBriefSummary(item.briefSummary),
             uploadDate: item.createdAt,
             processed: item.isProcessed,
             processedAt: item.processedAt,
@@ -144,7 +164,7 @@ export default function PublicPodcastSummaryPage() {
   return (
     <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
       <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
-        <div className="container mx-auto px-4 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
           {/* Breadcrumb Navigation */}
           <nav className="app-breadcrumb-nav">
             <Link href="/" className="app-breadcrumb-link">
@@ -252,6 +272,9 @@ export default function PublicPodcastSummaryPage() {
                           {file.name}
                         </h3>
                       </Link>
+                      <p className="mb-2.5 text-sm leading-6 text-[var(--text-secondary)] whitespace-pre-wrap break-words">
+                        {file.briefSummary || (file.processed ? '暂无摘要。' : '摘要生成中...')}
+                      </p>
                       <div className="flex gap-3 text-xs text-[var(--text-muted)] flex-wrap">
                         <span>Duration: {formatDuration(file.durationSec)}</span>
                         {file.isPublic && (

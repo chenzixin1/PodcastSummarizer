@@ -403,32 +403,104 @@ body {
   color: #2f6656;
 }
 
-.mindmap-canvas .react-flow {
+.mindmap-antv {
+  position: relative;
   background:
     radial-gradient(44rem 28rem at 8% 0%, rgba(198, 176, 136, 0.14), transparent 65%),
     radial-gradient(44rem 28rem at 100% 0%, rgba(126, 158, 144, 0.14), transparent 65%),
     #fbf8f1;
 }
 
-.mindmap-canvas .react-flow__controls-button {
-  color: var(--text-main);
+.mindmap-antv-surface,
+.mindmap-antv-surface > div {
+  width: 100%;
+  height: 100%;
 }
 
-.mindmap-canvas .react-flow__edge path {
-  transition: stroke 0.2s ease;
+.mindmap-antv .g6-component-text-node {
+  white-space: normal !important;
+  word-break: break-word !important;
 }
 
-.dashboard-shell[data-theme='dark'] .mindmap-canvas .react-flow {
+.mindmap-toolbar {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mindmap-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mindmap-fullscreen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 10px;
+  border: 1px solid;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  backdrop-filter: blur(6px);
+  transition: transform 0.16s ease, opacity 0.16s ease, background-color 0.16s ease;
+}
+
+.mindmap-fullscreen-btn:hover {
+  transform: translateY(-1px);
+}
+
+.mindmap-fullscreen-btn:active {
+  transform: translateY(0);
+}
+
+.mindmap-fullscreen-btn-light {
+  color: #2f2a22;
+  border-color: #cdbb9f;
+  background: rgba(255, 249, 239, 0.92);
+}
+
+.mindmap-fullscreen-btn-light:hover {
+  background: rgba(251, 241, 222, 0.98);
+}
+
+.mindmap-fullscreen-btn-dark {
+  color: #f4f7fc;
+  border-color: #4b5a70;
+  background: rgba(26, 35, 48, 0.9);
+}
+
+.mindmap-fullscreen-btn-dark:hover {
+  background: rgba(36, 49, 66, 0.95);
+}
+
+.mindmap-canvas:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
+.mindmap-canvas:fullscreen .mindmap-antv-surface {
+  border-radius: 0;
+}
+
+.mindmap-canvas:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
+.dashboard-shell[data-theme='dark'] .mindmap-antv {
   background:
     radial-gradient(46rem 30rem at 8% 0%, rgba(104, 123, 151, 0.18), transparent 65%),
     radial-gradient(46rem 30rem at 100% 0%, rgba(82, 99, 123, 0.2), transparent 65%),
     #121922;
-}
-
-.dashboard-shell[data-theme='dark'] .mindmap-canvas .react-flow__controls-button {
-  color: #f4f6fa;
-  background: #1a2330;
-  border-color: #3a4657;
 }
 
 @media (max-width: 640px) {
