@@ -187,7 +187,7 @@ export default function PublicPodcastSummaryPage() {
               <span>PodSum.cc</span>
             </Link>
             <span className="app-breadcrumb-divider">/</span>
-            <span className="app-breadcrumb-current">Public Podcast Summary</span>
+            <span className="app-breadcrumb-current max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl">Public Podcast Summary</span>
           </nav>
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end w-full md:w-auto">
             <Link href="/my" className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">

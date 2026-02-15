@@ -169,7 +169,7 @@ export default function MyPage() {
               <span>PodSum.cc</span>
             </Link>
             <span className="app-breadcrumb-divider">/</span>
-            <span className="app-breadcrumb-current">My Podcast Summaries</span>
+            <span className="app-breadcrumb-current max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl">My Summaries</span>
           </nav>
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end w-full md:w-auto">
             <Link
