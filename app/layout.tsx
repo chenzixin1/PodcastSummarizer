@@ -35,9 +35,15 @@ export default function RootLayout({
           </SessionWrapper>
         </div>
         <footer className="border-t border-[rgba(128,112,86,0.22)] bg-[rgba(248,243,234,0.82)] px-4 py-3 text-center text-sm text-[#5f5547]">
-          <Link href="/about" className="font-medium text-[#2f6656] hover:text-[#255648] hover:underline underline-offset-4 transition-colors">
-            About
-          </Link>
+          <div className="inline-flex items-center gap-3">
+            <Link href="/about" className="font-medium text-[#2f6656] hover:text-[#255648] hover:underline underline-offset-4 transition-colors">
+              About
+            </Link>
+            <span className="text-[#8a7a64]">|</span>
+            <Link href="/chrome-extension" className="font-medium text-[#2f6656] hover:text-[#255648] hover:underline underline-offset-4 transition-colors">
+              Chrome Extension
+            </Link>
+          </div>
         </footer>
       </body>
     </html>
