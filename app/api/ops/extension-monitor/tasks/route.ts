@@ -20,7 +20,7 @@ function parsePositiveInt(input: string | null, fallback: number): number {
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
+    if (!session?.user?.id && !session?.user?.email) {
       return NextResponse.json(
         {
           success: false,

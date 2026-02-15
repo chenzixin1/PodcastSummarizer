@@ -199,10 +199,10 @@ export default function ExtensionMonitorPage() {
       return;
     }
 
-    if (session?.user?.id) {
+    if (status === 'authenticated') {
       fetchList();
     }
-  }, [session?.user?.id, status, router, fetchList]);
+  }, [status, router, fetchList]);
 
   useEffect(() => {
     if (!selectedTaskId) {
@@ -212,7 +212,7 @@ export default function ExtensionMonitorPage() {
   }, [selectedTaskId, fetchDetail]);
 
   useEffect(() => {
-    if (!autoRefresh || !session?.user?.id) {
+    if (!autoRefresh || status !== 'authenticated') {
       return;
     }
     const timer = setInterval(() => {
@@ -222,7 +222,7 @@ export default function ExtensionMonitorPage() {
       }
     }, 5000);
     return () => clearInterval(timer);
-  }, [autoRefresh, fetchDetail, fetchList, selectedTaskId, session?.user?.id]);
+  }, [autoRefresh, fetchDetail, fetchList, selectedTaskId, status]);
 
   const hasPrevPage = page > 1;
   const hasNextPage = page < totalPages;

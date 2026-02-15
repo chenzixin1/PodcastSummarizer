@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
 export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
+    if (!session?.user?.id && !session?.user?.email) {
       return NextResponse.json(
         {
           success: false,
