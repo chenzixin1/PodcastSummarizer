@@ -92,7 +92,7 @@ export async function ensureUserCreditsSchema(): Promise<void> {
     userCreditsSchemaPromise = (async () => {
       await sql`
         ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT ${DEFAULT_SRT_CREDITS}
+        ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 10
       `;
       userCreditsSchemaEnsured = true;
     })().catch((error) => {
@@ -385,7 +385,7 @@ export async function initDatabase(): Promise<DbResult> {
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         name TEXT NOT NULL,
-        credits INTEGER NOT NULL DEFAULT ${DEFAULT_SRT_CREDITS},
+        credits INTEGER NOT NULL DEFAULT 10,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `;
