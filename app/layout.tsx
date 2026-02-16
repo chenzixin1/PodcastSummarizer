@@ -34,15 +34,18 @@ export default function RootLayout({
             {children}
           </SessionWrapper>
         </div>
-        <footer className="border-t border-[rgba(128,112,86,0.22)] bg-[rgba(248,243,234,0.82)] px-4 py-3 text-center text-sm text-[#5f5547]">
-          <div className="inline-flex items-center gap-3">
-            <Link href="/about" className="font-medium text-[#2f6656] hover:text-[#255648] hover:underline underline-offset-4 transition-colors">
-              About
-            </Link>
-            <span className="text-[#8a7a64]">|</span>
-            <Link href="/chrome-extension" className="font-medium text-[#2f6656] hover:text-[#255648] hover:underline underline-offset-4 transition-colors">
-              Chrome Extension
-            </Link>
+        <footer className="border-t border-[rgba(132,151,182,0.22)] bg-[linear-gradient(180deg,#091224_0%,#0b182d_100%)] px-4 py-4 text-sm text-[#aeb9cb]">
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[#9eabc0]">PodSum.cc 2026, All rights reserved.</p>
+            <div className="flex items-center gap-3 sm:justify-end">
+              <Link href="/about" className="font-medium text-[#d8e2f1] hover:text-white hover:underline underline-offset-4 transition-colors">
+                About
+              </Link>
+              <span className="text-[#73839c]">|</span>
+              <Link href="/chrome-extension" className="font-medium text-[#d8e2f1] hover:text-white hover:underline underline-offset-4 transition-colors">
+                Chrome Extension
+              </Link>
+            </div>
           </div>
         </footer>
       </body>
