@@ -2,6 +2,7 @@ import React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { useParams } from 'next/navigation';
 import DashboardPage from '../../app/dashboard/[id]/page';
+import { enforceLineBreaks } from '../../lib/fullTextFormatting';
 
 jest.mock('react-markdown', () => {
   return ({ children }: { children: React.ReactNode }) => <>{children}</>;
@@ -135,5 +136,25 @@ describe('Dashboard title source', () => {
     });
     expect(screen.getAllByText('Queued YouTube Title').length).toBeGreaterThan(0);
     expect(screen.queryByText(/Transcript Analysis:/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('Full text line-break normalization', () => {
+  test('splits plain timestamps into markdown paragraphs', () => {
+    const input = '00:00:02 First line. 00:00:09 Second line. 00:00:16 Third line.';
+    const output = enforceLineBreaks(input);
+
+    expect(output).toBe(
+      '**[00:00:02]** First line.\n\n**[00:00:09]** Second line.\n\n**[00:00:16]** Third line.',
+    );
+  });
+
+  test('keeps bracketed timestamps and removes malformed bold spacing', () => {
+    const input = '** [00:00:02]** Alpha.\n[00:00:09] Beta.\n**00:00:16** Gamma.';
+    const output = enforceLineBreaks(input);
+
+    expect(output).toBe(
+      '**[00:00:02]** Alpha.\n\n**[00:00:09]** Beta.\n\n**[00:00:16]** Gamma.',
+    );
   });
 });

@@ -52,10 +52,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       ? ((body.sourceReference || '').trim().slice(0, 2048) || null)
       : undefined;
 
-    const result = await updatePodcastMetadata(id, {
-      isPublic: hasIsPublicUpdate ? body.isPublic : undefined,
-      sourceReference: normalizedSourceReference,
-    });
+    const updates: PatchBody = {};
+    if (hasIsPublicUpdate) {
+      updates.isPublic = body.isPublic;
+    }
+    if (hasSourceReferenceUpdate) {
+      updates.sourceReference = normalizedSourceReference ?? null;
+    }
+
+    const result = await updatePodcastMetadata(id, updates);
 
     if (!result.success) {
       return NextResponse.json({ success: false, error: result.error }, { status: 500 });

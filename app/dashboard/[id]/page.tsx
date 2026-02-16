@@ -15,6 +15,7 @@ import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
 import ThemeModeSwitch from '../../../components/ThemeModeSwitch';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 import { extractPodcastTags } from '../../../lib/podcastTags';
+import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
 
 // VERCEL DEBUG: Add version number to help track deployments
 const APP_VERSION = '1.0.5'; // Increment version for tracking
@@ -69,24 +70,6 @@ const TASK_LABELS: Record<ProcessingTask, string> = {
   summary: 'Summary',
   translation: 'Translation',
   highlights: 'Highlights',
-};
-
-// Normalize full-text notes by forcing each timestamp entry into its own markdown paragraph.
-// Supports patterns like "** [00:00:00]**" as well as plain "[00:00:00]".
-const enforceLineBreaks = (text: string) => {
-  const normalized = String(text || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\u00A0/g, ' ');
-
-  const timestampRegex = /(\*\*\s*)?(\[[0-9]{2}:[0-9]{2}:[0-9]{1,3}\])(\*\*)?/g;
-  const result = normalized.replace(timestampRegex, (_match, boldStart, timestamp, boldEnd) => {
-    return `\n\n${boldStart || ''}${timestamp}${boldEnd || ''}`;
-  });
-
-  return result
-    .replace(/^\n+/, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 };
 
 const normalizeMarkdownOutput = (text: string) => {

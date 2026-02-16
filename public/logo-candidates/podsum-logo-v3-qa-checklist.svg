@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64" fill="none" aria-label="PodSum logo candidate v3">
+  <defs>
+    <linearGradient id="g-v3" x1="10" y1="10" x2="54" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2F6656"/>
+      <stop offset="1" stop-color="#3F7A68"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="10" y="14" width="24" height="17" rx="7" fill="#3F7A68" fill-opacity="0.14"/>
+  <rect x="10" y="14" width="24" height="17" rx="7" stroke="url(#g-v3)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M19 31L17 37L23 32" stroke="url(#g-v3)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M15 21H27" stroke="url(#g-v3)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M15 26H24" stroke="url(#g-v3)" stroke-width="3" stroke-linecap="round"/>
+
+  <rect x="22" y="24" width="30" height="19" rx="6" fill="#3F7A68" fill-opacity="0.17"/>
+  <rect x="20" y="22" width="34" height="23" rx="8" stroke="url(#g-v3)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M34 45L31.5 52L39 46" stroke="url(#g-v3)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <path d="M27 29.5L29 31.5L32.5 28" stroke="url(#g-v3)" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M35 30H46" stroke="url(#g-v3)" stroke-width="2.9" stroke-linecap="round"/>
+
+  <path d="M27 35.5L29 37.5L32.5 34" stroke="url(#g-v3)" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M35 36H46" stroke="url(#g-v3)" stroke-width="2.9" stroke-linecap="round"/>
+
+  <path d="M27 41.5L29 43.5L32.5 40" stroke="url(#g-v3)" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M35 42H44" stroke="url(#g-v3)" stroke-width="2.9" stroke-linecap="round"/>
+</svg>

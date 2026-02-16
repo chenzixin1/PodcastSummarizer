@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST='{"app/dashboard/[id]/page.tsx -> ../../../components/MindMapCanvas":{"id":4890,"files":["static/css/599369d853c61df7.css","static/chunks/1a258343.bc9814744b27eece.js","static/chunks/7697.5ca2818dbe0ccf68.js","static/chunks/4890.eb61097c03f7a012.js"]}}';

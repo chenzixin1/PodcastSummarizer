@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PodSum Logo Candidates</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f3eee3;
+      --card: #fffdf8;
+      --text: #2f2a22;
+      --muted: #6d5f4c;
+      --border: #ddd2bf;
+      --dark-bg: #0f1319;
+      --dark-card: #131922;
+      --dark-text: #f6f8fc;
+      --dark-muted: #a8b1be;
+      --dark-border: #2b3542;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      line-height: 1.45;
+    }
+
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .subtitle { margin: 0 0 20px; color: var(--muted); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .title { margin: 0 0 8px; font-size: 16px; font-weight: 700; }
+    .desc { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+
+    .sizes {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .sample {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      height: 86px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .sample.dark {
+      background: var(--dark-bg);
+      border-color: var(--dark-border);
+      color: var(--dark-muted);
+    }
+
+    .score {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .score td {
+      border-top: 1px solid var(--border);
+      padding: 6px 0;
+    }
+
+    .score td:last-child {
+      text-align: right;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body { background: var(--dark-bg); color: var(--dark-text); }
+      .subtitle { color: var(--dark-muted); }
+      .card { background: var(--dark-card); border-color: var(--dark-border); }
+      .sample { border-color: var(--dark-border); color: var(--dark-muted); }
+      .score td { border-top-color: var(--dark-border); }
+      .score td:last-child { color: var(--dark-muted); }
+    }
+  </style>
+</head>
+<body>
+  <h1>PodSum Logo Candidates</h1>
+  <p class="subtitle">Fixed dimensions for review: semantic accuracy, readability at 16px, brand consistency, recognizability.</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2 class="title">v1 - dialog bullets</h2>
+      <p class="desc">Chat bubble with three summary bullets and one emphasized check.</p>
+      <div class="sizes">
+        <div class="sample"><img src="./podsum-logo-v1-dialog-bullets.svg" width="16" height="16" alt="v1 16" />16px</div>
+        <div class="sample"><img src="./podsum-logo-v1-dialog-bullets.svg" width="22" height="22" alt="v1 22" />22px</div>
+        <div class="sample"><img src="./podsum-logo-v1-dialog-bullets.svg" width="28" height="28" alt="v1 28" />28px</div>
+        <div class="sample"><img src="./podsum-logo-v1-dialog-bullets.svg" width="64" height="64" alt="v1 64" />64px</div>
+      </div>
+      <div class="sizes">
+        <div class="sample dark"><img src="./podsum-logo-v1-dialog-bullets.svg" width="16" height="16" alt="v1 dark 16" />16px</div>
+        <div class="sample dark"><img src="./podsum-logo-v1-dialog-bullets.svg" width="22" height="22" alt="v1 dark 22" />22px</div>
+        <div class="sample dark"><img src="./podsum-logo-v1-dialog-bullets.svg" width="28" height="28" alt="v1 dark 28" />28px</div>
+        <div class="sample dark"><img src="./podsum-logo-v1-dialog-bullets.svg" width="64" height="64" alt="v1 dark 64" />64px</div>
+      </div>
+      <table class="score">
+        <tr><td>Semantic accuracy</td><td>pending</td></tr>
+        <tr><td>Readability at 16px</td><td>pending</td></tr>
+        <tr><td>Brand consistency</td><td>pending</td></tr>
+        <tr><td>Recognizability</td><td>pending</td></tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2 class="title">v2 - chat to summary</h2>
+      <p class="desc">Conversation waveform transitions into a structured summary card.</p>
+      <div class="sizes">
+        <div class="sample"><img src="./podsum-logo-v2-chat-to-summary.svg" width="16" height="16" alt="v2 16" />16px</div>
+        <div class="sample"><img src="./podsum-logo-v2-chat-to-summary.svg" width="22" height="22" alt="v2 22" />22px</div>
+        <div class="sample"><img src="./podsum-logo-v2-chat-to-summary.svg" width="28" height="28" alt="v2 28" />28px</div>
+        <div class="sample"><img src="./podsum-logo-v2-chat-to-summary.svg" width="64" height="64" alt="v2 64" />64px</div>
+      </div>
+      <div class="sizes">
+        <div class="sample dark"><img src="./podsum-logo-v2-chat-to-summary.svg" width="16" height="16" alt="v2 dark 16" />16px</div>
+        <div class="sample dark"><img src="./podsum-logo-v2-chat-to-summary.svg" width="22" height="22" alt="v2 dark 22" />22px</div>
+        <div class="sample dark"><img src="./podsum-logo-v2-chat-to-summary.svg" width="28" height="28" alt="v2 dark 28" />28px</div>
+        <div class="sample dark"><img src="./podsum-logo-v2-chat-to-summary.svg" width="64" height="64" alt="v2 dark 64" />64px</div>
+      </div>
+      <table class="score">
+        <tr><td>Semantic accuracy</td><td>pending</td></tr>
+        <tr><td>Readability at 16px</td><td>pending</td></tr>
+        <tr><td>Brand consistency</td><td>pending</td></tr>
+        <tr><td>Recognizability</td><td>pending</td></tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2 class="title">v3 - qa checklist (default)</h2>
+      <p class="desc">Overlapped QA bubbles converge into a checklist summary.</p>
+      <div class="sizes">
+        <div class="sample"><img src="./podsum-logo-v3-qa-checklist.svg" width="16" height="16" alt="v3 16" />16px</div>
+        <div class="sample"><img src="./podsum-logo-v3-qa-checklist.svg" width="22" height="22" alt="v3 22" />22px</div>
+        <div class="sample"><img src="./podsum-logo-v3-qa-checklist.svg" width="28" height="28" alt="v3 28" />28px</div>
+        <div class="sample"><img src="./podsum-logo-v3-qa-checklist.svg" width="64" height="64" alt="v3 64" />64px</div>
+      </div>
+      <div class="sizes">
+        <div class="sample dark"><img src="./podsum-logo-v3-qa-checklist.svg" width="16" height="16" alt="v3 dark 16" />16px</div>
+        <div class="sample dark"><img src="./podsum-logo-v3-qa-checklist.svg" width="22" height="22" alt="v3 dark 22" />22px</div>
+        <div class="sample dark"><img src="./podsum-logo-v3-qa-checklist.svg" width="28" height="28" alt="v3 dark 28" />28px</div>
+        <div class="sample dark"><img src="./podsum-logo-v3-qa-checklist.svg" width="64" height="64" alt="v3 dark 64" />64px</div>
+      </div>
+      <table class="score">
+        <tr><td>Semantic accuracy</td><td>pending</td></tr>
+        <tr><td>Readability at 16px</td><td>pending</td></tr>
+        <tr><td>Brand consistency</td><td>pending</td></tr>
+        <tr><td>Recognizability</td><td>pending</td></tr>
+      </table>
+    </section>
+  </div>
+</body>
+</html>
