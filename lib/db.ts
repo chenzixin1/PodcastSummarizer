@@ -357,8 +357,12 @@ async function ensureSchemaUpgrades(): Promise<void> {
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS mind_map_json_en JSONB
       `;
-      await ensureExtensionTranscriptionJobsTable();
-      await ensureExtensionMonitorTables();
+      await ensureExtensionTranscriptionJobsTable().catch((error) => {
+        console.warn('[DB] ensureExtensionTranscriptionJobsTable skipped:', error);
+      });
+      await ensureExtensionMonitorTables().catch((error) => {
+        console.warn('[DB] ensureExtensionMonitorTables skipped:', error);
+      });
       schemaUpgradeEnsured = true;
     })().catch((error) => {
       schemaUpgradePromise = null;
