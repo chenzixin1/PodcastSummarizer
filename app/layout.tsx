@@ -34,15 +34,14 @@ export default function RootLayout({
             {children}
           </SessionWrapper>
         </div>
-        <footer className="border-t border-[rgba(132,151,182,0.22)] bg-[linear-gradient(180deg,#091224_0%,#0b182d_100%)] px-4 py-4 text-sm text-[#aeb9cb]">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[#9eabc0]">PodSum.cc 2026, All rights reserved.</p>
-            <div className="flex items-center gap-3 sm:justify-end">
-              <Link href="/about" className="font-medium text-[#d8e2f1] hover:text-white hover:underline underline-offset-4 transition-colors">
+        <footer className="border-t border-[var(--border-soft)] bg-[var(--background)] px-4 py-5 text-sm text-[var(--text-secondary)]">
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[13px] tracking-[0.02em] text-[var(--text-muted)]">PodSum.cc 2026, All rights reserved.</p>
+            <div className="flex items-center gap-2.5 sm:justify-end">
+              <Link href="/about" className="rounded-full border border-[var(--border-soft)] bg-[var(--paper-muted)] px-3 py-1.5 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--heading)]">
                 About
               </Link>
-              <span className="text-[#73839c]">|</span>
-              <Link href="/chrome-extension" className="font-medium text-[#d8e2f1] hover:text-white hover:underline underline-offset-4 transition-colors">
+              <Link href="/chrome-extension" className="rounded-full border border-[var(--border-soft)] bg-[var(--paper-muted)] px-3 py-1.5 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--heading)]">
                 Chrome Extension
               </Link>
             </div>

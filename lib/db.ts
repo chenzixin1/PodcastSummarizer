@@ -1,6 +1,7 @@
 import { sql } from '@vercel/postgres';
 import { extractPodcastTags } from './podcastTags';
 import type { MindMapData } from './mindMap';
+import type { FullTextBilingualPayload, SummaryBilingualPayload } from './bilingualAlignment';
 
 // 播客类型
 export interface Podcast {
@@ -37,6 +38,9 @@ export interface AnalysisResult {
   mindMapJson?: MindMapData | null;
   mindMapJsonZh?: MindMapData | null;
   mindMapJsonEn?: MindMapData | null;
+  fullTextBilingualJson?: FullTextBilingualPayload | null;
+  summaryBilingualJson?: SummaryBilingualPayload | null;
+  bilingualAlignmentVersion?: number | null;
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
@@ -53,6 +57,9 @@ export interface PartialAnalysisResult {
   mindMapJson?: MindMapData | null;
   mindMapJsonZh?: MindMapData | null;
   mindMapJsonEn?: MindMapData | null;
+  fullTextBilingualJson?: FullTextBilingualPayload | null;
+  summaryBilingualJson?: SummaryBilingualPayload | null;
+  bilingualAlignmentVersion?: number | null;
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
@@ -66,56 +73,19 @@ export interface DbResult {
   errorCode?: string;
 }
 
+export interface PendingBilingualAlignmentRow {
+  podcastId: string;
+  summaryEn: string | null;
+  summaryZh: string | null;
+  translation: string | null;
+  highlights: string | null;
+  fullTextBilingualJson: FullTextBilingualPayload | null;
+  summaryBilingualJson: SummaryBilingualPayload | null;
+  bilingualAlignmentVersion: number | null;
+}
+
 export const DEFAULT_SRT_CREDITS = 10;
-export const SPECIAL_CREDITS_EMAIL = '1195021@qq.com';
-export const SPECIAL_SRT_CREDITS = 10000;
-
-function normalizeEmail(email: string): string {
-  return String(email || '').trim().toLowerCase();
-}
-
-export function getInitialSrtCreditsForEmail(email: string): number {
-  return normalizeEmail(email) === SPECIAL_CREDITS_EMAIL ? SPECIAL_SRT_CREDITS : DEFAULT_SRT_CREDITS;
-}
-
-let schemaUpgradeEnsured = false;
-let schemaUpgradePromise: Promise<void> | null = null;
-let userCreditsSchemaEnsured = false;
-let userCreditsSchemaPromise: Promise<void> | null = null;
-
-export async function ensureUserCreditsSchema(): Promise<void> {
-  if (userCreditsSchemaEnsured) {
-    return;
-  }
-
-  if (!userCreditsSchemaPromise) {
-    userCreditsSchemaPromise = (async () => {
-      await sql`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 10
-      `;
-      userCreditsSchemaEnsured = true;
-    })().catch((error) => {
-      userCreditsSchemaPromise = null;
-      throw error;
-    });
-  }
-
-  await userCreditsSchemaPromise;
-}
-
-function toJsonb(value: unknown): string | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch (error) {
-    console.error('JSONB serialization failed:', error);
-    return null;
-  }
-}
-
+const MAX_INITIAL_SRT_CREDITS = 100_000;
 const LIST_BRIEF_SUMMARY_MAX_CHARS = 220;
 
 function stripMarkdownToPlainText(input: string): string {
@@ -191,6 +161,79 @@ function buildListBriefSummary(rawBrief: unknown, rawSummary: unknown): string |
   const plain = stripMarkdownToPlainText(base);
   const finalText = trimToNaturalBoundary(plain, LIST_BRIEF_SUMMARY_MAX_CHARS);
   return finalText || null;
+}
+
+function normalizeEmail(email: string): string {
+  return String(email || '').trim().toLowerCase();
+}
+
+function parseInitialCreditsOverrides(raw: string): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const segment of raw.split(',')) {
+    const [emailRaw, creditsRaw] = segment.split(':');
+    const email = normalizeEmail(emailRaw || '');
+    const credits = Number.parseInt(String(creditsRaw || '').trim(), 10);
+    if (!email || !Number.isFinite(credits) || credits <= 0) {
+      continue;
+    }
+    result.set(email, Math.min(MAX_INITIAL_SRT_CREDITS, Math.floor(credits)));
+  }
+  return result;
+}
+
+function resolveDefaultCredits(): number {
+  const configured = Number.parseInt(process.env.DEFAULT_SRT_CREDITS || '', 10);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return DEFAULT_SRT_CREDITS;
+  }
+  return Math.min(MAX_INITIAL_SRT_CREDITS, Math.floor(configured));
+}
+
+export function getInitialSrtCreditsForEmail(email: string): number {
+  const overrides = parseInitialCreditsOverrides(process.env.INITIAL_SRT_CREDITS_OVERRIDES || '');
+  const overrideCredits = overrides.get(normalizeEmail(email));
+  if (typeof overrideCredits === 'number') {
+    return overrideCredits;
+  }
+  return resolveDefaultCredits();
+}
+
+let schemaUpgradeEnsured = false;
+let schemaUpgradePromise: Promise<void> | null = null;
+let userCreditsSchemaEnsured = false;
+let userCreditsSchemaPromise: Promise<void> | null = null;
+
+export async function ensureUserCreditsSchema(): Promise<void> {
+  if (userCreditsSchemaEnsured) {
+    return;
+  }
+
+  if (!userCreditsSchemaPromise) {
+    userCreditsSchemaPromise = (async () => {
+      await sql`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 10
+      `;
+      userCreditsSchemaEnsured = true;
+    })().catch((error) => {
+      userCreditsSchemaPromise = null;
+      throw error;
+    });
+  }
+
+  await userCreditsSchemaPromise;
+}
+
+function toJsonb(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    console.error('JSONB serialization failed:', error);
+    return null;
+  }
 }
 
 export async function ensureExtensionTranscriptionJobsTable(): Promise<void> {
@@ -357,6 +400,18 @@ async function ensureSchemaUpgrades(): Promise<void> {
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS mind_map_json_en JSONB
       `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS full_text_bilingual_json JSONB
+      `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS summary_bilingual_json JSONB
+      `;
+      await sql`
+        ALTER TABLE analysis_results
+        ADD COLUMN IF NOT EXISTS bilingual_alignment_version INTEGER DEFAULT 0
+      `;
       await ensureExtensionTranscriptionJobsTable().catch((error) => {
         console.warn('[DB] ensureExtensionTranscriptionJobsTable skipped:', error);
       });
@@ -419,6 +474,9 @@ export async function initDatabase(): Promise<DbResult> {
         mind_map_json JSONB,
         mind_map_json_zh JSONB,
         mind_map_json_en JSONB,
+        full_text_bilingual_json JSONB,
+        summary_bilingual_json JSONB,
+        bilingual_alignment_version INTEGER DEFAULT 0,
         token_count INTEGER,
         word_count INTEGER,
         character_count INTEGER,
@@ -619,6 +677,9 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
     const mindMapZh = result.mindMapJsonZh ?? result.mindMapJson ?? null;
     const mindMapEn = result.mindMapJsonEn ?? null;
     const mindMapLegacy = result.mindMapJson ?? mindMapZh ?? null;
+    const bilingualAlignmentVersion = Number.isFinite(result.bilingualAlignmentVersion)
+      ? Math.max(0, Math.floor(Number(result.bilingualAlignmentVersion)))
+      : 0;
 
     const dbResult = await sql`
       INSERT INTO analysis_results 
@@ -633,6 +694,9 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
           mind_map_json,
           mind_map_json_zh,
           mind_map_json_en,
+          full_text_bilingual_json,
+          summary_bilingual_json,
+          bilingual_alignment_version,
           token_count,
           word_count,
           character_count
@@ -649,6 +713,9 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
           ${toJsonb(mindMapLegacy)}::jsonb,
           ${toJsonb(mindMapZh)}::jsonb,
           ${toJsonb(mindMapEn)}::jsonb,
+          ${toJsonb(result.fullTextBilingualJson ?? null)}::jsonb,
+          ${toJsonb(result.summaryBilingualJson ?? null)}::jsonb,
+          ${bilingualAlignmentVersion},
           ${result.tokenCount ?? null},
           ${result.wordCount ?? null},
           ${result.characterCount ?? null}
@@ -664,6 +731,9 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
         mind_map_json = ${toJsonb(mindMapLegacy)}::jsonb,
         mind_map_json_zh = ${toJsonb(mindMapZh)}::jsonb,
         mind_map_json_en = ${toJsonb(mindMapEn)}::jsonb,
+        full_text_bilingual_json = ${toJsonb(result.fullTextBilingualJson ?? null)}::jsonb,
+        summary_bilingual_json = ${toJsonb(result.summaryBilingualJson ?? null)}::jsonb,
+        bilingual_alignment_version = ${bilingualAlignmentVersion},
         token_count = ${result.tokenCount ?? null},
         word_count = ${result.wordCount ?? null},
         character_count = ${result.characterCount ?? null},
@@ -714,6 +784,9 @@ export async function saveAnalysisPartialResults(result: PartialAnalysisResult):
     const mindMapZh = result.mindMapJsonZh ?? null;
     const mindMapEn = result.mindMapJsonEn ?? null;
     const mindMapLegacy = result.mindMapJson ?? mindMapZh ?? null;
+    const bilingualAlignmentVersion = Number.isFinite(result.bilingualAlignmentVersion)
+      ? Math.max(0, Math.floor(Number(result.bilingualAlignmentVersion)))
+      : null;
 
     const dbResult = await sql`
       INSERT INTO analysis_results
@@ -728,6 +801,9 @@ export async function saveAnalysisPartialResults(result: PartialAnalysisResult):
           mind_map_json,
           mind_map_json_zh,
           mind_map_json_en,
+          full_text_bilingual_json,
+          summary_bilingual_json,
+          bilingual_alignment_version,
           token_count,
           word_count,
           character_count
@@ -744,6 +820,9 @@ export async function saveAnalysisPartialResults(result: PartialAnalysisResult):
           ${toJsonb(mindMapLegacy)}::jsonb,
           ${toJsonb(mindMapZh)}::jsonb,
           ${toJsonb(mindMapEn)}::jsonb,
+          ${toJsonb(result.fullTextBilingualJson ?? null)}::jsonb,
+          ${toJsonb(result.summaryBilingualJson ?? null)}::jsonb,
+          ${bilingualAlignmentVersion},
           ${result.tokenCount ?? null},
           ${result.wordCount ?? null},
           ${result.characterCount ?? null}
@@ -759,6 +838,9 @@ export async function saveAnalysisPartialResults(result: PartialAnalysisResult):
         mind_map_json = COALESCE(EXCLUDED.mind_map_json, analysis_results.mind_map_json),
         mind_map_json_zh = COALESCE(EXCLUDED.mind_map_json_zh, analysis_results.mind_map_json_zh),
         mind_map_json_en = COALESCE(EXCLUDED.mind_map_json_en, analysis_results.mind_map_json_en),
+        full_text_bilingual_json = COALESCE(EXCLUDED.full_text_bilingual_json, analysis_results.full_text_bilingual_json),
+        summary_bilingual_json = COALESCE(EXCLUDED.summary_bilingual_json, analysis_results.summary_bilingual_json),
+        bilingual_alignment_version = COALESCE(EXCLUDED.bilingual_alignment_version, analysis_results.bilingual_alignment_version),
         token_count = COALESCE(EXCLUDED.token_count, analysis_results.token_count),
         word_count = COALESCE(EXCLUDED.word_count, analysis_results.word_count),
         character_count = COALESCE(EXCLUDED.character_count, analysis_results.character_count),
@@ -815,6 +897,9 @@ export async function getAnalysisResults(podcastId: string): Promise<DbResult> {
         mind_map_json as "mindMapJson",
         mind_map_json_zh as "mindMapJsonZh",
         mind_map_json_en as "mindMapJsonEn",
+        full_text_bilingual_json as "fullTextBilingualJson",
+        summary_bilingual_json as "summaryBilingualJson",
+        bilingual_alignment_version as "bilingualAlignmentVersion",
         token_count as "tokenCount",
         word_count as "wordCount",
         character_count as "characterCount",
@@ -830,6 +915,67 @@ export async function getAnalysisResults(podcastId: string): Promise<DbResult> {
     return { success: true, data: result.rows[0] };
   } catch (error) {
     console.error('获取分析结果失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function listPendingBilingualAlignmentRows(limit = 3): Promise<DbResult> {
+  try {
+    await ensureSchemaUpgrades();
+    const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(20, Math.floor(limit))) : 3;
+    const result = await sql`
+      SELECT
+        podcast_id as "podcastId",
+        summary_en as "summaryEn",
+        summary_zh as "summaryZh",
+        translation,
+        highlights,
+        full_text_bilingual_json as "fullTextBilingualJson",
+        summary_bilingual_json as "summaryBilingualJson",
+        bilingual_alignment_version as "bilingualAlignmentVersion"
+      FROM analysis_results
+      WHERE COALESCE(bilingual_alignment_version, 0) < 1
+      ORDER BY processed_at ASC NULLS FIRST, podcast_id ASC
+      LIMIT ${normalizedLimit}
+    `;
+
+    return { success: true, data: result.rows as PendingBilingualAlignmentRow[] };
+  } catch (error) {
+    console.error('获取待回填双语对齐数据失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function saveBilingualAlignmentPayload(input: {
+  podcastId: string;
+  fullTextBilingualJson: FullTextBilingualPayload | null;
+  summaryBilingualJson: SummaryBilingualPayload | null;
+  bilingualAlignmentVersion?: number;
+}): Promise<DbResult> {
+  try {
+    await ensureSchemaUpgrades();
+    const version = Number.isFinite(input.bilingualAlignmentVersion)
+      ? Math.max(0, Math.floor(Number(input.bilingualAlignmentVersion)))
+      : 1;
+
+    const result = await sql`
+      UPDATE analysis_results
+      SET
+        full_text_bilingual_json = ${toJsonb(input.fullTextBilingualJson)}::jsonb,
+        summary_bilingual_json = ${toJsonb(input.summaryBilingualJson)}::jsonb,
+        bilingual_alignment_version = ${version},
+        processed_at = CURRENT_TIMESTAMP
+      WHERE podcast_id = ${input.podcastId}
+      RETURNING podcast_id as "podcastId"
+    `;
+
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Analysis results not found for alignment update' };
+    }
+
+    return { success: true, data: result.rows[0] };
+  } catch (error) {
+    console.error('保存双语对齐结果失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

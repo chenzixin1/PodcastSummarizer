@@ -311,9 +311,6 @@ export default function PublicPodcastSummaryPage() {
           )}
         </div>
       </main>
-      <footer className="p-4 text-center text-xs text-[var(--text-muted)]">
-        PodSum.cc - Powered by Vercel
-      </footer>
     </div>
   );
 } 

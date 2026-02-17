@@ -20,11 +20,29 @@ global.fetch = jest.fn();
 
 // Mock 数据库操作
 jest.mock('../../lib/db', () => ({
-  saveAnalysisResults: jest.fn()
+  saveAnalysisResults: jest.fn(),
+  saveAnalysisPartialResults: jest.fn(),
+  getPodcast: jest.fn(),
+}));
+
+jest.mock('next-auth/next', () => ({
+  getServerSession: jest.fn(),
+}));
+
+jest.mock('../../lib/auth', () => ({
+  authOptions: {},
+}));
+
+jest.mock('../../lib/workerAuth', () => ({
+  isWorkerAuthorizedBySecret: jest.fn(() => true),
 }));
 
 // 获取mock函数的引用
-const { saveAnalysisResults: mockSaveAnalysisResults } = require('../../lib/db');
+const {
+  saveAnalysisResults: mockSaveAnalysisResults,
+  saveAnalysisPartialResults: mockSaveAnalysisPartialResults,
+  getPodcast: mockGetPodcast,
+} = require('../../lib/db');
 
 // Helper function to read stream response
 async function readStreamResponse(response: Response): Promise<string[]> {
@@ -59,8 +77,25 @@ async function readStreamResponse(response: Response): Promise<string[]> {
 }
 
 describe('Process API Tests', () => {
+  const previousWorkerSecret = process.env.PROCESS_WORKER_SECRET;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.PROCESS_WORKER_SECRET = 'test-worker-secret';
+    mockSaveAnalysisPartialResults.mockResolvedValue({ success: true });
+    mockGetPodcast.mockResolvedValue({
+      success: true,
+      data: {
+        id: 'test-id',
+        title: 'Test Podcast',
+        sourceReference: null,
+        userId: 'user-001',
+      },
+    });
+  });
+
+  afterAll(() => {
+    process.env.PROCESS_WORKER_SECRET = previousWorkerSecret;
   });
 
   it('should return error for missing required fields', async () => {
@@ -71,7 +106,10 @@ describe('Process API Tests', () => {
 
     const request = new NextRequest('http://localhost:3000/api/process', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-process-worker-secret': 'test-worker-secret',
+      },
       body: JSON.stringify(requestData)
     });
 
@@ -124,6 +162,11 @@ Hello world`;
     });
 
     const response = await POST(request);
+
+    if (response.headers.get('Content-Type') === 'application/json') {
+      const payload = await response.json();
+      throw new Error(`Expected stream response but got JSON: ${JSON.stringify(payload)}`);
+    }
 
     // Check response headers for streaming
     expect(response.headers.get('Content-Type')).toBe('text/event-stream');

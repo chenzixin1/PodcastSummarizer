@@ -1,8 +1,16 @@
 import { sql } from '@vercel/postgres';
 import { NextResponse } from 'next/server';
+import { requireAdminAccess } from '../../../lib/adminGuard';
+
+export const runtime = 'nodejs';
 
 export async function GET() {
   try {
+    const adminCheck = await requireAdminAccess();
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
     // 测试连接
     const result = await sql`SELECT NOW() as current_time`;
     

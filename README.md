@@ -115,6 +115,14 @@ The application uses several environment variables to configure the LLM model an
 - `RETRY_DELAY`: Delay between retries in milliseconds (default: 1000)
 - `QA_MAX_RETRIEVED_CHUNKS`: Number of chunks used as QA evidence (default: 8)
 - `QA_MAX_TOTAL_CHUNKS`: Max indexed chunks per podcast for QA (default: 180)
+- `DEFAULT_SRT_CREDITS`: Default signup credits (default: 10)
+- `INITIAL_SRT_CREDITS_OVERRIDES`: Optional per-user credits override, format `email:credits,email2:credits2`
+- `ADMIN_EMAILS`: Comma-separated admin allowlist for maintenance/debug APIs
+- `NEXT_PUBLIC_DEBUG_LOGS`: Set `true` to enable client debug logs in browser
+- `NEXT_PUBLIC_SEND_DEBUG_TO_SERVER`: Set `true` to allow client debug uploads to `/api/debug`
+- `PROCESS_DEBUG_LOGS`: Set `true` to enable verbose `/api/process` server logs
+- `UPLOAD_DEBUG_LOGS`: Set `true` to enable verbose upload pipeline logs
+- `ANALYSIS_DEBUG_LOGS`: Set `true` to enable verbose `/api/analysis/:id` logs
 
 ### YouTube + Volcano ASR Fallback
 
@@ -162,7 +170,7 @@ Runtime switches:
 
 Notes:
 
-- Raw logging keeps `Authorization` header as-is for debugging.
+- Raw logging now redacts sensitive headers/fields (`Authorization`, `Cookie`, API keys, tokens, passwords).
 - Any `password` field is always redacted before persistence.
 
 You can set these environment variables:

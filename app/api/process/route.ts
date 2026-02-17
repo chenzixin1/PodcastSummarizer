@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 import { prompts } from '../../../lib/prompts';
 import { modelConfig } from '../../../lib/modelConfig';
@@ -9,10 +8,29 @@ import { authOptions } from '../../../lib/auth';
 import { isWorkerAuthorizedBySecret } from '../../../lib/workerAuth';
 import { rebuildQaContextChunksForPodcast } from '../../../lib/qaContextChunks';
 import { generateMindMapData, type MindMapData } from '../../../lib/mindMap';
+import {
+  BILINGUAL_ALIGNMENT_VERSION,
+  buildFullTextBilingualPayload,
+  buildSummaryBilingualPayload,
+  type FullTextBilingualPayload,
+  type SummaryBilingualPayload,
+} from '../../../lib/bilingualAlignment';
+import {
+  applyLlmFallbackToFullTextPayload,
+  applyLlmFallbackToSummaryPayload,
+} from '../../../lib/bilingualAlignmentLlm';
+
+const PROCESS_DEBUG_ENABLED = process.env.PROCESS_DEBUG_LOGS === 'true';
+function processDebug(...args: unknown[]) {
+  if (!PROCESS_DEBUG_ENABLED) {
+    return;
+  }
+  console.log(...args);
+}
 
 // VERCEL DEBUG: Add version number to help track deployments
 const API_VERSION = modelConfig.API_VERSION;
-console.log(`[DEBUG-API] Podcast Summarizer API v${API_VERSION} loading...`);
+processDebug(`[DEBUG-API] Podcast Summarizer API v${API_VERSION} loading...`);
 
 // Define a type for stream updates
 export interface ProcessStreamUpdate {
@@ -30,6 +48,9 @@ export interface ProcessStreamUpdate {
     briefSummary?: string;
     translation?: string;
     highlights?: string;
+    fullTextBilingualJson?: FullTextBilingualPayload | null;
+    summaryBilingualJson?: SummaryBilingualPayload | null;
+    bilingualAlignmentVersion?: number | null;
     mindMapJson?: MindMapData | null;
     mindMapJsonZh?: MindMapData | null;
     mindMapJsonEn?: MindMapData | null;
@@ -38,6 +59,307 @@ export interface ProcessStreamUpdate {
 }
 
 type ModelTaskType = 'summary' | 'translation' | 'highlights' | 'brief_summary';
+
+interface OpenRouterStreamChunk {
+  choices?: Array<{
+    delta?: {
+      content?: string;
+    };
+    finish_reason?: string;
+  }>;
+}
+
+interface ParsedSummaryResult {
+  summaryLegacy: string;
+  summaryZh: string;
+  summaryEn: string;
+}
+
+interface TextStats {
+  tokenCount: number;
+  wordCount: number;
+  characterCount: number;
+}
+
+const SUMMARY_EN_MARKER = '<<<SUMMARY_EN>>>';
+const SUMMARY_ZH_MARKER = '<<<SUMMARY_ZH>>>';
+const BRIEF_SUMMARY_MAX_CHARS = 220;
+
+function chunkContent(content: string, maxLength: number): string[] {
+  if (content.length <= maxLength) {
+    return [content];
+  }
+
+  const chunks: string[] = [];
+  let remainingContent = content;
+
+  while (remainingContent.length > 0) {
+    let breakPoint = Math.min(maxLength, remainingContent.length);
+    if (breakPoint < remainingContent.length) {
+      const breakCandidates = [
+        { token: '\n\n', keepChars: 2 },
+        { token: '. ', keepChars: 1 },
+        { token: '? ', keepChars: 1 },
+        { token: '! ', keepChars: 1 },
+        { token: '。', keepChars: 1 },
+        { token: '？', keepChars: 1 },
+        { token: '！', keepChars: 1 },
+      ];
+
+      let bestIndex = -1;
+      let bestKeepChars = 0;
+      const threshold = maxLength * 0.6;
+
+      for (const candidate of breakCandidates) {
+        const candidateIndex = remainingContent.lastIndexOf(candidate.token, breakPoint);
+        if (candidateIndex > threshold && candidateIndex > bestIndex) {
+          bestIndex = candidateIndex;
+          bestKeepChars = candidate.keepChars;
+        }
+      }
+
+      if (bestIndex !== -1) {
+        breakPoint = bestIndex + bestKeepChars;
+      }
+    }
+
+    chunks.push(remainingContent.substring(0, breakPoint));
+    remainingContent = remainingContent.substring(breakPoint);
+  }
+
+  return chunks;
+}
+
+function splitSrtIntoBlocks(srtContent: string): string[] {
+  const regex = /(\d+\s*\n\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n[^\n]*(?:\n[^\n]*)*?)(?=\n\s*\d+\s*\n|$)/g;
+  const srtBlocks: string[] = [];
+  let match;
+  let lastIndex = 0;
+
+  while ((match = regex.exec(srtContent)) !== null) {
+    srtBlocks.push(match[0]);
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < srtContent.length) {
+    const remaining = srtContent.substring(lastIndex).trim();
+    if (remaining) {
+      srtBlocks.push(remaining);
+    }
+  }
+
+  if (srtBlocks.length > 0) {
+    return srtBlocks;
+  }
+  return [srtContent];
+}
+
+function groupSrtBlocks(srtBlocks: string[], blocksPerChunk: number): string[] {
+  if (srtBlocks.length === 0) {
+    return [];
+  }
+  const chunks: string[] = [];
+  for (let i = 0; i < srtBlocks.length; i += blocksPerChunk) {
+    chunks.push(srtBlocks.slice(i, i + blocksPerChunk).join('\n\n'));
+  }
+  return chunks;
+}
+
+function resolveBlocksPerChunk(totalBlocks: number, baseBlocksPerChunk: number, maxChunks: number): number {
+  if (totalBlocks <= 0) {
+    return baseBlocksPerChunk;
+  }
+  const minBlocksPerChunkForBudget = Math.ceil(totalBlocks / Math.max(1, maxChunks));
+  return Math.max(baseBlocksPerChunk, minBlocksPerChunkForBudget);
+}
+
+async function mapWithConcurrency<T>(
+  items: string[],
+  concurrency: number,
+  mapper: (item: string, index: number) => Promise<T>
+): Promise<T[]> {
+  const results: T[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) {
+        return;
+      }
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  };
+
+  const workerCount = Math.min(Math.max(1, Math.floor(concurrency)), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
+async function parseSrtContent(srtText: string): Promise<string> {
+  const lines = srtText.split('\n');
+  let plainText = '';
+  let isTimestamp = false;
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (trimmedLine === '' || /^\d+$/.test(trimmedLine) || trimmedLine.includes(' --> ')) {
+      isTimestamp = trimmedLine.includes(' --> ');
+      continue;
+    }
+
+    if (!isTimestamp && plainText.length > 0) {
+      plainText += ' ';
+    }
+
+    plainText += trimmedLine;
+    isTimestamp = false;
+  }
+
+  return plainText;
+}
+
+function calculateTextStats(text: string): TextStats {
+  const normalized = text.trim();
+  if (!normalized) {
+    return {
+      tokenCount: 0,
+      wordCount: 0,
+      characterCount: 0,
+    };
+  }
+
+  const characterCount = normalized.length;
+  const latinWordCount = (normalized.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g) || []).length;
+  const cjkCharCount = (normalized.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) || []).length;
+  const wordCount = latinWordCount + cjkCharCount;
+
+  const asciiCharCount = (normalized.match(/[\x00-\x7F]/g) || []).length;
+  const nonAsciiCharCount = characterCount - asciiCharCount;
+  const tokenCount = Math.max(1, Math.round(asciiCharCount / 4 + nonAsciiCharCount));
+
+  return {
+    tokenCount,
+    wordCount,
+    characterCount,
+  };
+}
+
+function normalizeSummaryMarkdown(input: string): string {
+  return String(input || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/^[ \t]*•[ \t]+/gm, '- ')
+    .trim();
+}
+
+function splitBilingualSummary(rawSummary: string): ParsedSummaryResult {
+  const normalized = normalizeSummaryMarkdown(rawSummary);
+  if (!normalized) {
+    return {
+      summaryLegacy: '',
+      summaryZh: '',
+      summaryEn: '',
+    };
+  }
+
+  let summaryEn = '';
+  let summaryZh = '';
+
+  const markerEnIndex = normalized.indexOf(SUMMARY_EN_MARKER);
+  const markerZhIndex = normalized.indexOf(SUMMARY_ZH_MARKER);
+  if (markerEnIndex >= 0 && markerZhIndex > markerEnIndex) {
+    summaryEn = normalizeSummaryMarkdown(
+      normalized.slice(markerEnIndex + SUMMARY_EN_MARKER.length, markerZhIndex)
+    );
+    summaryZh = normalizeSummaryMarkdown(
+      normalized.slice(markerZhIndex + SUMMARY_ZH_MARKER.length)
+    );
+  } else {
+    const englishHeaderIndex = normalized.search(/#\s*English Summary/i);
+    const chineseHeaderIndex = normalized.search(/#\s*中文总结/i);
+    if (englishHeaderIndex >= 0 && chineseHeaderIndex > englishHeaderIndex) {
+      summaryEn = normalizeSummaryMarkdown(normalized.slice(englishHeaderIndex, chineseHeaderIndex));
+      summaryZh = normalizeSummaryMarkdown(normalized.slice(chineseHeaderIndex));
+    } else if (chineseHeaderIndex >= 0) {
+      summaryZh = normalizeSummaryMarkdown(normalized.slice(chineseHeaderIndex));
+      summaryEn = normalizeSummaryMarkdown(normalized.slice(0, chineseHeaderIndex));
+    } else {
+      summaryZh = normalized;
+    }
+  }
+
+  const fallbackEn = summaryEn || normalizeSummaryMarkdown(normalized);
+  const fallbackZh = summaryZh || normalizeSummaryMarkdown(normalized);
+  return {
+    summaryLegacy: fallbackZh,
+    summaryZh: fallbackZh,
+    summaryEn: fallbackEn,
+  };
+}
+
+function toPlainPreviewText(input: string): string {
+  return input
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/[*_~>#]/g, ' ')
+    .replace(/\r/g, ' ')
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function trimToNaturalBoundary(input: string, maxChars: number): string {
+  const normalized = input.trim();
+  if (!normalized || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const candidate = normalized.slice(0, maxChars);
+  const punctuation = ['。', '！', '？', '.', '!', '?', '；', ';', '，', ','];
+  let best = -1;
+  for (const token of punctuation) {
+    const index = candidate.lastIndexOf(token);
+    if (index > best) {
+      best = index;
+    }
+  }
+  if (best >= Math.floor(maxChars * 0.6)) {
+    return candidate.slice(0, best + 1).trim();
+  }
+  return candidate.trim();
+}
+
+function buildFallbackBriefSummary(summaryZh: string, highlights: string): string {
+  const source = `${String(summaryZh || '')}\n${highlights || ''}`.trim();
+  if (!source) {
+    return '';
+  }
+  const plain = toPlainPreviewText(source);
+  return trimToNaturalBoundary(plain, BRIEF_SUMMARY_MAX_CHARS);
+}
+
+function finalizeBriefSummary(rawText: string, fallback: string, minChars = 100): string {
+  const normalized = trimToNaturalBoundary(
+    toPlainPreviewText(rawText).replace(/^["“”']+|["“”']+$/g, '').trim(),
+    BRIEF_SUMMARY_MAX_CHARS
+  );
+  if (normalized.length >= minChars) {
+    return normalized;
+  }
+  if (!fallback) {
+    return normalized;
+  }
+  if (!normalized) {
+    return fallback;
+  }
+  return trimToNaturalBoundary(`${normalized} ${fallback}`, BRIEF_SUMMARY_MAX_CHARS);
+}
 
 
 
@@ -110,124 +432,16 @@ const HIGHLIGHTS_CHUNK_CONCURRENCY = (() => {
 })();
 const ENABLE_PARALLEL_TASKS = Boolean(modelConfig.ENABLE_PARALLEL_TASKS);
 const MAX_TOKENS = modelConfig.MAX_TOKENS;
+const BILINGUAL_LLM_MAX_MISSING = (() => {
+  const configured = Number.parseInt(process.env.BILINGUAL_LLM_MAX_MISSING || '20', 10);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return 20;
+  }
+  return Math.min(20, configured);
+})();
 
 // 辅助函数：延迟执行
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-// 辅助函数：处理较长内容
-function chunkContent(content: string, maxLength: number): string[] {
-  if (content.length <= maxLength) return [content];
-  
-  // 计算需要分成几个段落
-  const chunks: string[] = [];
-  let remainingContent = content;
-  
-  while (remainingContent.length > 0) {
-    // 找到合适的断点（句号或段落）
-    let breakPoint = Math.min(maxLength, remainingContent.length);
-    if (breakPoint < remainingContent.length) {
-      // 优先在自然语义边界断开，兼容中英文标点。
-      const breakCandidates = [
-        { token: '\n\n', keepChars: 2 },
-        { token: '. ', keepChars: 1 },
-        { token: '? ', keepChars: 1 },
-        { token: '! ', keepChars: 1 },
-        { token: '。', keepChars: 1 },
-        { token: '？', keepChars: 1 },
-        { token: '！', keepChars: 1 },
-      ];
-
-      let bestIndex = -1;
-      let bestKeepChars = 0;
-      const threshold = maxLength * 0.6;
-
-      for (const candidate of breakCandidates) {
-        const candidateIndex = remainingContent.lastIndexOf(candidate.token, breakPoint);
-        if (candidateIndex > threshold && candidateIndex > bestIndex) {
-          bestIndex = candidateIndex;
-          bestKeepChars = candidate.keepChars;
-        }
-      }
-
-      if (bestIndex !== -1) {
-        breakPoint = bestIndex + bestKeepChars;
-      }
-    }
-    
-    chunks.push(remainingContent.substring(0, breakPoint));
-    remainingContent = remainingContent.substring(breakPoint);
-  }
-  
-  return chunks;
-}
-
-function splitSrtIntoBlocks(srtContent: string): string[] {
-  const regex = /(\d+\s*\n\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n[^\n]*(?:\n[^\n]*)*?)(?=\n\s*\d+\s*\n|$)/g;
-  const srtBlocks: string[] = [];
-  let match;
-  let lastIndex = 0;
-
-  while ((match = regex.exec(srtContent)) !== null) {
-    srtBlocks.push(match[0]);
-    lastIndex = regex.lastIndex;
-  }
-
-  if (lastIndex < srtContent.length) {
-    const remaining = srtContent.substring(lastIndex).trim();
-    if (remaining) {
-      srtBlocks.push(remaining);
-    }
-  }
-
-  if (srtBlocks.length > 0) {
-    return srtBlocks;
-  }
-  return [srtContent];
-}
-
-function groupSrtBlocks(srtBlocks: string[], blocksPerChunk: number): string[] {
-  if (srtBlocks.length === 0) {
-    return [];
-  }
-  const chunks: string[] = [];
-  for (let i = 0; i < srtBlocks.length; i += blocksPerChunk) {
-    chunks.push(srtBlocks.slice(i, i + blocksPerChunk).join('\n\n'));
-  }
-  return chunks;
-}
-
-function resolveBlocksPerChunk(totalBlocks: number, baseBlocksPerChunk: number, maxChunks: number): number {
-  if (totalBlocks <= 0) {
-    return baseBlocksPerChunk;
-  }
-  const minBlocksPerChunkForBudget = Math.ceil(totalBlocks / Math.max(1, maxChunks));
-  return Math.max(baseBlocksPerChunk, minBlocksPerChunkForBudget);
-}
-
-async function mapWithConcurrency<T>(
-  items: string[],
-  concurrency: number,
-  mapper: (item: string, index: number) => Promise<T>
-): Promise<T[]> {
-  const results: T[] = new Array(items.length);
-  let nextIndex = 0;
-
-  const worker = async () => {
-    while (true) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      if (currentIndex >= items.length) {
-        return;
-      }
-      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
-    }
-  };
-
-  const workerCount = Math.min(Math.max(1, Math.floor(concurrency)), items.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results;
-}
-
 
 // API call handler with retry functionality
 async function callModelWithRetry(
@@ -246,14 +460,14 @@ async function callModelWithRetry(
   
   // 记录API请求详情
   const requestId = Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
-  console.log(`[OpenRouter Request ${requestId}] ---- START ----`);
-  console.log(`[OpenRouter Request ${requestId}] Model: ${MODEL}`);
-  console.log(`[OpenRouter Request ${requestId}] Task: ${taskType} (Call #${openRouterCallCounter.count}, Total: ${openRouterCallCounter.count})`);
-  console.log(`[OpenRouter Request ${requestId}] System: ${systemPrompt.substring(0, 100)}...`);
-  console.log(`[OpenRouter Request ${requestId}] User: ${userPrompt.substring(0, 100)}...`);
-  console.log(`[OpenRouter Request ${requestId}] MaxTokens: ${maxTokens}`);
-  console.log(`[OpenRouter Request ${requestId}] Temperature: ${temperature}`);
-  console.log(`[OpenRouter Request ${requestId}] Streaming: ${!!onTokenStream}`);
+  processDebug(`[OpenRouter Request ${requestId}] ---- START ----`);
+  processDebug(`[OpenRouter Request ${requestId}] Model: ${MODEL}`);
+  processDebug(`[OpenRouter Request ${requestId}] Task: ${taskType} (Call #${openRouterCallCounter.count}, Total: ${openRouterCallCounter.count})`);
+  processDebug(`[OpenRouter Request ${requestId}] System: ${systemPrompt.substring(0, 100)}...`);
+  processDebug(`[OpenRouter Request ${requestId}] User: ${userPrompt.substring(0, 100)}...`);
+  processDebug(`[OpenRouter Request ${requestId}] MaxTokens: ${maxTokens}`);
+  processDebug(`[OpenRouter Request ${requestId}] Temperature: ${temperature}`);
+  processDebug(`[OpenRouter Request ${requestId}] Streaming: ${!!onTokenStream}`);
   
   const startTime = Date.now();
   let fullContent = '';
@@ -261,16 +475,16 @@ async function callModelWithRetry(
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       if (attempt > 0) {
-        console.log(`[OpenRouter Request ${requestId}] Retry attempt ${attempt}`);
+        processDebug(`[OpenRouter Request ${requestId}] Retry attempt ${attempt}`);
         await delay(RETRY_DELAY * attempt); // 指数退避
       }
       
       // 记录实际请求时间
       const callStartTime = Date.now();
-      console.log(`[OpenRouter Request ${requestId}] Making API call at ${new Date().toISOString()}`);
+      processDebug(`[OpenRouter Request ${requestId}] Making API call at ${new Date().toISOString()}`);
       
       const apiKey = process.env.OPENROUTER_API_KEY || '';
-      console.log(`[OpenRouter Request ${requestId}] Using API key: ${apiKey.substring(0, 5)}...`);
+      processDebug(`[OpenRouter Request ${requestId}] API key configured: ${Boolean(apiKey)}`);
       
       // 使用fetch而不是openai.createChatCompletion，以便我们可以完全控制请求
       const requestBody = {
@@ -313,7 +527,7 @@ async function callModelWithRetry(
       }
       
       const callEndTime = Date.now();
-      console.log(`[OpenRouter Request ${requestId}] API call initiated in ${callEndTime - callStartTime}ms (stream: ${!!onTokenStream})`);
+      processDebug(`[OpenRouter Request ${requestId}] API call initiated in ${callEndTime - callStartTime}ms (stream: ${!!onTokenStream})`);
       
       if (!response.ok) {
         const errorText = await response.text().catch(() => `Failed to get error text, status: ${response.status}`);
@@ -326,7 +540,7 @@ async function callModelWithRetry(
         const reader = response.body.getReader();
         const decoder = new TextDecoder(); // Standard TextDecoder
         
-        console.log(`[OpenRouter Request ${requestId}] Streaming response started...`);
+        processDebug(`[OpenRouter Request ${requestId}] Streaming response started...`);
         let buffer = '';
         
         while (true) {
@@ -340,7 +554,7 @@ async function callModelWithRetry(
                     const jsonDataString = buffer.substring(5).trim();
                     if (jsonDataString && jsonDataString !== '[DONE]') {
                         const jsonData = parseJSON(jsonDataString);
-                        if (jsonData.choices && jsonData.choices[0] && jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
+                        if (jsonData?.choices?.[0]?.delta?.content) {
                             const content = jsonData.choices[0].delta.content;
                             fullContent += content;
                             await onTokenStream(content);
@@ -366,18 +580,18 @@ async function callModelWithRetry(
               if (line.startsWith('data: ')) {
                 const jsonDataString = line.substring(5).trim();
                 if (jsonDataString === '[DONE]') {
-                  console.log(`[OpenRouter Request ${requestId}] Stream [DONE] signal received.`);
+                  processDebug(`[OpenRouter Request ${requestId}] Stream [DONE] signal received.`);
                   // No specific token to send for [DONE] itself, loop will break on next read if stream closes.
                   continue;
                 }
                 try {
                   const jsonData = parseJSON(jsonDataString);
-                  if (jsonData.choices && jsonData.choices[0] && jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
+                  if (jsonData?.choices?.[0]?.delta?.content) {
                     const content = jsonData.choices[0].delta.content;
                     fullContent += content;
                     await onTokenStream(content); // Stream only the actual content token
-                  } else if (jsonData.choices && jsonData.choices[0] && jsonData.choices[0].finish_reason) {
-                    console.log(`[OpenRouter Request ${requestId}] Stream finish reason: ${jsonData.choices[0].finish_reason}`);
+                  } else if (jsonData?.choices?.[0]?.finish_reason) {
+                    processDebug(`[OpenRouter Request ${requestId}] Stream finish reason: ${jsonData.choices[0].finish_reason}`);
                   }
                   // Other JSON structures from 'data:' line are ignored if not delta content or known signals.
                 } catch (e) {
@@ -385,10 +599,10 @@ async function callModelWithRetry(
                   // Do NOT pass the raw 'line' or 'jsonDataString' if it failed to parse or didn't have content.
                 }
               } else if (line.trim().startsWith(':')) {
-                console.log(`[OpenRouter Request ${requestId}] Received SSE comment: "${line}"`);
+                processDebug(`[OpenRouter Request ${requestId}] Received SSE comment: "${line}"`);
                 // SSE comments are ignored for content purposes.
               } else if (line.trim()) {
-                console.log(`[OpenRouter Request ${requestId}] Received unexpected non-empty, non-data, non-comment line: "${line}"`);
+                processDebug(`[OpenRouter Request ${requestId}] Received unexpected non-empty, non-data, non-comment line: "${line}"`);
                 // Other lines are logged but not passed as content tokens.
               }
             }
@@ -397,36 +611,36 @@ async function callModelWithRetry(
         // The final decoder.decode() call is usually for completing multi-byte characters, not strictly for SSE logic.
         // const finalBufferedChunk = decoder.decode(); // Flush internal state of TextDecoder
         // if (finalBufferedChunk) {
-        //     console.log(`[OpenRouter Request ${requestId}] Decoder flushed final chunk: ${finalBufferedChunk}`);
+        //     processDebug(`[OpenRouter Request ${requestId}] Decoder flushed final chunk: ${finalBufferedChunk}`);
         //     // Decide if this needs to be processed like other buffer content
         //     // For OpenRouter, this is unlikely to be needed if stream ends cleanly or with [DONE]
         // }
-        console.log(`[OpenRouter Request ${requestId}] Streaming response finished processing loop.`);
+        processDebug(`[OpenRouter Request ${requestId}] Streaming response finished processing loop.`);
       } else {
         // Handle non-streaming response
         const data = await response.json();
         if (!data.choices?.[0]?.message?.content) {
-          console.log(`[OpenRouter Request ${requestId}] No content in non-streaming response: ${JSON.stringify(data)}`);
+          processDebug(`[OpenRouter Request ${requestId}] No content in non-streaming response: ${JSON.stringify(data)}`);
           throw new Error(`No content in response: ${JSON.stringify(data)}`);
         }
         fullContent = data.choices[0].message.content;
-        console.log(`[OpenRouter Request ${requestId}] Non-streaming Response: ${fullContent.substring(0, 100)}...`);
+        processDebug(`[OpenRouter Request ${requestId}] Non-streaming Response: ${fullContent.substring(0, 100)}...`);
         if (data.usage) {
-          console.log(`[OpenRouter Request ${requestId}] Token usage: ${JSON.stringify(data.usage)}`);
+          processDebug(`[OpenRouter Request ${requestId}] Token usage: ${JSON.stringify(data.usage)}`);
         }
       }
       
       // 记录完成时间
       const endTime = Date.now();
-      console.log(`[OpenRouter Request ${requestId}] Processing completed in ${endTime - callStartTime}ms (total function time: ${endTime - startTime}ms)`);
-      console.log(`[OpenRouter Request ${requestId}] ---- END ----`);
+      processDebug(`[OpenRouter Request ${requestId}] Processing completed in ${endTime - callStartTime}ms (total function time: ${endTime - startTime}ms)`);
+      processDebug(`[OpenRouter Request ${requestId}] ---- END ----`);
       return fullContent;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(`[OpenRouter Request ${requestId}] Error (attempt ${attempt}):`, error);
       lastError = error;
       // 如果已经是最后一次尝试，直接抛出
       if (attempt === MAX_RETRIES) {
-        console.log(`[OpenRouter Request ${requestId}] ---- FAILED (Max Retries) ----`);
+        processDebug(`[OpenRouter Request ${requestId}] ---- FAILED (Max Retries) ----`);
         throw error;
       }
       
@@ -435,7 +649,7 @@ async function callModelWithRetry(
     }
   }
   
-  console.log(`[OpenRouter Request ${requestId}] ---- FAILED (Exhausted) ----`);
+  processDebug(`[OpenRouter Request ${requestId}] ---- FAILED (Exhausted) ----`);
   throw lastError; // 不应该到达这里，但为了类型安全
 }
 
@@ -462,190 +676,6 @@ async function runWithStatusHeartbeat<T>(
   } finally {
     clearInterval(interval);
   }
-}
-
-async function parseSrtContent(srtText: string) {
-  // 简单解析SRT内容为纯文本（忽略时间戳）
-  const lines = srtText.split('\n');
-  let plainText = '';
-  let isTimestamp = false;
-
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-    // 跳过空行、数字行和时间戳行
-    if (trimmedLine === '' || /^\d+$/.test(trimmedLine) || trimmedLine.includes(' --> ')) {
-      isTimestamp = trimmedLine.includes(' --> ');
-      continue;
-    }
-    
-    // 如果上一行不是时间戳，添加空格
-    if (!isTimestamp && plainText.length > 0) {
-      plainText += ' ';
-    }
-    
-    plainText += trimmedLine;
-    isTimestamp = false;
-  }
-
-  return plainText;
-}
-
-function calculateTextStats(text: string): {
-  tokenCount: number;
-  wordCount: number;
-  characterCount: number;
-} {
-  const normalized = text.trim();
-  if (!normalized) {
-    return {
-      tokenCount: 0,
-      wordCount: 0,
-      characterCount: 0,
-    };
-  }
-
-  const characterCount = normalized.length;
-  const latinWordCount = (normalized.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g) || []).length;
-  const cjkCharCount = (normalized.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) || []).length;
-  const wordCount = latinWordCount + cjkCharCount;
-
-  // 粗略估算 token：ASCII 文本按 4 字符约 1 token，CJK 字符按约 1 token
-  const asciiCharCount = (normalized.match(/[\x00-\x7F]/g) || []).length;
-  const nonAsciiCharCount = characterCount - asciiCharCount;
-  const tokenCount = Math.max(1, Math.round(asciiCharCount / 4 + nonAsciiCharCount));
-
-  return {
-    tokenCount,
-    wordCount,
-    characterCount,
-  };
-}
-
-interface ParsedSummaryResult {
-  summaryLegacy: string;
-  summaryZh: string;
-  summaryEn: string;
-}
-
-const SUMMARY_EN_MARKER = '<<<SUMMARY_EN>>>';
-const SUMMARY_ZH_MARKER = '<<<SUMMARY_ZH>>>';
-
-function normalizeSummaryMarkdown(input: string): string {
-  return String(input || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/^[ \t]*•[ \t]+/gm, '- ')
-    .trim();
-}
-
-function splitBilingualSummary(rawSummary: string): ParsedSummaryResult {
-  const normalized = normalizeSummaryMarkdown(rawSummary);
-  if (!normalized) {
-    return {
-      summaryLegacy: '',
-      summaryZh: '',
-      summaryEn: '',
-    };
-  }
-
-  let summaryEn = '';
-  let summaryZh = '';
-
-  const markerEnIndex = normalized.indexOf(SUMMARY_EN_MARKER);
-  const markerZhIndex = normalized.indexOf(SUMMARY_ZH_MARKER);
-  if (markerEnIndex >= 0 && markerZhIndex > markerEnIndex) {
-    summaryEn = normalizeSummaryMarkdown(
-      normalized.slice(markerEnIndex + SUMMARY_EN_MARKER.length, markerZhIndex)
-    );
-    summaryZh = normalizeSummaryMarkdown(
-      normalized.slice(markerZhIndex + SUMMARY_ZH_MARKER.length)
-    );
-  } else {
-    const englishHeaderIndex = normalized.search(/#\s*English Summary/i);
-    const chineseHeaderIndex = normalized.search(/#\s*中文总结/i);
-    if (englishHeaderIndex >= 0 && chineseHeaderIndex > englishHeaderIndex) {
-      summaryEn = normalizeSummaryMarkdown(normalized.slice(englishHeaderIndex, chineseHeaderIndex));
-      summaryZh = normalizeSummaryMarkdown(normalized.slice(chineseHeaderIndex));
-    } else if (chineseHeaderIndex >= 0) {
-      summaryZh = normalizeSummaryMarkdown(normalized.slice(chineseHeaderIndex));
-      summaryEn = normalizeSummaryMarkdown(normalized.slice(0, chineseHeaderIndex));
-    } else {
-      summaryZh = normalized;
-    }
-  }
-
-  const fallbackEn = summaryEn || normalizeSummaryMarkdown(normalized);
-  const fallbackZh = summaryZh || normalizeSummaryMarkdown(normalized);
-  return {
-    summaryLegacy: fallbackZh,
-    summaryZh: fallbackZh,
-    summaryEn: fallbackEn,
-  };
-}
-
-const BRIEF_SUMMARY_MIN_CHARS = 100;
-const BRIEF_SUMMARY_MAX_CHARS = 220;
-
-function toPlainPreviewText(input: string): string {
-  return input
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^#{1,6}\s*/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
-    .replace(/[*_~>#]/g, ' ')
-    .replace(/\r/g, ' ')
-    .replace(/\n+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function trimToNaturalBoundary(input: string, maxChars: number): string {
-  const normalized = input.trim();
-  if (!normalized || normalized.length <= maxChars) {
-    return normalized;
-  }
-
-  const candidate = normalized.slice(0, maxChars);
-  const punctuation = ['。', '！', '？', '.', '!', '?', '；', ';', '，', ','];
-  let best = -1;
-  for (const token of punctuation) {
-    const index = candidate.lastIndexOf(token);
-    if (index > best) {
-      best = index;
-    }
-  }
-  if (best >= Math.floor(maxChars * 0.6)) {
-    return candidate.slice(0, best + 1).trim();
-  }
-  return candidate.trim();
-}
-
-function buildFallbackBriefSummary(summaryZh: string, highlights: string): string {
-  const source = `${String(summaryZh || '')}\n${highlights || ''}`.trim();
-  if (!source) {
-    return '';
-  }
-  const plain = toPlainPreviewText(source);
-  return trimToNaturalBoundary(plain, BRIEF_SUMMARY_MAX_CHARS);
-}
-
-function finalizeBriefSummary(rawText: string, fallback: string): string {
-  const normalized = trimToNaturalBoundary(
-    toPlainPreviewText(rawText).replace(/^["“”']+|["“”']+$/g, '').trim(),
-    BRIEF_SUMMARY_MAX_CHARS
-  );
-  if (normalized.length >= BRIEF_SUMMARY_MIN_CHARS) {
-    return normalized;
-  }
-  if (!fallback) {
-    return normalized;
-  }
-  if (!normalized) {
-    return fallback;
-  }
-  return trimToNaturalBoundary(`${normalized} ${fallback}`, BRIEF_SUMMARY_MAX_CHARS);
 }
 
 async function generateBriefSummary(input: {
@@ -1021,17 +1051,17 @@ async function generateHighlights(
 
 
 // For the parseJSON function - line 527
-function parseJSON(text: string): any {
+function parseJSON(text: string): OpenRouterStreamChunk | null {
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as OpenRouterStreamChunk;
   } catch (error) {
     console.error('Error parsing JSON:', error);
-    return {};
+    return null;
   }
 }
 
 export async function POST(request: NextRequest) {
-  console.log('Process API called');
+  processDebug('Process API called');
   
   // 解析请求数据
   const requestData = await request.json();
@@ -1074,7 +1104,7 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        console.log(`Processing file with ID: ${id}, URL: ${blobUrl}`);
+        processDebug(`Processing file with ID: ${id}, URL: ${blobUrl}`);
         
         // 发送状态更新的函数
         const sendUpdate = async (update: ProcessStreamUpdate) => {
@@ -1091,6 +1121,9 @@ export async function POST(request: NextRequest) {
           briefSummary?: string;
           translation?: string;
           highlights?: string;
+          fullTextBilingualJson?: FullTextBilingualPayload | null;
+          summaryBilingualJson?: SummaryBilingualPayload | null;
+          bilingualAlignmentVersion?: number | null;
         }) => {
           const partialResult = await saveAnalysisPartialResults({
             podcastId: id,
@@ -1100,6 +1133,9 @@ export async function POST(request: NextRequest) {
             briefSummary: partial.briefSummary ?? null,
             translation: partial.translation ?? null,
             highlights: partial.highlights ?? null,
+            fullTextBilingualJson: partial.fullTextBilingualJson ?? null,
+            summaryBilingualJson: partial.summaryBilingualJson ?? null,
+            bilingualAlignmentVersion: partial.bilingualAlignmentVersion ?? null,
           });
           if (!partialResult.success) {
             console.error('保存分析结果增量失败:', partialResult.error);
@@ -1157,6 +1193,7 @@ export async function POST(request: NextRequest) {
         };
 
         const highlightsTask = async () => {
+          // NOTE: `highlights` currently stores the Chinese full-text notes variant.
           const highlightsValue = await generateHighlights(
             cleanSrtContent,
             sendUpdate,
@@ -1174,6 +1211,8 @@ export async function POST(request: NextRequest) {
         let briefSummary = '';
         let translation: string;
         let highlights: string;
+        let fullTextBilingualJson: FullTextBilingualPayload | null = null;
+        let summaryBilingualJson: SummaryBilingualPayload | null = null;
         let mindMapJson: MindMapData | null = null;
         let mindMapJsonZh: MindMapData | null = null;
         let mindMapJsonEn: MindMapData | null = null;
@@ -1201,6 +1240,37 @@ export async function POST(request: NextRequest) {
         summary = summaryResult.summaryLegacy;
         summaryZh = summaryResult.summaryZh;
         summaryEn = summaryResult.summaryEn;
+
+        await sendUpdate({
+          type: 'status',
+          message: 'Aligning bilingual full text and summary...'
+        });
+        fullTextBilingualJson = buildFullTextBilingualPayload(translation, highlights, {
+          nearWindowSec: 12,
+        });
+        summaryBilingualJson = buildSummaryBilingualPayload(summaryEn, summaryZh);
+
+        const [fullTextFallbackResult, summaryFallbackResult] = await Promise.all([
+          applyLlmFallbackToFullTextPayload(fullTextBilingualJson, {
+            fullTextZh: highlights,
+            maxMissing: BILINGUAL_LLM_MAX_MISSING,
+          }),
+          applyLlmFallbackToSummaryPayload(summaryBilingualJson, {
+            summaryZh,
+            maxMissing: BILINGUAL_LLM_MAX_MISSING,
+          }),
+        ]);
+        fullTextBilingualJson = fullTextFallbackResult.payload;
+        summaryBilingualJson = summaryFallbackResult.payload;
+        await persistPartialResult({
+          fullTextBilingualJson,
+          summaryBilingualJson,
+          bilingualAlignmentVersion: BILINGUAL_ALIGNMENT_VERSION,
+        });
+        await sendUpdate({
+          type: 'status',
+          message: `Bilingual alignment ready (full-text llm=${fullTextFallbackResult.llmMatched}, summary llm=${summaryFallbackResult.llmMatched}).`
+        });
 
         await sendUpdate({
           type: 'status',
@@ -1267,7 +1337,7 @@ export async function POST(request: NextRequest) {
         }
         
         // 保存处理结果到数据库
-        console.log(`准备保存分析结果，podcastId: ${id}, 类型: ${typeof id}`);
+        processDebug(`准备保存分析结果，podcastId: ${id}, 类型: ${typeof id}`);
         try {
           await saveAnalysisResults({
             podcastId: id,
@@ -1277,6 +1347,9 @@ export async function POST(request: NextRequest) {
             briefSummary,
             translation,
             highlights,
+            fullTextBilingualJson,
+            summaryBilingualJson,
+            bilingualAlignmentVersion: BILINGUAL_ALIGNMENT_VERSION,
             mindMapJson,
             mindMapJsonZh,
             mindMapJsonEn,
@@ -1284,7 +1357,7 @@ export async function POST(request: NextRequest) {
             wordCount: textStats.wordCount,
             characterCount: textStats.characterCount,
           });
-          console.log(`分析结果保存成功，podcastId: ${id}`);
+          processDebug(`分析结果保存成功，podcastId: ${id}`);
         } catch (dbError) {
           console.error('保存分析结果到数据库失败:', dbError);
           // 即使数据库保存失败，我们也继续返回结果给用户
@@ -1305,7 +1378,7 @@ export async function POST(request: NextRequest) {
         if (!qaIndexResult.success) {
           console.error('构建 QA 检索索引失败:', qaIndexResult.error);
         } else {
-          console.log(`QA 检索索引构建完成，podcastId: ${id}, chunks: ${qaIndexResult.chunkCount}`);
+          processDebug(`QA 检索索引构建完成，podcastId: ${id}, chunks: ${qaIndexResult.chunkCount}`);
         }
 
         // 发送全部完成事件
@@ -1318,6 +1391,9 @@ export async function POST(request: NextRequest) {
             briefSummary,
             translation,
             highlights,
+            fullTextBilingualJson,
+            summaryBilingualJson,
+            bilingualAlignmentVersion: BILINGUAL_ALIGNMENT_VERSION,
             mindMapJson,
             mindMapJsonZh,
             mindMapJsonEn,

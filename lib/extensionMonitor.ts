@@ -134,6 +134,21 @@ let lastCleanupAt = 0;
 const CLEANUP_THROTTLE_MS = 10 * 60 * 1000;
 const MAX_TEXT_LEN = 4096;
 const MAX_JSON_TEXT_LEN = 200000;
+const REDACTED_VALUE = '***';
+const SENSITIVE_KEY_PATTERNS: RegExp[] = [
+  /^authorization$/,
+  /^cookie$/,
+  /^set-cookie$/,
+  /^x-api-key$/,
+  /^api[-_]?key$/,
+  /^access[-_]?token$/,
+  /^refresh[-_]?token$/,
+  /^id[-_]?token$/,
+  /^secret$/,
+  /^password$/,
+  /^pass$/,
+  /^pwd$/,
+];
 
 function parseBool(input: string | undefined, fallback: boolean): boolean {
   if (!input) {
@@ -204,8 +219,8 @@ function redactSensitive(obj: unknown): unknown {
   const next: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
     const lower = key.toLowerCase();
-    if (lower === 'password' || lower === 'pass' || lower === 'pwd') {
-      next[key] = '***';
+    if (SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(lower))) {
+      next[key] = REDACTED_VALUE;
       continue;
     }
     next[key] = redactSensitive(value);

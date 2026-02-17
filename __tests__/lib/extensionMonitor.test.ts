@@ -86,7 +86,8 @@ describe('extensionMonitor', () => {
 
     expect(event).not.toBeNull();
     expect(joined).toContain('"password":"***"');
-    expect(joined).toContain('Bearer test-token');
+    expect(joined).toContain('"authorization":"***"');
+    expect(joined).not.toContain('Bearer test-token');
     expect(joined).not.toContain('secret123');
 
     nowSpy.mockRestore();

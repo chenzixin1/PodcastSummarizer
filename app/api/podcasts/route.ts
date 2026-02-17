@@ -3,12 +3,33 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { getAllPodcasts, getUserPodcasts } from '../../../lib/db';
 
+const DEFAULT_PAGE = 1;
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE = 10_000;
+const MAX_PAGE_SIZE = 50;
+
+function parsePage(input: string | null): number {
+  const parsed = Number.parseInt(String(input || ''), 10);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_PAGE;
+  }
+  return Math.min(MAX_PAGE, Math.max(1, parsed));
+}
+
+function parsePageSize(input: string | null): number {
+  const parsed = Number.parseInt(String(input || ''), 10);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_PAGE_SIZE;
+  }
+  return Math.min(MAX_PAGE_SIZE, Math.max(1, parsed));
+}
+
 export async function GET(request: NextRequest) {
   try {
     // 获取分页参数
     const searchParams = request.nextUrl.searchParams;
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const pageSize = parseInt(searchParams.get('pageSize') || '10', 10);
+    const page = parsePage(searchParams.get('page'));
+    const pageSize = parsePageSize(searchParams.get('pageSize'));
     const includePrivate = searchParams.get('includePrivate') === 'true';
     
     let result;

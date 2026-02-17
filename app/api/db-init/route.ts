@@ -1,18 +1,40 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { initDatabase } from '../../../lib/db';
+import { requireAdminAccess } from '../../../lib/adminGuard';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(request: NextRequest | Request) {
   try {
-    // 先尝试删除表（如果存在）
-    try {
-      await sql`DROP TABLE IF EXISTS analysis_results`;
-      await sql`DROP TABLE IF EXISTS podcasts`;
-      console.log('✅ 已删除旧表结构');
-    } catch (error) {
-      console.error('❌ 删除表失败，但将继续尝试创建:', error);
+    const adminCheck = await requireAdminAccess();
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
+    const searchParams =
+      request instanceof NextRequest
+        ? request.nextUrl.searchParams
+        : new URL(request.url).searchParams;
+    const wantsReset = searchParams.get('reset') === 'true';
+    const isProduction = process.env.NODE_ENV === 'production';
+    const shouldReset = process.env.NODE_ENV === 'test' || (wantsReset && !isProduction);
+
+    if (wantsReset && isProduction) {
+      return NextResponse.json({
+        success: false,
+        error: 'Reset is disabled in production.',
+      }, { status: 403 });
+    }
+
+    if (shouldReset) {
+      // 先尝试删除表（如果存在）
+      try {
+        await sql`DROP TABLE IF EXISTS analysis_results`;
+        await sql`DROP TABLE IF EXISTS podcasts`;
+      } catch (error) {
+        console.error('❌ 删除表失败，但将继续尝试创建:', error);
+      }
     }
     
     // 初始化数据库

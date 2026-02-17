@@ -3,6 +3,10 @@
     {
       "path": "/api/worker/process",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/worker/alignment-backfill",
+      "schedule": "0 4 * * *"
     }
   ]
 }

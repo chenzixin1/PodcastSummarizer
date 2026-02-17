@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import bcrypt from 'bcryptjs';
+import { requireAdminAccess } from '../../../lib/adminGuard';
+
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
+    const adminCheck = await requireAdminAccess();
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
     const { email, password } = await request.json();
     
     if (!email || !password) {
@@ -12,8 +20,6 @@ export async function POST(request: NextRequest) {
         error: 'Email and password are required'
       }, { status: 400 });
     }
-
-    console.log(`Testing login for: ${email}`);
     
     // 查找用户
     const result = await sql`
@@ -34,7 +40,6 @@ export async function POST(request: NextRequest) {
     }
     
     const user = result.rows[0];
-    console.log(`Found user: ${user.id}, password_hash length: ${user.password_hash?.length || 0}`);
     
     // 检查密码
     if (!user.password_hash) {

@@ -221,6 +221,117 @@ body {
   color: var(--text-main);
 }
 
+.markdown-body .bilingual-zh-line {
+  color: var(--text-secondary);
+}
+
+.markdown-body .hint-pronounce-word {
+  position: relative;
+  display: inline;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-decoration-color: rgba(47, 102, 86, 0.4);
+  text-underline-offset: 0.2em;
+}
+
+.markdown-body .hint-pronounce-word .hint-word-text {
+  display: inline;
+}
+
+.markdown-body .hint-pronounce-word:hover,
+.markdown-body .hint-pronounce-word:focus-visible {
+  color: var(--heading);
+  text-decoration-color: var(--heading);
+  outline: none;
+}
+
+.markdown-body .hint-pronounce-word .hint-dict-tooltip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 10px);
+  z-index: 40;
+  display: none;
+  min-width: 260px;
+  max-width: min(440px, 76vw);
+  border: 1px solid #d8d3c9;
+  border-radius: 12px;
+  background: #fffdf9;
+  padding: 10px 12px;
+  box-shadow: 0 14px 26px -18px rgba(63, 52, 35, 0.45);
+  color: #2f332e;
+  text-align: left;
+  line-height: 1.58;
+  font-size: 0.82rem;
+  letter-spacing: 0;
+  white-space: normal;
+}
+
+.markdown-body .hint-pronounce-word:hover .hint-dict-tooltip,
+.markdown-body .hint-pronounce-word:focus-visible .hint-dict-tooltip,
+.markdown-body .hint-pronounce-word:focus-within .hint-dict-tooltip {
+  display: block;
+}
+
+.markdown-body .hint-pronounce-word .hint-dict-headword {
+  display: block;
+  margin-bottom: 4px;
+  color: #1d4f41;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.markdown-body .hint-pronounce-word .hint-dict-pos {
+  display: block;
+  margin-bottom: 6px;
+  color: #5a645c;
+  font-size: 0.74rem;
+}
+
+.markdown-body .hint-pronounce-word .hint-dict-sense-list {
+  display: block;
+}
+
+.markdown-body .hint-pronounce-word .hint-dict-sense-item {
+  display: block;
+  margin-top: 4px;
+}
+
+.markdown-body .hint-pronounce-word .hint-dict-sense-pos {
+  margin-right: 6px;
+  color: #2f6656;
+  font-weight: 600;
+}
+
+.markdown-body .hint-pronounce-word .hint-dict-sense-meaning {
+  color: #2f332e;
+}
+
+.dashboard-shell[data-theme='dark'] .markdown-body .hint-pronounce-word .hint-dict-tooltip {
+  border-color: #3f4b48;
+  background: #17211f;
+  color: #d8e5de;
+  box-shadow: 0 14px 28px -20px rgba(0, 0, 0, 0.65);
+}
+
+.dashboard-shell[data-theme='dark'] .markdown-body .hint-pronounce-word .hint-dict-headword {
+  color: #8fcdb8;
+}
+
+.dashboard-shell[data-theme='dark'] .markdown-body .hint-pronounce-word .hint-dict-pos {
+  color: #a8bbb2;
+}
+
+.dashboard-shell[data-theme='dark'] .markdown-body .hint-pronounce-word .hint-dict-sense-pos {
+  color: #8fcdb8;
+}
+
 .markdown-body ul {
   margin: 0 0 1rem;
   padding-left: 1.6rem;
@@ -317,6 +428,16 @@ body {
   border-collapse: collapse;
   border-radius: 0.7rem;
   overflow: hidden;
+}
+
+.markdown-body hr {
+  border: 0;
+  border-top: 1px solid #d9d2c4;
+  margin: 1.1rem 0 1.25rem;
+}
+
+.dashboard-shell[data-theme='dark'] .markdown-body hr {
+  border-top-color: #404b5b;
 }
 
 .markdown-body th,

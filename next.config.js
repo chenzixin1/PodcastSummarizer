@@ -1,9 +1,8 @@
+const path = require('path');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  eslint: {
-    // Disable ESLint during builds, we're adding inline disable comments instead
-    ignoreDuringBuilds: true,
-  },
+  outputFileTracingRoot: path.join(__dirname),
   env: {
     // LLM Model Configuration
     OPENROUTER_MODEL: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',

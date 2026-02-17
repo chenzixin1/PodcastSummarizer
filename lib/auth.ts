@@ -4,8 +4,24 @@ import GoogleProvider from 'next-auth/providers/google'
 import bcrypt from 'bcryptjs'
 import { sql } from '@vercel/postgres'
 import { nanoid } from 'nanoid'
-import type { NextAuthOptions } from 'next-auth'
+import type { Account, NextAuthOptions, Profile, Session, User } from 'next-auth'
+import type { JWT } from 'next-auth/jwt'
 import { ensureUserCreditsSchema, getInitialSrtCreditsForEmail } from './db'
+
+const resolvedNextAuthSecret = (() => {
+  const secret = (process.env.NEXTAUTH_SECRET || '').trim();
+  if (secret) {
+    return secret;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('NEXTAUTH_SECRET must be configured in production.');
+  }
+
+  return 'dev-only-nextauth-secret';
+})();
+
+type SessionUserWithId = Session['user'] & { id?: string };
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -65,28 +81,33 @@ export const authOptions: NextAuthOptions = {
   pages: {
     signIn: '/auth/signin',
   },
-  secret: process.env.NEXTAUTH_SECRET || 'development-secret-key',
+  secret: resolvedNextAuthSecret,
   callbacks: {
-    async signIn({ user, account, profile }: { user: any; account: any; profile?: any }) {
+    async signIn({ user, account }: { user: User; account: Account | null; profile?: Profile }) {
       if (account?.provider === 'google') {
         try {
+          const userEmail = String(user.email || '').trim().toLowerCase();
+          if (!userEmail) {
+            return false;
+          }
+
           // 检查用户是否已存在
           const existingUser = await sql`
-            SELECT id FROM users WHERE email = ${user.email}
+            SELECT id FROM users WHERE email = ${userEmail}
           `
           
           if (existingUser.rows.length === 0) {
             // 创建新用户
             const userId = nanoid()
-            const initialCredits = getInitialSrtCreditsForEmail(user.email || '')
+            const initialCredits = getInitialSrtCreditsForEmail(userEmail)
             await ensureUserCreditsSchema()
             await sql`
               INSERT INTO users (id, email, name, password_hash, credits, created_at)
-              VALUES (${userId}, ${user.email}, ${user.name || user.email}, '', ${initialCredits}, NOW())
+              VALUES (${userId}, ${userEmail}, ${user.name || userEmail}, '', ${initialCredits}, NOW())
             `
             user.id = userId
           } else {
-            user.id = existingUser.rows[0].id
+            user.id = String(existingUser.rows[0].id)
           }
         } catch (error) {
           console.error('Google sign in error:', error)
@@ -95,15 +116,16 @@ export const authOptions: NextAuthOptions = {
       }
       return true
     },
-    async jwt({ token, user }: { token: any; user: any }) {
+    async jwt({ token, user }: { token: JWT; user?: User }) {
       if (user) {
         token.id = user.id
       }
       return token
     },
-    async session({ session, token }: { session: any; token: any }) {
-      if (token) {
-        session.user.id = token.id as string
+    async session({ session, token }: { session: Session; token: JWT }) {
+      const sessionUser = session.user as SessionUserWithId | undefined
+      if (sessionUser && token.id) {
+        sessionUser.id = String(token.id)
       }
       return session
     },

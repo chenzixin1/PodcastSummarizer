@@ -33,6 +33,9 @@ async function initDatabase() {
         mind_map_json JSONB,
         mind_map_json_zh JSONB,
         mind_map_json_en JSONB,
+        full_text_bilingual_json JSONB,
+        summary_bilingual_json JSONB,
+        bilingual_alignment_version INTEGER DEFAULT 0,
         token_count INTEGER,
         word_count INTEGER,
         character_count INTEGER,
@@ -81,6 +84,9 @@ async function initDatabase() {
     await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS mind_map_json JSONB`;
     await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS mind_map_json_zh JSONB`;
     await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS mind_map_json_en JSONB`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS full_text_bilingual_json JSONB`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS summary_bilingual_json JSONB`;
+    await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS bilingual_alignment_version INTEGER DEFAULT 0`;
 
     // 测试查询
     const result = await sql`SELECT NOW() as current_time`;

@@ -1,43 +1,39 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
+import { requireAdminAccess } from '../../../lib/adminGuard';
 
-export async function GET(request: NextRequest) {
+export const runtime = 'nodejs';
+
+export async function GET() {
   try {
-    // 获取所有用户信息
+    const adminCheck = await requireAdminAccess();
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
     const users = await sql`
       SELECT 
-        id, 
-        email, 
-        name, 
-        credits,
-        created_at,
+        u.id, 
+        u.email, 
+        u.name, 
+        u.credits,
+        u.created_at,
+        COALESCE(COUNT(p.id), 0)::int as podcast_count,
         CASE 
-          WHEN password_hash = '' THEN 'Google OAuth'
-          WHEN password_hash IS NULL THEN 'No Password'
+          WHEN u.password_hash = '' THEN 'Google OAuth'
+          WHEN u.password_hash IS NULL THEN 'No Password'
           ELSE 'Email/Password'
         END as auth_type
-      FROM users 
-      ORDER BY created_at DESC
+      FROM users u
+      LEFT JOIN podcasts p ON p.user_id = u.id
+      GROUP BY u.id, u.email, u.name, u.credits, u.created_at, u.password_hash
+      ORDER BY u.created_at DESC
     `;
-    
-    // 获取每个用户的播客数量
-    const usersWithStats = await Promise.all(
-      users.rows.map(async (user) => {
-        const podcastCount = await sql`
-          SELECT COUNT(*) as count FROM podcasts WHERE user_id = ${user.id}
-        `;
-        
-        return {
-          ...user,
-          podcast_count: parseInt(podcastCount.rows[0].count)
-        };
-      })
-    );
-    
+
     return NextResponse.json({
       success: true,
-      data: usersWithStats,
-      count: usersWithStats.length,
+      data: users.rows,
+      count: users.rows.length,
       timestamp: new Date().toISOString()
     });
     

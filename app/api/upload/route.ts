@@ -13,6 +13,14 @@ import { resolveFilePodcastTitle, resolveYoutubePodcastTitle } from '../../../li
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
+const UPLOAD_DEBUG_ENABLED = process.env.UPLOAD_DEBUG_LOGS === 'true';
+function uploadDebug(...args: unknown[]) {
+  if (!UPLOAD_DEBUG_ENABLED) {
+    return;
+  }
+  console.log(...args);
+}
+
 function createFileFromText(content: string, filename: string): File {
   const buffer = Buffer.from(content, 'utf8');
   if (typeof File !== 'undefined') {
@@ -58,7 +66,7 @@ export async function POST(request: NextRequest) {
 
   if (!file && youtubeUrl) {
     try {
-      console.log('[UPLOAD] Resolving transcript from YouTube URL via APIFY', youtubeUrl);
+      uploadDebug('[UPLOAD] Resolving transcript from YouTube URL via APIFY', youtubeUrl);
       const youtubeResult = await fetchYoutubeSrtViaApify(youtubeUrl);
 
       file = createFileFromText(youtubeResult.srtContent, `${youtubeResult.videoId}.srt`);
@@ -69,7 +77,7 @@ export async function POST(request: NextRequest) {
       };
       youtubeVideoTitle = youtubeResult.title;
 
-      console.log('[UPLOAD] YouTube transcript resolved', {
+      uploadDebug('[UPLOAD] YouTube transcript resolved', {
         source: youtubeResult.source,
         videoId: youtubeResult.videoId,
         entries: youtubeResult.entries,
@@ -150,7 +158,7 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
 
-    console.log('[UPLOAD] Start upload:', { id, filename, fileSize, title, isPublic, userId });
+    uploadDebug('[UPLOAD] Start upload:', { id, filename, fileSize, title, isPublic });
 
     let blobUrl = '#mock-blob-url';
 
@@ -159,7 +167,7 @@ export async function POST(request: NextRequest) {
         access: 'public',
       });
       blobUrl = blob.url;
-      console.log('[UPLOAD] File uploaded to blob:', blobUrl);
+      uploadDebug('[UPLOAD] File uploaded to blob.');
     } else {
       console.warn('[UPLOAD] BLOB_READ_WRITE_TOKEN not configured, using mock storage');
     }
@@ -174,7 +182,7 @@ export async function POST(request: NextRequest) {
       isPublic,
       userId,
     });
-    console.log('[UPLOAD] savePodcast result:', dbResult);
+    uploadDebug('[UPLOAD] savePodcast result:', { success: dbResult.success, errorCode: dbResult.errorCode });
 
     if (!dbResult.success) {
       if (dbResult.errorCode === 'INSUFFICIENT_CREDITS') {
@@ -202,7 +210,7 @@ export async function POST(request: NextRequest) {
     if (!queueResult.success) {
       console.error('[UPLOAD] enqueueProcessingJob failed:', queueResult.error);
     } else {
-      console.log('[UPLOAD] Processing job queued:', queueResult.data?.status);
+      uploadDebug('[UPLOAD] Processing job queued:', queueResult.data?.status);
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('upload', id);
         if (!triggerResult.success) {

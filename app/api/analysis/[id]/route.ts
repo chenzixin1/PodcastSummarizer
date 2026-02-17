@@ -5,6 +5,14 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
 
+const ANALYSIS_DEBUG_ENABLED = process.env.ANALYSIS_DEBUG_LOGS === 'true';
+function analysisDebug(...args: unknown[]) {
+  if (!ANALYSIS_DEBUG_ENABLED) {
+    return;
+  }
+  console.log(...args);
+}
+
 interface AnalysisData {
   summary?: string | null;
   summaryZh?: string | null;
@@ -14,6 +22,9 @@ interface AnalysisData {
   mindMapJson?: unknown;
   mindMapJsonZh?: unknown;
   mindMapJsonEn?: unknown;
+  fullTextBilingualJson?: unknown;
+  summaryBilingualJson?: unknown;
+  bilingualAlignmentVersion?: number | null;
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
@@ -102,12 +113,12 @@ export async function GET(
       return NextResponse.json({ error: 'Missing ID parameter' }, { status: 400 });
     }
 
-    console.log(`获取分析结果 API 调用，ID: ${id}`);
+    analysisDebug(`获取分析结果 API 调用，ID: ${id}`);
 
     // 首先获取播客基本信息
     const podcastResult = await getPodcast(id);
     if (!podcastResult.success) {
-      console.log(`播客不存在，ID: ${id}`);
+      analysisDebug(`播客不存在，ID: ${id}`);
       return NextResponse.json({ error: 'Podcast not found' }, { status: 404 });
     }
 
@@ -144,7 +155,7 @@ export async function GET(
 
     const analysisResult = await getAnalysisResults(id);
     if (!analysisResult.success) {
-      console.log(`分析结果不存在，ID: ${id}`);
+      analysisDebug(`分析结果不存在，ID: ${id}`);
       // 返回播客信息但没有分析结果
       return NextResponse.json({
         success: true,
@@ -161,7 +172,7 @@ export async function GET(
     const analysisData = (analysisResult.data || null) as AnalysisData | null;
     const isProcessed = hasCompleteAnalysis(analysisData, processingJob?.status || null);
 
-    console.log(`成功获取分析结果，ID: ${id}`);
+    analysisDebug(`成功获取分析结果，ID: ${id}`);
     return NextResponse.json({
       success: true,
       data: {

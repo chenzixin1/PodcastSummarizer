@@ -242,7 +242,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
           nodeMinWidth={0}
           nodeMaxWidth={560}
           transforms={transforms}
-          layout={layout as any}
+          layout={layout}
           animation={false}
           containerStyle={{ width: '100%', height: '100%' }}
           onInit={handleGraphReady}

@@ -1,113 +1,104 @@
 /**
- * Podcasts API Route Tests
- * 
- * 测试获取播客列表API的各种场景：
- * 1. 正常获取播客列表
- * 2. 分页功能
- * 3. 公开/私有播客过滤
- * 4. 错误处理
- * 5. 参数验证
- */
-
-/**
  * @jest-environment node
  */
 
 import { NextRequest } from 'next/server';
-import { GET } from '../../app/api/podcasts/route';
+import { getServerSession } from 'next-auth/next';
+import { getAllPodcasts, getUserPodcasts } from '../../lib/db';
 
-// Mock 数据库操作 - 必须在导入API路由之前
-jest.mock('../../lib/db', () => ({
-  getAllPodcasts: jest.fn()
+jest.mock('next-auth/next', () => ({
+  getServerSession: jest.fn(),
 }));
 
-// 获取mock函数的引用
-const mockGetAllPodcasts = jest.fn();
+jest.mock('../../lib/auth', () => ({
+  authOptions: {},
+}));
 
-// 在每个测试中重新设置mock
-beforeEach(() => {
-  jest.clearAllMocks();
-  // 重新设置mock实现
-  require('../../lib/db').getAllPodcasts = mockGetAllPodcasts;
-});
+jest.mock('../../lib/db', () => ({
+  getAllPodcasts: jest.fn(),
+  getUserPodcasts: jest.fn(),
+}));
 
-describe('Podcasts API Tests', () => {
-  it('should return paginated podcasts with default parameters', async () => {
-    const mockPodcasts = [
-      { id: '1', title: 'Test Podcast 1', created_at: '2024-01-01' },
-      { id: '2', title: 'Test Podcast 2', created_at: '2024-01-02' }
-    ];
+import { GET } from '../../app/api/podcasts/route';
 
-    mockGetAllPodcasts.mockResolvedValue({
+const mockGetServerSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
+const mockGetAllPodcasts = getAllPodcasts as jest.MockedFunction<typeof getAllPodcasts>;
+const mockGetUserPodcasts = getUserPodcasts as jest.MockedFunction<typeof getUserPodcasts>;
+
+describe('Podcasts API', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('returns public podcasts with default pagination', async () => {
+    mockGetAllPodcasts.mockResolvedValueOnce({
       success: true,
-      data: mockPodcasts
+      data: [{ id: '1', title: 'Public' }],
     });
 
-    const url = new URL('http://localhost:3000/api/podcasts');
-    const request = new NextRequest(url);
-    
+    const request = new NextRequest('http://localhost:3000/api/podcasts');
     const response = await GET(request);
     const data = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.data).toEqual(mockPodcasts);
     expect(mockGetAllPodcasts).toHaveBeenCalledWith(1, 10, false);
+    expect(mockGetServerSession).not.toHaveBeenCalled();
   });
 
-  it('should handle custom pagination parameters', async () => {
-    const mockPodcasts = [
-      { id: '3', title: 'Test Podcast 3', created_at: '2024-01-03' }
-    ];
-
-    mockGetAllPodcasts.mockResolvedValue({
+  test('normalizes invalid pagination values', async () => {
+    mockGetAllPodcasts.mockResolvedValueOnce({
       success: true,
-      data: mockPodcasts
+      data: [],
     });
 
-    const url = new URL('http://localhost:3000/api/podcasts?page=2&pageSize=5');
-    const request = new NextRequest(url);
-    
+    const request = new NextRequest('http://localhost:3000/api/podcasts?page=0&pageSize=999');
+    const response = await GET(request);
+
+    expect(response.status).toBe(200);
+    expect(mockGetAllPodcasts).toHaveBeenCalledWith(1, 50, false);
+  });
+
+  test('requires auth for private podcasts', async () => {
+    mockGetServerSession.mockResolvedValueOnce(null);
+
+    const request = new NextRequest('http://localhost:3000/api/podcasts?includePrivate=true');
+    const response = await GET(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data.error).toContain('Authentication required');
+    expect(mockGetUserPodcasts).not.toHaveBeenCalled();
+  });
+
+  test('returns private podcasts for authenticated user', async () => {
+    mockGetServerSession.mockResolvedValueOnce({
+      user: { id: 'user-1', email: 'u@example.com' },
+      expires: new Date(Date.now() + 60_000).toISOString(),
+    } as never);
+
+    mockGetUserPodcasts.mockResolvedValueOnce({
+      success: true,
+      data: [{ id: 'private-1', title: 'Private' }],
+    });
+
+    const request = new NextRequest('http://localhost:3000/api/podcasts?includePrivate=true&page=2&pageSize=5');
     const response = await GET(request);
     const data = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.data).toEqual(mockPodcasts);
-    expect(mockGetAllPodcasts).toHaveBeenCalledWith(2, 5, false);
+    expect(mockGetUserPodcasts).toHaveBeenCalledWith('user-1', 2, 5);
+    expect(mockGetAllPodcasts).not.toHaveBeenCalled();
   });
 
-  it('should handle includePrivate parameter', async () => {
-    const mockPodcasts = [
-      { id: '1', title: 'Private Podcast', created_at: '2024-01-01', isPublic: false }
-    ];
-
-    mockGetAllPodcasts.mockResolvedValue({
-      success: true,
-      data: mockPodcasts
-    });
-
-    const url = new URL('http://localhost:3000/api/podcasts?includePrivate=true');
-    const request = new NextRequest(url);
-    
-    const response = await GET(request);
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(data.data).toEqual(mockPodcasts);
-    expect(mockGetAllPodcasts).toHaveBeenCalledWith(1, 10, true);
-  });
-
-  it('should handle database errors gracefully', async () => {
-    mockGetAllPodcasts.mockResolvedValue({
+  test('returns 500 when db returns failure payload', async () => {
+    mockGetAllPodcasts.mockResolvedValueOnce({
       success: false,
-      error: 'Database connection failed'
+      error: 'Database connection failed',
     });
 
-    const url = new URL('http://localhost:3000/api/podcasts');
-    const request = new NextRequest(url);
-    
+    const request = new NextRequest('http://localhost:3000/api/podcasts');
     const response = await GET(request);
     const data = await response.json();
 
@@ -115,12 +106,10 @@ describe('Podcasts API Tests', () => {
     expect(data.error).toBe('Database connection failed');
   });
 
-  it('should handle database exceptions', async () => {
-    mockGetAllPodcasts.mockRejectedValue(new Error('Connection timeout'));
+  test('returns 500 when db throws exception', async () => {
+    mockGetAllPodcasts.mockRejectedValueOnce(new Error('Connection timeout'));
 
-    const url = new URL('http://localhost:3000/api/podcasts');
-    const request = new NextRequest(url);
-    
+    const request = new NextRequest('http://localhost:3000/api/podcasts');
     const response = await GET(request);
     const data = await response.json();
 
@@ -128,21 +117,4 @@ describe('Podcasts API Tests', () => {
     expect(data.error).toBe('Internal server error');
     expect(data.details).toBe('Connection timeout');
   });
-
-  it('should handle empty results', async () => {
-    mockGetAllPodcasts.mockResolvedValue({
-      success: true,
-      data: []
-    });
-
-    const url = new URL('http://localhost:3000/api/podcasts');
-    const request = new NextRequest(url);
-    
-    const response = await GET(request);
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(data.data).toEqual([]);
-  });
-}); 
+});

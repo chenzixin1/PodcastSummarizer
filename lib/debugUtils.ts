@@ -21,9 +21,8 @@ declare global {
 
 // Configuration
 const DEBUG_VERSION = '1.0.1';
-const IS_PRODUCTION = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
-const DEBUG_ENABLED = true; // Set to false to disable all debug logging
-const SEND_TO_SERVER = IS_PRODUCTION; // Whether to send logs to server in production
+const DEBUG_ENABLED = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true';
+const SEND_TO_SERVER = process.env.NEXT_PUBLIC_SEND_DEBUG_TO_SERVER === 'true';
 
 // Track client-side errors
 const clientErrors: Array<{
@@ -34,7 +33,9 @@ const clientErrors: Array<{
 }> = [];
 
 // Initialize debugging
-console.log(`[DEBUG-CLIENT] Podcast Summarizer Debug Utils v${DEBUG_VERSION} initializing...`);
+if (DEBUG_ENABLED) {
+  console.log(`[DEBUG-CLIENT] Podcast Summarizer Debug Utils v${DEBUG_VERSION} initializing...`);
+}
 if (typeof window !== 'undefined') {
   window.addEventListener('error', (event) => {
     logError('Unhandled error', event.error);

@@ -2,8 +2,18 @@
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
+import type { SignInResponse } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+
+const AUTH_DEBUG_ENABLED = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true';
+
+function logAuthDebug(message: string, payload?: unknown) {
+  if (!AUTH_DEBUG_ENABLED) {
+    return;
+  }
+  console.log(message, payload ?? '');
+}
 
 export default function SignInForm() {
   const [email, setEmail] = useState('');
@@ -11,7 +21,7 @@ export default function SignInForm() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [loginStatus, setLoginStatus] = useState<'idle' | 'success' | 'failed'>('idle');
-  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [debugInfo, setDebugInfo] = useState<SignInResponse | { error: string } | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/my';
@@ -24,7 +34,7 @@ export default function SignInForm() {
     setDebugInfo(null);
 
     try {
-      console.log('开始登录，callbackUrl:', callbackUrl);
+      logAuthDebug('开始登录，callbackUrl:', callbackUrl);
       const result = await signIn('credentials', {
         email,
         password,
@@ -32,16 +42,16 @@ export default function SignInForm() {
         callbackUrl,
       });
 
-      console.log('登录结果:', result);
-      setDebugInfo(result);
+      logAuthDebug('登录结果:', result);
+      setDebugInfo(result ?? null);
 
       if (result?.error) {
         setError('Invalid email or password');
         setLoginStatus('failed');
-        console.log('登录失败:', result.error);
+        logAuthDebug('登录失败:', result.error);
       } else if (result?.url) {
         setLoginStatus('success');
-        console.log('登录成功，准备跳转到:', result.url);
+        logAuthDebug('登录成功，准备跳转到:', result.url);
         // 延迟3秒显示成功状态，然后跳转
         setTimeout(() => {
           if (result.url) {
@@ -50,7 +60,7 @@ export default function SignInForm() {
         }, 3000);
       } else if (result?.ok) {
         setLoginStatus('success');
-        console.log('登录成功，准备跳转到:', callbackUrl);
+        logAuthDebug('登录成功，准备跳转到:', callbackUrl);
         // 延迟3秒显示成功状态，然后跳转
         setTimeout(() => {
           router.push(callbackUrl);
@@ -58,7 +68,7 @@ export default function SignInForm() {
       } else {
         setError('Unknown login result');
         setLoginStatus('failed');
-        console.log('未知登录结果:', result);
+        logAuthDebug('未知登录结果:', result);
       }
     } catch (error) {
       console.error('登录异常:', error);
@@ -77,21 +87,21 @@ export default function SignInForm() {
     setDebugInfo(null);
     
     try {
-      console.log('开始Google登录，callbackUrl:', callbackUrl);
+      logAuthDebug('开始Google登录，callbackUrl:', callbackUrl);
       const result = await signIn('google', {
         callbackUrl,
         redirect: false,
       });
       
-      console.log('Google登录结果:', result);
-      setDebugInfo(result);
+      logAuthDebug('Google登录结果:', result);
+      setDebugInfo(result ?? null);
       
       if (result?.error) {
         setError('Failed to sign in with Google');
         setLoginStatus('failed');
       } else if (result?.url) {
         setLoginStatus('success');
-        console.log('Google登录成功，准备跳转到:', result.url);
+        logAuthDebug('Google登录成功，准备跳转到:', result.url);
         setTimeout(() => {
           if (result.url) {
             window.location.href = result.url;

@@ -1,13 +1,13 @@
-/* eslint-disable */
 'use client';
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { Children, isValidElement, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
+import { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getClientErrors } from '../../../lib/debugUtils';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
@@ -16,10 +16,36 @@ import ThemeModeSwitch from '../../../components/ThemeModeSwitch';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 import { extractPodcastTags } from '../../../lib/podcastTags';
 import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
+import {
+  annotateEnglishWithHints,
+  buildHintDictionaryCard,
+  buildFullTextBilingualMarkdown,
+  buildSummaryBilingualMarkdown,
+  stripPronunciationLinks,
+  type AdvancedWordDict,
+  type HintDictionaryCard,
+} from '../../../lib/vocabHint';
+import { createPronunciationController, type PronunciationController } from '../../../lib/pronunciationClient';
+import {
+  normalizeFullTextBilingualPayload,
+  normalizeSummaryBilingualPayload,
+  renderFullTextBilingualMarkdown,
+  renderSummaryBilingualMarkdown,
+  type FullTextBilingualPayload,
+  type SummaryBilingualPayload,
+} from '../../../lib/bilingualAlignment';
+
+const DASHBOARD_DEBUG_ENABLED = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true';
+function dashboardDebugLog(...args: unknown[]) {
+  if (!DASHBOARD_DEBUG_ENABLED) {
+    return;
+  }
+  console.log(...args);
+}
 
 // VERCEL DEBUG: Add version number to help track deployments
 const APP_VERSION = '1.0.5'; // Increment version for tracking
-console.log(`[DEBUG] Podcast Summarizer v${APP_VERSION} loading...`);
+dashboardDebugLog(`[DEBUG] Podcast Summarizer v${APP_VERSION} loading...`);
 
 // Define types for the processed data
 interface ProcessedData {
@@ -32,6 +58,9 @@ interface ProcessedData {
   translation: string;
   fullTextHighlights: string;
   fullTextOriginal: string;
+  fullTextBilingualJson?: FullTextBilingualPayload | null;
+  summaryBilingualJson?: SummaryBilingualPayload | null;
+  bilingualAlignmentVersion?: number | null;
   mindMapJsonZh?: MindMapData | null;
   mindMapJsonEn?: MindMapData | null;
   processedAt?: string;
@@ -54,7 +83,7 @@ interface ProcessingJobData {
 type ViewMode = 'summary' | 'fullText' | 'mindMap';
 type ProcessingTask = 'summary' | 'translation' | 'highlights';
 type ThemeMode = 'light' | 'dark';
-type ContentLanguage = 'zh' | 'en';
+type ContentLanguageMode = 'zh' | 'en' | 'bilingual' | 'hint';
 
 interface ProcessingProgress {
   task: ProcessingTask | null;
@@ -383,6 +412,8 @@ const parseMindMapData = (value: unknown): MindMapData | null => {
 };
 
 const TIMESTAMP_ONLY_PATTERN = /^\[[0-9]{2}:[0-9]{2}:[0-9]{1,3}(?:\s*-->\s*[0-9]{2}:[0-9]{2}:[0-9]{1,3})?\]$/;
+const PRONOUNCE_SCHEME = 'pronounce://';
+const PRONOUNCE_HASH_PREFIX = '#pronounce:';
 
 const flattenReactNodeText = (node: ReactNode): string => {
   if (typeof node === 'string' || typeof node === 'number') {
@@ -397,13 +428,139 @@ const flattenReactNodeText = (node: ReactNode): string => {
   return '';
 };
 
-const markdownComponents: Components = {
+const decodePronounceHref = (href?: string): string | null => {
+  if (!href || (!href.startsWith(PRONOUNCE_SCHEME) && !href.startsWith(PRONOUNCE_HASH_PREFIX))) {
+    return null;
+  }
+  try {
+    const rawValue = href.startsWith(PRONOUNCE_SCHEME)
+      ? href.slice(PRONOUNCE_SCHEME.length)
+      : href.slice(PRONOUNCE_HASH_PREFIX.length);
+    const raw = decodeURIComponent(rawValue).trim().toLowerCase();
+    return raw || null;
+  } catch {
+    return null;
+  }
+};
+
+const markdownUrlTransform = (url: string): string => {
+  if (url.startsWith(PRONOUNCE_SCHEME) || url.startsWith(PRONOUNCE_HASH_PREFIX)) {
+    return url;
+  }
+  return defaultUrlTransform(url);
+};
+
+const createMarkdownComponents = (
+  contentLanguage: ContentLanguageMode,
+  options?: {
+    onHoverWord?: (word: string) => void;
+    onLeaveWord?: () => void;
+    onTapWord?: (word: string) => void;
+    isCoarsePointer?: () => boolean;
+    resolveHintCard?: (word: string) => HintDictionaryCard | null;
+  }
+): Components => ({
   strong({ children }) {
     const normalized = flattenReactNodeText(children).replace(/\s+/g, ' ').trim();
     const isTimestampOnly = TIMESTAMP_ONLY_PATTERN.test(normalized);
     return <strong className={isTimestampOnly ? 'markdown-timestamp-strong' : undefined}>{children}</strong>;
   },
-};
+  a({ href, children }) {
+    const pronounceWord = contentLanguage === 'hint' ? decodePronounceHref(href) : null;
+    if (pronounceWord) {
+      const surfaceWord = flattenReactNodeText(children).replace(/\s+/g, ' ').trim() || pronounceWord;
+      const hintCard = options?.resolveHintCard?.(pronounceWord) || null;
+      const handleHoverStart = () => {
+        options?.onHoverWord?.(pronounceWord);
+      };
+      const handleHoverEnd = () => {
+        options?.onLeaveWord?.();
+      };
+      return (
+        <button
+          type="button"
+          className="hint-pronounce-word"
+          onMouseEnter={handleHoverStart}
+          onMouseLeave={handleHoverEnd}
+          onPointerEnter={(event) => {
+            if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
+              return;
+            }
+            handleHoverStart();
+          }}
+          onPointerLeave={(event) => {
+            if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
+              return;
+            }
+            handleHoverEnd();
+          }}
+          onBlur={handleHoverEnd}
+          onClick={(event) => {
+            event.preventDefault();
+            if (options?.isCoarsePointer?.()) {
+              options?.onTapWord?.(pronounceWord);
+              return;
+            }
+            options?.onTapWord?.(pronounceWord);
+          }}
+          aria-label={`Dictionary hint for ${surfaceWord}`}
+        >
+          <span className="hint-word-text">{children}</span>
+          {hintCard ? (
+            <span className="hint-dict-tooltip" role="tooltip">
+              <span className="hint-dict-headword">{hintCard.word}</span>
+              <span className="hint-dict-pos">词性：{hintCard.posSummary.join(' / ')}</span>
+              <span className="hint-dict-sense-list">
+                {hintCard.senses.map((sense, index) => (
+                  <span className="hint-dict-sense-item" key={`${sense.pos}-${sense.meaning}-${index}`}>
+                    <span className="hint-dict-sense-pos">{sense.pos}</span>
+                    <span className="hint-dict-sense-meaning">{sense.meaning}</span>
+                  </span>
+                ))}
+              </span>
+            </span>
+          ) : null}
+        </button>
+      );
+    }
+
+    if (href && isValidHttpUrl(href)) {
+      return (
+        <a href={href} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      );
+    }
+
+    return <a href={href}>{children}</a>;
+  },
+  p({ children }) {
+    if (contentLanguage !== 'bilingual') {
+      return <p>{children}</p>;
+    }
+
+    const nodes = Children.toArray(children);
+    const brIndex = nodes.findIndex((node) => isValidElement(node) && node.type === 'br');
+    if (brIndex < 0) {
+      return <p>{children}</p>;
+    }
+
+    const before = nodes.slice(0, brIndex);
+    const after = nodes.slice(brIndex + 1);
+    const afterText = flattenReactNodeText(after).trim();
+    if (!afterText || !/[\u4E00-\u9FFF]/.test(afterText)) {
+      return <p>{children}</p>;
+    }
+
+    return (
+      <p>
+        <span className="bilingual-en-line">{before}</span>
+        <br />
+        <span className="bilingual-zh-line">{after}</span>
+      </p>
+    );
+  },
+});
 
 const isValidHttpUrl = (value: string) => {
   try {
@@ -439,7 +596,7 @@ interface DebugState {
   initialized: boolean;
   lastAction: string;
   processingState: string;
-  errors: any[];
+  errors: unknown[];
   networkRequests: {
     url: string;
     status: number;
@@ -457,7 +614,7 @@ interface DebugState {
 // 声明 window.__PODSUM_DEBUG__ 用于调试
 declare global {
   interface Window {
-    __PODSUM_DEBUG__?: any;
+    __PODSUM_DEBUG__?: unknown;
   }
 }
 
@@ -480,7 +637,9 @@ export default function DashboardPage() {
   const [assistantPanelHeight, setAssistantPanelHeight] = useState<number | undefined>(undefined);
   const [assistantStickyTop, setAssistantStickyTop] = useState(96);
   const [themeMode, setThemeMode] = useState<ThemeMode>('light');
-  const [contentLanguage, setContentLanguage] = useState<ContentLanguage>('zh');
+  const [contentLanguage, setContentLanguage] = useState<ContentLanguageMode>('zh');
+  const [vocabDict, setVocabDict] = useState<AdvancedWordDict | null>(null);
+  const [vocabLoadError, setVocabLoadError] = useState<string | null>(null);
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgress>({
     task: null,
     completed: 0,
@@ -510,6 +669,7 @@ export default function DashboardPage() {
   const hasResolvedInitialFetchRef = useRef(false);
   const lastLoadedIdRef = useRef<string | null>(null);
   const transcriptCacheRef = useRef<Map<string, string>>(new Map());
+  const pronunciationControllerRef = useRef<PronunciationController | null>(null);
 
   // Debug state
   const [debugMode, setDebugMode] = useState(false);
@@ -531,7 +691,7 @@ export default function DashboardPage() {
   // Track network requests for debugging
   const networkRequestsRef = useRef<DebugState['networkRequests']>([]);
 
-  console.log(`[DEBUG] Dashboard initializing for ID: ${id}`);
+  dashboardDebugLog(`[DEBUG] Dashboard initializing for ID: ${id}`);
   logDebug(`Dashboard initializing for ID: ${id}`);
 
   const setContentElement = useCallback((element: HTMLElement | null) => {
@@ -800,9 +960,11 @@ export default function DashboardPage() {
       return;
     }
     const savedLanguage = window.localStorage.getItem(DASHBOARD_CONTENT_LANGUAGE_KEY);
-    if (savedLanguage === 'zh' || savedLanguage === 'en') {
+    if (savedLanguage === 'zh' || savedLanguage === 'en' || savedLanguage === 'bilingual' || savedLanguage === 'hint') {
       setContentLanguage(savedLanguage);
+      return;
     }
+    setContentLanguage('zh');
   }, []);
 
   useEffect(() => {
@@ -811,6 +973,106 @@ export default function DashboardPage() {
     }
     window.localStorage.setItem(DASHBOARD_CONTENT_LANGUAGE_KEY, contentLanguage);
   }, [contentLanguage]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const controller = createPronunciationController({
+      accent: 'en-US',
+      repeatGapMs: 900,
+      ttsTimeoutMs: 2000,
+      ttsRate: 0.88,
+      ttsPitch: 0.84,
+      preferRecordedAudio: true,
+    });
+    pronunciationControllerRef.current = controller;
+    return () => {
+      controller.dispose();
+      pronunciationControllerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const shouldPronounce =
+      contentLanguage === 'hint' && (activeView === 'summary' || activeView === 'fullText');
+    if (!shouldPronounce) {
+      pronunciationControllerRef.current?.stop();
+    }
+  }, [activeView, contentLanguage]);
+
+  const isCoarsePointerDevice = useCallback(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return false;
+    }
+    return window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(hover: none)').matches;
+  }, []);
+
+  const handleHintWordHoverStart = useCallback((word: string) => {
+    pronunciationControllerRef.current?.startHoverLoop(word);
+  }, []);
+
+  const handleHintWordHoverEnd = useCallback(() => {
+    pronunciationControllerRef.current?.stop();
+  }, []);
+
+  const handleHintWordTap = useCallback((word: string) => {
+    pronunciationControllerRef.current?.playTap(word);
+  }, []);
+
+  const activateHintMode = useCallback(() => {
+    pronunciationControllerRef.current?.prime();
+    setContentLanguage('hint');
+  }, []);
+
+  const resolveHintDictionaryCard = useCallback(
+    (word: string): HintDictionaryCard | null => {
+      if (!vocabDict) {
+        return null;
+      }
+      const key = String(word || '').toLowerCase().trim();
+      if (!key) {
+        return null;
+      }
+      return buildHintDictionaryCard(key, vocabDict[key] || null);
+    },
+    [vocabDict]
+  );
+
+  useEffect(() => {
+    const shouldLoadVocab =
+      contentLanguage === 'hint' &&
+      (activeView === 'summary' || activeView === 'fullText') &&
+      !vocabDict &&
+      !vocabLoadError;
+    if (!shouldLoadVocab) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadVocab = async () => {
+      try {
+        const response = await fetch('/vocab/advanced-words.json');
+        if (!response.ok) {
+          throw new Error(`Vocabulary loading failed (${response.status})`);
+        }
+        const payload = await response.json();
+        if (!cancelled) {
+          setVocabDict(payload as AdvancedWordDict);
+          setVocabLoadError(null);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setVocabLoadError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      }
+    };
+
+    void loadVocab();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView, contentLanguage, vocabDict, vocabLoadError]);
 
   useEffect(() => {
     if (!data) {
@@ -825,38 +1087,7 @@ export default function DashboardPage() {
   }, [data?.sourceReference, id]);
 
 
-  // Add ID validation after all hooks and functions are defined
-  if (!id || id === 'undefined' || id === 'null') {
-    return (
-      <div className="min-h-screen bg-[#f3eee3] text-[var(--text-main)] flex items-center justify-center px-4">
-        <div className="text-center max-w-md p-8 bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-2xl shadow-[0_18px_42px_-30px_rgba(80,67,44,0.55)]">
-          <h1 className="text-2xl font-bold text-[var(--danger)] mb-4">Invalid File ID</h1>
-          <p className="text-[var(--text-secondary)] mb-6">
-            The file ID in the URL is invalid or missing. This usually happens when:
-          </p>
-          <ul className="text-left text-sm text-[var(--text-muted)] mb-6 space-y-2">
-            <li>• You navigated to an incomplete URL</li>
-            <li>• The file upload process was interrupted</li>
-            <li>• You&rsquo;re using an old or broken bookmark</li>
-          </ul>
-          <div className="space-y-3">
-            <Link 
-              href="/upload" 
-              className="block w-full bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              Upload New File
-            </Link>
-            <Link 
-              href="/my" 
-              className="block w-full bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              View File History
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const hasInvalidId = !id || id === 'undefined' || id === 'null';
 
   // Function to capture current debug state (use useCallback to fix hook dependency issues)
   const captureDebugState = useCallback((action: string) => {
@@ -901,7 +1132,7 @@ export default function DashboardPage() {
     const requestId = Date.now().toString(36);
     
     try {
-      console.log(`[DEBUG-NET-${requestId}] Starting request to ${url}`);
+      dashboardDebugLog(`[DEBUG-NET-${requestId}] Starting request to ${url}`);
       logDebug(`Network request started`, { url, options: { 
         method: options.method,
         headers: options.headers
@@ -910,7 +1141,7 @@ export default function DashboardPage() {
       const response = await fetch(url, options);
       
       const duration = performance.now() - startTime;
-      console.log(`[DEBUG-NET-${requestId}] Response received: ${response.status} in ${duration.toFixed(0)}ms`);
+      dashboardDebugLog(`[DEBUG-NET-${requestId}] Response received: ${response.status} in ${duration.toFixed(0)}ms`);
       
       // Track network request
       networkRequestsRef.current = [
@@ -968,20 +1199,20 @@ export default function DashboardPage() {
 
   // Enhanced scroll function with debug (use useCallback to fix hook dependency issues)
   const scrollToBottom = useCallback(() => {
-    console.log(`[DEBUG] Attempting to scroll to bottom, isProcessing: ${isProcessingRef.current}, autoScroll: ${isAutoScrollEnabledRef.current}`);
+    dashboardDebugLog(`[DEBUG] Attempting to scroll to bottom, isProcessing: ${isProcessingRef.current}, autoScroll: ${isAutoScrollEnabledRef.current}`);
     if (!isAutoScrollEnabledRef.current) {
       return;
     }
     if (contentRef.current) {
       contentRef.current.scrollTo({ top: contentRef.current.scrollHeight, behavior: 'smooth' });
       lastHeightRef.current = contentRef.current.scrollHeight;
-      console.log(`[DEBUG] Updated lastHeightRef to ${lastHeightRef.current}`);
+      dashboardDebugLog(`[DEBUG] Updated lastHeightRef to ${lastHeightRef.current}`);
     }
   }, []); // 移除所有依赖，避免无限循环
 
   // Monitor content changes and scroll
   useEffect(() => {
-    console.log(`[DEBUG] Content change detected, summary length: ${data?.summaryZh?.length}, isProcessing: ${isProcessingRef.current}`);
+    dashboardDebugLog(`[DEBUG] Content change detected, summary length: ${data?.summaryZh?.length}, isProcessing: ${isProcessingRef.current}`);
     if (activeView === 'summary' && data?.summaryZh && isProcessingRef.current) {
       requestAnimationFrame(() => {
         scrollToBottom();
@@ -992,7 +1223,7 @@ export default function DashboardPage() {
   // Main data loading effect - only use database
   useEffect(() => {
     if (id) {
-      console.log(`[DEBUG] useEffect triggered for ID: ${id}, isProcessing: ${isProcessing}, requestSent: ${requestSentRef.current}`);
+      dashboardDebugLog(`[DEBUG] useEffect triggered for ID: ${id}, isProcessing: ${isProcessing}, requestSent: ${requestSentRef.current}`);
       logDebug('Dashboard useEffect triggered', { id, isProcessing, requestSent: requestSentRef.current });
       
       const startTime = performance.now();
@@ -1008,7 +1239,7 @@ export default function DashboardPage() {
       setError(null);
       
       // Only load from database API
-      console.log('[DEBUG] 从数据库获取分析结果...');
+      dashboardDebugLog('[DEBUG] 从数据库获取分析结果...');
       debugFetch(`/api/analysis/${id}`, {
         method: 'GET',
         headers: {
@@ -1017,15 +1248,15 @@ export default function DashboardPage() {
       })
       .then(response => response.json())
       .then(result => {
-        console.log('[DEBUG] 数据库API响应:', result);
+        dashboardDebugLog('[DEBUG] 数据库API响应:', result);
         // 调试：打印 canEdit 相关信息
         if (typeof window !== 'undefined') {
           window.__PODSUM_DEBUG__ = result;
           // 强制在页面显示调试信息
-          console.log('[DEBUG] 完整API响应:', JSON.stringify(result, null, 2));
-          console.log('[DEBUG] canEdit值:', result.data?.canEdit);
-          console.log('[DEBUG] 用户会话:', result.data?.session);
-          console.log('[DEBUG] podcast.userId:', result.data?.podcast?.userId);
+          dashboardDebugLog('[DEBUG] 完整API响应:', JSON.stringify(result, null, 2));
+          dashboardDebugLog('[DEBUG] canEdit值:', result.data?.canEdit);
+          dashboardDebugLog('[DEBUG] 用户会话:', result.data?.session);
+          dashboardDebugLog('[DEBUG] podcast.userId:', result.data?.podcast?.userId);
         }
         
         if (result.success && result.data) {
@@ -1033,8 +1264,10 @@ export default function DashboardPage() {
           
           if (isProcessed && analysis) {
             // 数据库中有完整的分析结果
-            console.log('[DEBUG] 从数据库加载完整分析结果');
+            dashboardDebugLog('[DEBUG] 从数据库加载完整分析结果');
             const legacySummary = extractLegacyBilingualSummary(analysis.summary || '');
+            const normalizedFullTextBilingualJson = normalizeFullTextBilingualPayload(analysis.fullTextBilingualJson);
+            const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis.summaryBilingualJson);
             const loadedData: ProcessedData = {
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName,
@@ -1053,6 +1286,9 @@ export default function DashboardPage() {
                 enforceLineBreaks(analysis.highlights || 'Highlights not available.')
               ),
               fullTextOriginal: '',
+              fullTextBilingualJson: normalizedFullTextBilingualJson,
+              summaryBilingualJson: normalizedSummaryBilingualJson,
+              bilingualAlignmentVersion: analysis.bilingualAlignmentVersion ?? null,
               mindMapJsonZh: parseMindMapData(analysis.mindMapJsonZh ?? analysis.mindMapJson),
               mindMapJsonEn: parseMindMapData(analysis.mindMapJsonEn),
               processedAt: analysis.processedAt,
@@ -1086,9 +1322,11 @@ export default function DashboardPage() {
             });
           } else if (podcast) {
             // 数据库中有播客信息但没有分析结果，需要处理
-            console.log('[DEBUG] 数据库中有播客信息但无分析结果，开始处理');
+            dashboardDebugLog('[DEBUG] 数据库中有播客信息但无分析结果，开始处理');
             setData(prev => {
               const legacySummary = extractLegacyBilingualSummary(analysis?.summary || '');
+              const normalizedFullTextBilingualJson = normalizeFullTextBilingualPayload(analysis?.fullTextBilingualJson);
+              const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis?.summaryBilingualJson);
               return ({
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName,
@@ -1114,6 +1352,12 @@ export default function DashboardPage() {
                 (podcast.blobUrl ?? null) === (prev?.blobUrl ?? null)
                   ? prev?.fullTextOriginal || ''
                   : '',
+              fullTextBilingualJson:
+                normalizedFullTextBilingualJson ?? prev?.fullTextBilingualJson ?? null,
+              summaryBilingualJson:
+                normalizedSummaryBilingualJson ?? prev?.summaryBilingualJson ?? null,
+              bilingualAlignmentVersion:
+                analysis?.bilingualAlignmentVersion ?? prev?.bilingualAlignmentVersion ?? null,
               mindMapJsonZh:
                 parseMindMapData(analysis?.mindMapJsonZh ?? analysis?.mindMapJson) ?? prev?.mindMapJsonZh ?? null,
               mindMapJsonEn:
@@ -1147,13 +1391,13 @@ export default function DashboardPage() {
             }
           } else {
             // 数据库中完全没有该ID的信息
-            console.log('[DEBUG] 数据库中没有找到该ID的信息');
+            dashboardDebugLog('[DEBUG] 数据库中没有找到该ID的信息');
             setError('File not found in database. The file may have been deleted or never uploaded.');
             finishLoadCycle();
           }
         } else {
           // API调用失败
-          console.log('[DEBUG] 数据库API调用失败');
+          dashboardDebugLog('[DEBUG] 数据库API调用失败');
           setError(result.error || 'Failed to load file information from database.');
           finishLoadCycle();
         }
@@ -1180,16 +1424,16 @@ export default function DashboardPage() {
 
   // Retry processing function
   const retryProcessing = () => {
-    console.log('[DEBUG] Retry button clicked');
+    dashboardDebugLog('[DEBUG] Retry button clicked');
     logUserAction('retry-processing', { id });
     captureDebugState('retry-clicked');
     
     if (isProcessing) {
-      console.log(`[DEBUG] Already processing ID: ${id}, avoiding duplicate retry request`);
+      dashboardDebugLog(`[DEBUG] Already processing ID: ${id}, avoiding duplicate retry request`);
       return;
     }
     
-    console.log('[DEBUG] Starting retry process');
+    dashboardDebugLog('[DEBUG] Starting retry process');
     setError(null);
     requestSentRef.current = false;
     enqueueBackgroundProcessing(true);
@@ -1326,27 +1570,68 @@ export default function DashboardPage() {
     };
   }, [data?.blobUrl, data?.title, data?.sourceReference, data?.fullTextHighlights]);
 
-  const getActiveViewContent = useCallback(() => {
+  const getSingleLanguageForMindMap = useCallback((): 'zh' | 'en' => {
+    return contentLanguage === 'en' ? 'en' : 'zh';
+  }, [contentLanguage]);
+
+  const getRenderableViewContent = useCallback(() => {
     if (!data) {
       return '';
     }
+
     if (activeView === 'summary') {
-      return contentLanguage === 'zh' ? data.summaryZh : data.summaryEn;
+      if (contentLanguage === 'zh') {
+        return data.summaryZh;
+      }
+      if (contentLanguage === 'en') {
+        return data.summaryEn;
+      }
+      if (contentLanguage === 'bilingual') {
+        if (data.summaryBilingualJson) {
+          return renderSummaryBilingualMarkdown(data.summaryBilingualJson);
+        }
+        return buildSummaryBilingualMarkdown(data.summaryEn, data.summaryZh);
+      }
+      return annotateEnglishWithHints(data.summaryEn, vocabDict || {}, {
+        maxHintsPerParagraph: 3,
+        segmentByLine: true,
+        interactionMode: 'pronounceLink',
+      });
     }
+
     if (activeView === 'mindMap') {
+      const singleLanguage = getSingleLanguageForMindMap();
       const activeMindMap =
-        contentLanguage === 'zh'
+        singleLanguage === 'zh'
           ? (data.mindMapJsonZh ?? data.mindMapJsonEn ?? null)
           : (data.mindMapJsonEn ?? data.mindMapJsonZh ?? null);
       return activeMindMap ? JSON.stringify(activeMindMap, null, 2) : '';
     }
-    return contentLanguage === 'zh'
-      ? data.fullTextHighlights
-      : data.translation;
-  }, [activeView, contentLanguage, data]);
+
+    if (contentLanguage === 'zh') {
+      return data.fullTextHighlights;
+    }
+    if (contentLanguage === 'en') {
+      return data.translation;
+    }
+    if (contentLanguage === 'bilingual') {
+      if (data.fullTextBilingualJson) {
+        return renderFullTextBilingualMarkdown(data.fullTextBilingualJson);
+      }
+      return buildFullTextBilingualMarkdown(data.translation, data.fullTextHighlights);
+    }
+    return annotateEnglishWithHints(data.translation, vocabDict || {}, {
+      maxHintsPerParagraph: 3,
+      segmentByLine: false,
+      interactionMode: 'pronounceLink',
+    });
+  }, [activeView, contentLanguage, data, getSingleLanguageForMindMap, vocabDict]);
 
   const copyCurrentView = async () => {
-    const content = getActiveViewContent().trim();
+    let content = getRenderableViewContent().trim();
+    if (contentLanguage === 'hint') {
+      content = stripPronunciationLinks(content).trim();
+    }
     if (!content) {
       setCopyStatusWithReset('failed');
       return;
@@ -1379,6 +1664,57 @@ export default function DashboardPage() {
     isAutoScrollEnabledRef.current = true;
   };
 
+  const markdownComponents = useMemo(
+    () =>
+      createMarkdownComponents(contentLanguage, {
+        onHoverWord: handleHintWordHoverStart,
+        onLeaveWord: handleHintWordHoverEnd,
+        onTapWord: handleHintWordTap,
+        isCoarsePointer: isCoarsePointerDevice,
+        resolveHintCard: resolveHintDictionaryCard,
+      }),
+    [
+      contentLanguage,
+      handleHintWordHoverEnd,
+      handleHintWordHoverStart,
+      handleHintWordTap,
+      isCoarsePointerDevice,
+      resolveHintDictionaryCard,
+    ]
+  );
+
+  if (hasInvalidId) {
+    return (
+      <div className="min-h-screen bg-[#f3eee3] text-[var(--text-main)] flex items-center justify-center px-4">
+        <div className="text-center max-w-md p-8 bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-2xl shadow-[0_18px_42px_-30px_rgba(80,67,44,0.55)]">
+          <h1 className="text-2xl font-bold text-[var(--danger)] mb-4">Invalid File ID</h1>
+          <p className="text-[var(--text-secondary)] mb-6">
+            The file ID in the URL is invalid or missing. This usually happens when:
+          </p>
+          <ul className="text-left text-sm text-[var(--text-muted)] mb-6 space-y-2">
+            <li>• You navigated to an incomplete URL</li>
+            <li>• The file upload process was interrupted</li>
+            <li>• You&rsquo;re using an old or broken bookmark</li>
+          </ul>
+          <div className="space-y-3">
+            <Link
+              href="/upload"
+              className="block w-full bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              Upload New File
+            </Link>
+            <Link
+              href="/my"
+              className="block w-full bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              View File History
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const renderContent = () => {
     if (isLoading && !data) {
       return <div className="text-center p-10 text-[var(--text-muted)]">Loading content...</div>;
@@ -1396,8 +1732,8 @@ export default function DashboardPage() {
           <div className="p-4 sm:p-6 lg:p-8">
             <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
               <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {(contentLanguage === 'zh' ? data.summaryZh : data.summaryEn) || '正在生成摘要...'}
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={markdownUrlTransform}>
+                  {getRenderableViewContent() || '正在生成摘要...'}
                 </ReactMarkdown>
               </div>
             </div>
@@ -1406,20 +1742,19 @@ export default function DashboardPage() {
       case 'fullText':
         return (
             <div className="p-4 sm:p-6 lg:p-8">
-            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
+                <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
                   <div className="markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                      {(contentLanguage === 'zh'
-                        ? data.fullTextHighlights
-                        : data.translation) || '正在生成重点内容...'}
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={markdownUrlTransform}>
+                      {getRenderableViewContent() || '正在生成重点内容...'}
                     </ReactMarkdown>
                   </div>
                 </div>
             </div>
         );
       case 'mindMap': {
+        const singleLanguage = getSingleLanguageForMindMap();
         const activeMindMap =
-          contentLanguage === 'zh'
+          singleLanguage === 'zh'
             ? (data.mindMapJsonZh ?? data.mindMapJsonEn ?? null)
             : (data.mindMapJsonEn ?? data.mindMapJsonZh ?? null);
         return (
@@ -1444,52 +1779,6 @@ export default function DashboardPage() {
      ${activeView === view
        ? 'text-[var(--heading)] border-[var(--btn-primary)]'
        : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)] hover:border-[var(--border-medium)]'}`;
-
-  // Add Debug Status Panel component
-  const DebugStatusPanel = () => {
-    if (!debugMode) return null;
-    
-    return (
-      <div className="fixed bottom-0 right-0 w-80 max-h-80 overflow-auto bg-[var(--paper-base)] border border-[var(--border-medium)] rounded-tl-xl p-3 text-xs z-50 shadow-[0_16px_32px_-24px_rgba(80,67,44,0.5)]">
-        <h3 className="text-[var(--accent-strong)] font-semibold mb-2">Debug Status v{APP_VERSION}</h3>
-        <div className="space-y-1 mb-2">
-          <div><span className="text-[var(--text-muted)]">ID:</span> <span className="text-[var(--text-main)]">{id}</span></div>
-          <div><span className="text-[var(--text-muted)]">State:</span> <span className={`${isProcessing ? 'text-amber-700' : 'text-emerald-700'}`}>
-            {isProcessing ? 'PROCESSING' : (data ? 'LOADED' : 'IDLE')}</span></div>
-          <div><span className="text-[var(--text-muted)]">Request Sent:</span> <span className={`${requestSentRef.current ? 'text-amber-700' : 'text-emerald-700'}`}>
-            {requestSentRef.current ? 'YES' : 'NO'}</span></div>
-          {error && <div><span className="text-[var(--danger)]">Error:</span> <span className="text-[var(--text-main)]">{error}</span></div>}
-        </div>
-        
-        <h4 className="text-[var(--accent-strong)] font-semibold mt-2 mb-1">Last Requests:</h4>
-        <div className="space-y-1 mb-2 max-h-20 overflow-y-auto">
-          {debugState.networkRequests.slice(-3).reverse().map((req, i) => (
-            <div key={i} className="flex justify-between">
-              <span className="text-[var(--text-muted)] truncate">{req.url.split('/').pop()}</span>
-              <span className={`${req.status < 300 ? 'text-emerald-700' : 'text-[var(--danger)]'}`}>
-                {req.status} ({req.duration}ms)
-              </span>
-            </div>
-          ))}
-        </div>
-        
-        <div className="pt-2 border-t border-[var(--border-soft)] flex space-x-2">
-          <button 
-            onClick={() => captureDebugState('refresh-clicked')} 
-            className="text-xs bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] px-2 py-1 rounded hover:bg-[var(--paper-muted)]"
-          >
-            Refresh
-          </button>
-          <button 
-            onClick={copyDebugInfo}
-            className="text-xs bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] px-2 py-1 rounded hover:bg-[var(--paper-muted)]"
-          >
-            Copy Debug Info
-          </button>
-        </div>
-      </div>
-    );
-  };
 
   const isQaAssistantEnabled = Boolean(
     data &&
@@ -1690,7 +1979,7 @@ export default function DashboardPage() {
                   <div>isProcessing: {isProcessing.toString()}</div>
                   <div>hasError: {!!error}</div>
                   <button
-                    onClick={() => console.log('window.__PODSUM_DEBUG__:', window.__PODSUM_DEBUG__)}
+                    onClick={() => dashboardDebugLog('window.__PODSUM_DEBUG__:', window.__PODSUM_DEBUG__)}
                     className="mt-2 px-2.5 py-1 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] rounded-lg text-xs transition-colors"
                   >
                     Log Debug to Console
@@ -1726,7 +2015,30 @@ export default function DashboardPage() {
                 >
                   English
                 </button>
+                <button
+                  onClick={() => setContentLanguage('bilingual')}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                    contentLanguage === 'bilingual'
+                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                  }`}
+                >
+                  中英对照
+                </button>
+                <button
+                  onClick={activateHintMode}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                    contentLanguage === 'hint'
+                      ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]'
+                  }`}
+                >
+                  词汇提示
+                </button>
               </div>
+              {contentLanguage === 'hint' && vocabLoadError && (
+                <p className="mt-2 text-xs text-[var(--danger)]">词表加载失败，已降级为英文原文：{vocabLoadError}</p>
+              )}
             </div>
 
             {isProcessing && (
@@ -1779,12 +2091,47 @@ export default function DashboardPage() {
           </main>
         )}
         
-        {/* Add Debug Status Panel */}
-        <DebugStatusPanel />
+        {debugMode && (
+          <div className="fixed bottom-0 right-0 w-80 max-h-80 overflow-auto bg-[var(--paper-base)] border border-[var(--border-medium)] rounded-tl-xl p-3 text-xs z-50 shadow-[0_16px_32px_-24px_rgba(80,67,44,0.5)]">
+            <h3 className="text-[var(--accent-strong)] font-semibold mb-2">Debug Status v{APP_VERSION}</h3>
+            <div className="space-y-1 mb-2">
+              <div><span className="text-[var(--text-muted)]">ID:</span> <span className="text-[var(--text-main)]">{id}</span></div>
+              <div><span className="text-[var(--text-muted)]">State:</span> <span className={`${isProcessing ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {isProcessing ? 'PROCESSING' : (data ? 'LOADED' : 'IDLE')}</span></div>
+              <div><span className="text-[var(--text-muted)]">Request Sent:</span> <span className={`${requestSentRef.current ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {requestSentRef.current ? 'YES' : 'NO'}</span></div>
+              {error && <div><span className="text-[var(--danger)]">Error:</span> <span className="text-[var(--text-main)]">{error}</span></div>}
+            </div>
+
+            <h4 className="text-[var(--accent-strong)] font-semibold mt-2 mb-1">Last Requests:</h4>
+            <div className="space-y-1 mb-2 max-h-20 overflow-y-auto">
+              {debugState.networkRequests.slice(-3).reverse().map((req, i) => (
+                <div key={i} className="flex justify-between">
+                  <span className="text-[var(--text-muted)] truncate">{req.url.split('/').pop()}</span>
+                  <span className={`${req.status < 300 ? 'text-emerald-700' : 'text-[var(--danger)]'}`}>
+                    {req.status} ({req.duration}ms)
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-2 border-t border-[var(--border-soft)] flex space-x-2">
+              <button
+                onClick={() => captureDebugState('refresh-clicked')}
+                className="text-xs bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] px-2 py-1 rounded hover:bg-[var(--paper-muted)]"
+              >
+                Refresh
+              </button>
+              <button
+                onClick={copyDebugInfo}
+                className="text-xs bg-[var(--paper-subtle)] border border-[var(--border-soft)] text-[var(--text-secondary)] px-2 py-1 rounded hover:bg-[var(--paper-muted)]"
+              >
+                Copy Debug Info
+              </button>
+            </div>
+          </div>
+        )}
         
-        <footer className="p-4 text-center text-xs text-[var(--text-muted)] tracking-wide">
-          SRT Processor Edge Demo v{APP_VERSION}
-        </footer>
       </div>
     </ErrorBoundary>
   );

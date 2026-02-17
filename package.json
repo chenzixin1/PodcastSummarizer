@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "npm run type-check && jest",
     "test:watch": "jest --watch",
     "test:db": "jest __tests__/lib/",
@@ -24,6 +24,8 @@
     "tags:rebuild": "node scripts/rebuild-podcast-tags.mjs",
     "brief:rebuild": "node scripts/rebuild-brief-summary.mjs",
     "mindmap:rebuild": "node scripts/rebuild-mind-map.mjs",
+    "vocab:build": "node scripts/build-advanced-vocab.mjs",
+    "pronunciation:build": "node scripts/build-pronunciation-library.mjs",
     "type-check": "tsc --noEmit",
     "test:full": "npm run type-check && npm run test:coverage",
     "db:init": "node -r dotenv/config scripts/init-db.mjs"

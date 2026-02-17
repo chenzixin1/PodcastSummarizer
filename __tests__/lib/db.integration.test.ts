@@ -1,13 +1,9 @@
 /**
  * Database Integration Tests
- * 
- * 这些测试使用实际的SQL查询逻辑，但使用mock数据库连接
- * 主要测试SQL查询的正确性和边界情况
  */
 
-// Mock Vercel Postgres with more detailed behavior
 jest.mock('@vercel/postgres', () => ({
-  sql: jest.fn()
+  sql: jest.fn(),
 }));
 
 import {
@@ -15,16 +11,24 @@ import {
   getPodcast,
   getAllPodcasts,
   saveAnalysisResults,
-  getAnalysisResults,
   deletePodcast,
   updatePodcastPublicStatus,
   type Podcast,
-  type AnalysisResult
+  type AnalysisResult,
 } from '../../lib/db';
-
 import { sql } from '@vercel/postgres';
 
 const mockSql = sql as jest.MockedFunction<typeof sql>;
+type SqlCall = Parameters<typeof sql>;
+
+function findSqlCall(fragment: string): SqlCall {
+  const matched = mockSql.mock.calls.find((call) => {
+    const template = call[0];
+    return Array.isArray(template) && template.join('').includes(fragment);
+  });
+  expect(matched).toBeDefined();
+  return matched as SqlCall;
+}
 
 describe('Database Integration Tests', () => {
   beforeEach(() => {
@@ -32,167 +36,118 @@ describe('Database Integration Tests', () => {
   });
 
   describe('SQL Query Logic Tests', () => {
-    test('savePodcast should use correct UPSERT syntax', async () => {
+    test('savePodcast should use UPSERT with expected values', async () => {
       const podcast: Podcast = {
         id: 'test-123',
         title: 'Test Podcast',
         originalFileName: 'test.srt',
         fileSize: '1.5 KB',
         blobUrl: 'https://example.com/test.srt',
-        isPublic: true
+        isPublic: true,
       };
 
-      mockSql.mockResolvedValue({
-        rows: [{ id: 'test-123' }]
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [{ id: 'test-123' }] } as never);
       await savePodcast(podcast);
 
-      // 验证调用了正确的参数顺序和数量
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array), // SQL template
-        'test-123',        // id
-        'Test Podcast',    // title
-        'test.srt',        // original_filename
-        '1.5 KB',          // file_size
-        'https://example.com/test.srt', // blob_url
-        true,              // is_public
-        'Test Podcast',    // title (for UPDATE)
-        'test.srt',        // original_filename (for UPDATE)
-        '1.5 KB',          // file_size (for UPDATE)
-        'https://example.com/test.srt', // blob_url (for UPDATE)
-        true               // is_public (for UPDATE)
-      );
+      const insertCall = findSqlCall('INSERT INTO podcasts');
+      expect(insertCall[1]).toBe('test-123');
+      expect(insertCall[2]).toBe('Test Podcast');
+      expect(insertCall[3]).toBe('test.srt');
+      expect(insertCall[4]).toBe('1.5 KB');
+      expect(insertCall[5]).toBe('https://example.com/test.srt');
+      expect(insertCall[6]).toBeNull();
+      expect(insertCall[7]).toBe(true);
     });
 
     test('getPodcast should use correct column aliases', async () => {
       const mockData = {
         id: 'test-123',
         title: 'Test Podcast',
-        originalFileName: 'test.srt', // 注意：这是alias后的字段名
+        originalFileName: 'test.srt',
         fileSize: '1.5 KB',
         blobUrl: 'https://example.com/test.srt',
         isPublic: true,
-        createdAt: '2024-01-01T00:00:00Z'
+        createdAt: '2024-01-01T00:00:00Z',
       };
 
-      mockSql.mockResolvedValue({
-        rows: [mockData]
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [mockData] } as never);
       const result = await getPodcast('test-123');
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockData);
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        'test-123'
-      );
+
+      const queryCall = findSqlCall('FROM podcasts');
+      expect(queryCall[1]).toBe('test-123');
     });
 
     test('getAllPodcasts pagination calculation', async () => {
-      mockSql.mockResolvedValue({
-        rows: []
-      } as any);
+      mockSql.mockResolvedValue({ rows: [] } as never);
+      await getAllPodcasts(3, 15, false);
 
-      // 测试分页计算
-      await getAllPodcasts(3, 15, false); // page=3, pageSize=15
-
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        15,  // LIMIT
-        30   // OFFSET = (page - 1) * pageSize = (3 - 1) * 15 = 30
-      );
+      const listCall = findSqlCall('ORDER BY p.created_at DESC');
+      expect(listCall[1]).toBe(15);
+      expect(listCall[2]).toBe(30);
     });
 
     test('getAllPodcasts should differentiate public/private queries', async () => {
-      mockSql.mockResolvedValue({
-        rows: []
-      } as any);
+      mockSql.mockResolvedValue({ rows: [] } as never);
 
-      // 测试公开播客查询
       await getAllPodcasts(1, 10, false);
-      const publicQuery = mockSql.mock.calls[0][0];
+      const publicQuery = findSqlCall('WHERE p.is_public = true')[0].join('');
+      expect(publicQuery).toContain('WHERE p.is_public = true');
 
-      // 重置mock
       mockSql.mockClear();
+      mockSql.mockResolvedValue({ rows: [] } as never);
 
-      // 测试包含私有播客查询
       await getAllPodcasts(1, 10, true);
-      const privateQuery = mockSql.mock.calls[0][0];
-
-      // 验证查询语句不同（public查询应该包含WHERE条件）
-      expect(publicQuery.join('')).toContain('is_public = true');
-      expect(privateQuery.join('')).not.toContain('is_public = true');
+      const privateQuery = findSqlCall('FROM podcasts p')[0].join('');
+      expect(privateQuery).not.toContain('WHERE p.is_public = true');
     });
 
-    test('saveAnalysisResults should use correct UPSERT with timestamp', async () => {
+    test('saveAnalysisResults should upsert and touch timestamp', async () => {
       const analysisResult: AnalysisResult = {
         podcastId: 'test-123',
         summary: 'Test summary',
         translation: 'Test translation',
-        highlights: 'Test highlights'
+        highlights: 'Test highlights',
       };
 
-      mockSql.mockResolvedValue({
-        rows: [{ podcast_id: 'test-123' }]
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [{ podcast_id: 'test-123' }] } as never);
       await saveAnalysisResults(analysisResult);
 
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        'test-123',
-        'Test summary',
-        'Test translation',
-        'Test highlights',
-        'Test summary',      // for UPDATE
-        'Test translation',  // for UPDATE
-        'Test highlights'    // for UPDATE
-      );
+      const upsertCall = findSqlCall('INSERT INTO analysis_results');
+      expect(upsertCall[1]).toBe('test-123');
+      expect(upsertCall[2]).toBe('Test summary');
+      expect(upsertCall[3]).toBe('Test summary');
+      expect(upsertCall[6]).toBe('Test translation');
+      expect(upsertCall[7]).toBe('Test highlights');
+      expect(upsertCall[13]).toBe(0);
 
-      // 验证SQL包含CURRENT_TIMESTAMP
-      const sqlTemplate = mockSql.mock.calls[0][0];
-      expect(sqlTemplate.join('')).toContain('CURRENT_TIMESTAMP');
+      const queryTemplate = upsertCall[0].join('');
+      expect(queryTemplate).toContain('CURRENT_TIMESTAMP');
     });
 
     test('deletePodcast should delete in correct order', async () => {
       mockSql
-        .mockResolvedValueOnce({ rows: [] } as any)              // DELETE analysis_results
-        .mockResolvedValueOnce({ rows: [{ id: 'test-123' }] } as any); // DELETE podcasts
+        .mockResolvedValueOnce({ rows: [] } as never)
+        .mockResolvedValueOnce({ rows: [{ id: 'test-123' }] } as never);
 
       const result = await deletePodcast('test-123');
 
       expect(result.success).toBe(true);
       expect(mockSql).toHaveBeenCalledTimes(2);
-
-      // 验证调用顺序：先删除analysis_results，再删除podcasts
-      const firstCall = mockSql.mock.calls[0][0];
-      const secondCall = mockSql.mock.calls[1][0];
-
-      expect(firstCall.join('')).toContain('analysis_results');
-      expect(secondCall.join('')).toContain('podcasts');
+      expect(mockSql.mock.calls[0][0].join('')).toContain('analysis_results');
+      expect(mockSql.mock.calls[1][0].join('')).toContain('podcasts');
     });
 
     test('updatePodcastPublicStatus should update correct field', async () => {
-      mockSql.mockResolvedValue({
-        rows: [{ id: 'test-123' }]
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [{ id: 'test-123' }] } as never);
       await updatePodcastPublicStatus('test-123', false);
 
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        false,       // is_public value
-        'test-123'   // WHERE id
-      );
-
-      // 验证SQL结构
-      const sqlTemplate = mockSql.mock.calls[0][0];
-      expect(sqlTemplate.join('')).toContain('UPDATE podcasts');
-      expect(sqlTemplate.join('')).toContain('is_public =');
-      expect(sqlTemplate.join('')).toContain('WHERE id =');
-      expect(sqlTemplate.join('')).toContain('RETURNING id');
+      const updateCall = findSqlCall('UPDATE podcasts');
+      expect(updateCall[1]).toBe(false);
+      expect(updateCall[2]).toBe('test-123');
+      expect(updateCall[0].join('')).toContain('is_public =');
     });
   });
 
@@ -200,64 +155,44 @@ describe('Database Integration Tests', () => {
     test('should handle special characters in podcast data', async () => {
       const podcast: Podcast = {
         id: 'test-special-chars',
-        title: "Test's \"Special\" Characters & Symbols",
+        title: `Test's "Special" Characters & Symbols`,
         originalFileName: 'test file (1).srt',
         fileSize: '1.5 KB',
         blobUrl: 'https://example.com/test%20file.srt',
-        isPublic: false
+        isPublic: false,
       };
 
-      mockSql.mockResolvedValue({
-        rows: [{ id: 'test-special-chars' }]
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [{ id: 'test-special-chars' }] } as never);
       const result = await savePodcast(podcast);
 
       expect(result.success).toBe(true);
-      // 验证特殊字符被正确传递
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        'test-special-chars',
-        "Test's \"Special\" Characters & Symbols",
-        'test file (1).srt',
-        '1.5 KB',
-        'https://example.com/test%20file.srt',
-        false,
-        "Test's \"Special\" Characters & Symbols",
-        'test file (1).srt',
-        '1.5 KB',
-        'https://example.com/test%20file.srt',
-        false
-      );
+      const insertCall = findSqlCall('INSERT INTO podcasts');
+      expect(insertCall[1]).toBe('test-special-chars');
+      expect(insertCall[2]).toBe(`Test's "Special" Characters & Symbols`);
+      expect(insertCall[3]).toBe('test file (1).srt');
+      expect(insertCall[5]).toBe('https://example.com/test%20file.srt');
+      expect(insertCall[7]).toBe(false);
     });
 
     test('should handle long content in analysis results', async () => {
-      const longContent = 'A'.repeat(10000); // 10KB 内容
-      
+      const longContent = 'A'.repeat(10_000);
       const analysisResult: AnalysisResult = {
         podcastId: 'test-long-content',
         summary: longContent,
         translation: longContent,
-        highlights: longContent
+        highlights: longContent,
       };
 
-      mockSql.mockResolvedValue({
-        rows: [{ podcast_id: 'test-long-content' }]
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [{ podcast_id: 'test-long-content' }] } as never);
       const result = await saveAnalysisResults(analysisResult);
 
       expect(result.success).toBe(true);
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        'test-long-content',
-        longContent,
-        longContent,
-        longContent,
-        longContent,
-        longContent,
-        longContent
-      );
+      const upsertCall = findSqlCall('INSERT INTO analysis_results');
+      expect(upsertCall[1]).toBe('test-long-content');
+      expect(upsertCall[2]).toBe(longContent);
+      expect(upsertCall[3]).toBe(longContent);
+      expect(upsertCall[6]).toBe(longContent);
+      expect(upsertCall[7]).toBe(longContent);
     });
 
     test('should handle empty string values', async () => {
@@ -267,97 +202,69 @@ describe('Database Integration Tests', () => {
         originalFileName: '',
         fileSize: '',
         blobUrl: '',
-        isPublic: false
+        isPublic: false,
       };
 
-      mockSql.mockResolvedValue({
-        rows: [{ id: 'test-empty' }]
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [{ id: 'test-empty' }] } as never);
       const result = await savePodcast(podcast);
 
       expect(result.success).toBe(true);
-      // 验证空字符串被正确处理
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        'test-empty', '', '', '', '', false,
-        '', '', '', '', false
-      );
+      const insertCall = findSqlCall('INSERT INTO podcasts');
+      expect(insertCall[1]).toBe('test-empty');
+      expect(insertCall[2]).toBe('');
+      expect(insertCall[3]).toBe('');
+      expect(insertCall[4]).toBe('');
+      expect(insertCall[5]).toBe('');
+      expect(insertCall[6]).toBeNull();
+      expect(insertCall[7]).toBe(false);
     });
 
     test('should handle extreme pagination values', async () => {
-      mockSql.mockResolvedValue({
-        rows: []
-      } as any);
-
-      // 测试极大的页码和页面大小
+      mockSql.mockResolvedValue({ rows: [] } as never);
       await getAllPodcasts(999999, 1000, false);
 
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        1000,        // LIMIT
-        999998000    // OFFSET = (999999 - 1) * 1000
-      );
+      const listCall = findSqlCall('ORDER BY p.created_at DESC');
+      expect(listCall[1]).toBe(1000);
+      expect(listCall[2]).toBe(999998000);
     });
 
     test('should handle zero and negative pagination values', async () => {
-      mockSql.mockResolvedValue({
-        rows: []
-      } as any);
+      mockSql.mockResolvedValue({ rows: [] } as never);
 
-      // 测试零页码
       await getAllPodcasts(0, 10, false);
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        10,   // LIMIT
-        -10   // OFFSET = (0 - 1) * 10
-      );
+      let listCall = findSqlCall('ORDER BY p.created_at DESC');
+      expect(listCall[1]).toBe(10);
+      expect(listCall[2]).toBe(-10);
 
       mockSql.mockClear();
+      mockSql.mockResolvedValue({ rows: [] } as never);
 
-      // 测试负页码
       await getAllPodcasts(-1, 5, false);
-      expect(mockSql).toHaveBeenCalledWith(
-        expect.any(Array),
-        5,    // LIMIT
-        -10   // OFFSET = (-1 - 1) * 5
-      );
+      listCall = findSqlCall('ORDER BY p.created_at DESC');
+      expect(listCall[1]).toBe(5);
+      expect(listCall[2]).toBe(-10);
     });
   });
 
   describe('Query Performance Considerations', () => {
     test('getAllPodcasts should use LEFT JOIN for performance', async () => {
-      mockSql.mockResolvedValue({
-        rows: []
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [] } as never);
       await getAllPodcasts(1, 10, true);
 
-      const sqlTemplate = mockSql.mock.calls[0][0];
-      const query = sqlTemplate.join('').toLowerCase();
-
-      // 验证使用了LEFT JOIN而不是子查询
+      const query = findSqlCall('FROM podcasts p')[0].join('').toLowerCase();
       expect(query).toContain('left join');
       expect(query).toContain('analysis_results');
-      
-      // 验证有ORDER BY用于排序
       expect(query).toContain('order by');
       expect(query).toContain('created_at desc');
     });
 
     test('should limit result set properly', async () => {
-      mockSql.mockResolvedValue({
-        rows: []
-      } as any);
-
+      mockSql.mockResolvedValue({ rows: [] } as never);
       await getAllPodcasts(1, 50, false);
 
-      const sqlTemplate = mockSql.mock.calls[0][0];
-      const query = sqlTemplate.join('').toLowerCase();
-
-      // 验证有LIMIT和OFFSET
+      const query = findSqlCall('FROM podcasts p')[0].join('').toLowerCase();
       expect(query).toContain('limit');
       expect(query).toContain('offset');
     });
   });
-}); 
+});

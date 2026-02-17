@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
+import { requireAdminAccess } from '../../../lib/adminGuard';
+
+export const runtime = 'nodejs';
 
 export async function DELETE(request: NextRequest) {
   try {
+    const adminCheck = await requireAdminAccess();
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
     const { searchParams } = new URL(request.url);
-    const email = searchParams.get('email');
+    const email = (searchParams.get('email') || '').trim().toLowerCase();
     
     if (!email) {
       return NextResponse.json({
@@ -13,7 +21,13 @@ export async function DELETE(request: NextRequest) {
       }, { status: 400 });
     }
 
-    console.log(`Attempting to delete user: ${email}`);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid email format'
+      }, { status: 400 });
+    }
     
     // 首先检查用户是否存在
     const userCheck = await sql`
@@ -28,7 +42,6 @@ export async function DELETE(request: NextRequest) {
     }
     
     const userId = userCheck.rows[0].id;
-    console.log(`Found user ID: ${userId}`);
     
     // 删除用户相关的播客分析结果
     const deleteAnalysisResults = await sql`
@@ -37,19 +50,16 @@ export async function DELETE(request: NextRequest) {
         SELECT id FROM podcasts WHERE user_id = ${userId}
       )
     `;
-    console.log(`Deleted ${deleteAnalysisResults.rowCount} analysis results`);
     
     // 删除用户的播客
     const deletePodcasts = await sql`
       DELETE FROM podcasts WHERE user_id = ${userId}
     `;
-    console.log(`Deleted ${deletePodcasts.rowCount} podcasts`);
     
     // 删除用户记录
     const deleteUser = await sql`
       DELETE FROM users WHERE id = ${userId}
     `;
-    console.log(`Deleted ${deleteUser.rowCount} user record`);
     
     return NextResponse.json({
       success: true,
