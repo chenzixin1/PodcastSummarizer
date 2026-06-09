@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+import { sql } from '../../../lib/sql';
 import bcrypt from 'bcryptjs';
 import { requireAdminAccess } from '../../../lib/adminGuard';
 
@@ -22,7 +22,13 @@ export async function POST(request: NextRequest) {
     }
     
     // 查找用户
-    const result = await sql`
+    const result = await sql<{
+      id: string;
+      email: string;
+      password_hash: string | null;
+      name: string;
+      created_at: string;
+    }>`
       SELECT id, email, password_hash, name, created_at 
       FROM users 
       WHERE email = ${email}

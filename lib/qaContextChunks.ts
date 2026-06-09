@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { isD1DatabaseProvider, sql } from './sql';
 
 const EMBEDDING_MODEL =
   process.env.OPENROUTER_EMBEDDING_MODEL || process.env.OPENROUTER_QA_EMBEDDING_MODEL || 'openai/text-embedding-3-small';
@@ -467,6 +467,9 @@ function sourcePrior(source: QaChunkSource): number {
 }
 
 export async function ensureQaContextChunksTable(): Promise<void> {
+  if (isD1DatabaseProvider()) {
+    return;
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS qa_context_chunks (
       id BIGSERIAL PRIMARY KEY,
@@ -531,30 +534,57 @@ export async function rebuildQaContextChunksForPodcast(input: {
     for (let i = 0; i < chunks.length; i += 1) {
       const chunk = chunks[i];
       const embedding = embeddingVectors[i];
-      await sql`
-        INSERT INTO qa_context_chunks (
-          podcast_id,
-          chunk_index,
-          source,
-          start_sec,
-          end_sec,
-          content,
-          content_tsv,
-          embedding_json,
-          embedding_model
-        )
-        VALUES (
-          ${input.podcastId},
-          ${chunk.chunkIndex},
-          ${chunk.source},
-          ${chunk.startSec},
-          ${chunk.endSec},
-          ${chunk.content},
-          to_tsvector('simple', ${chunk.content}),
-          ${embedding ? JSON.stringify(embedding) : null}::jsonb,
-          ${embedding ? EMBEDDING_MODEL : null}
-        )
-      `;
+      if (isD1DatabaseProvider()) {
+        await sql`
+          INSERT INTO qa_context_chunks (
+            podcast_id,
+            chunk_index,
+            source,
+            start_sec,
+            end_sec,
+            content,
+            content_tsv,
+            embedding_json,
+            embedding_model
+          )
+          VALUES (
+            ${input.podcastId},
+            ${chunk.chunkIndex},
+            ${chunk.source},
+            ${chunk.startSec},
+            ${chunk.endSec},
+            ${chunk.content},
+            ${chunk.content},
+            ${embedding ? JSON.stringify(embedding) : null},
+            ${embedding ? EMBEDDING_MODEL : null}
+          )
+        `;
+      } else {
+        await sql`
+          INSERT INTO qa_context_chunks (
+            podcast_id,
+            chunk_index,
+            source,
+            start_sec,
+            end_sec,
+            content,
+            content_tsv,
+            embedding_json,
+            embedding_model
+          )
+          VALUES (
+            ${input.podcastId},
+            ${chunk.chunkIndex},
+            ${chunk.source},
+            ${chunk.startSec},
+            ${chunk.endSec},
+            ${chunk.content},
+            to_tsvector('simple', ${chunk.content}),
+            ${embedding ? JSON.stringify(embedding) : null}::jsonb,
+            ${embedding ? EMBEDDING_MODEL : null}
+          )
+        `;
+      }
     }
 
     return { success: true, chunkCount: chunks.length };

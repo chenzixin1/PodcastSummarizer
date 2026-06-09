@@ -1,4 +1,5 @@
-import { sql } from '@vercel/postgres';
+import { getD1DatabaseBinding, isD1DatabaseProvider, sql } from './sql';
+import { ensureCreditLedgerTables, recordUploadCreditDebit } from './credits';
 import { extractPodcastTags } from './podcastTags';
 import type { MindMapData } from './mindMap';
 import type { FullTextBilingualPayload, SummaryBilingualPayload } from './bilingualAlignment';
@@ -204,6 +205,10 @@ let userCreditsSchemaEnsured = false;
 let userCreditsSchemaPromise: Promise<void> | null = null;
 
 export async function ensureUserCreditsSchema(): Promise<void> {
+  if (isD1DatabaseProvider()) {
+    userCreditsSchemaEnsured = true;
+    return;
+  }
   if (userCreditsSchemaEnsured) {
     return;
   }
@@ -237,6 +242,9 @@ function toJsonb(value: unknown): string | null {
 }
 
 export async function ensureExtensionTranscriptionJobsTable(): Promise<void> {
+  if (isD1DatabaseProvider()) {
+    return;
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS extension_transcription_jobs (
       id TEXT PRIMARY KEY,
@@ -268,6 +276,9 @@ export async function ensureExtensionTranscriptionJobsTable(): Promise<void> {
 }
 
 export async function ensureExtensionMonitorTables(): Promise<void> {
+  if (isD1DatabaseProvider()) {
+    return;
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS extension_monitor_tasks (
       id TEXT PRIMARY KEY,
@@ -349,6 +360,10 @@ export async function ensureExtensionMonitorTables(): Promise<void> {
 }
 
 async function ensureSchemaUpgrades(): Promise<void> {
+  if (isD1DatabaseProvider()) {
+    schemaUpgradeEnsured = true;
+    return;
+  }
   if (schemaUpgradeEnsured) {
     return;
   }
@@ -417,6 +432,9 @@ async function ensureSchemaUpgrades(): Promise<void> {
       });
       await ensureExtensionMonitorTables().catch((error) => {
         console.warn('[DB] ensureExtensionMonitorTables skipped:', error);
+      });
+      await ensureCreditLedgerTables().catch((error) => {
+        console.warn('[DB] ensureCreditLedgerTables skipped:', error);
       });
       schemaUpgradeEnsured = true;
     })().catch((error) => {
@@ -555,6 +573,7 @@ export async function initDatabase(): Promise<DbResult> {
 
     await ensureExtensionTranscriptionJobsTable();
     await ensureExtensionMonitorTables();
+    await ensureCreditLedgerTables();
 
     console.log('✅ 数据库表初始化成功');
     return { success: true };
@@ -564,6 +583,119 @@ export async function initDatabase(): Promise<DbResult> {
   }
 }
 
+async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbResult> {
+  const db = getD1DatabaseBinding();
+  if (!db) {
+    return { success: false, error: 'D1 database binding is unavailable.' };
+  }
+
+  const updateUserCredits = db
+    .prepare(
+      `
+      UPDATE users
+      SET credits = credits - 1
+      WHERE id = ?
+        AND credits >= 1
+      RETURNING id, credits
+    `,
+    )
+    .bind(podcast.userId);
+
+  const insertPodcast = db
+    .prepare(
+      `
+      INSERT INTO podcasts
+        (id, title, original_filename, file_size, blob_url, source_reference, is_public, user_id)
+      SELECT
+        ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE changes() = 1
+      RETURNING
+        id AS podcast_id,
+        (SELECT credits FROM users WHERE id = ?) AS remaining_credits
+    `,
+    )
+    .bind(
+      podcast.id,
+      podcast.title,
+      podcast.originalFileName,
+      podcast.fileSize,
+      podcast.blobUrl,
+      podcast.sourceReference ?? null,
+      podcast.isPublic ? 1 : 0,
+      podcast.userId,
+      podcast.userId,
+    );
+
+  const checkUser = db.prepare('SELECT id FROM users WHERE id = ? LIMIT 1').bind(podcast.userId);
+
+  const [chargeResult, insertResult, userResult] = await db.batch<{
+    id?: string;
+    credits?: number;
+    podcast_id?: string;
+    remaining_credits?: number;
+  }>([updateUserCredits, insertPodcast, checkUser]);
+
+  const insertedRow = insertResult?.results?.[0];
+  if (insertedRow?.podcast_id) {
+    const remainingCreditsRaw = insertedRow.remaining_credits;
+    const remainingCredits =
+      typeof remainingCreditsRaw === 'number'
+        ? remainingCreditsRaw
+        : Number.parseInt(String(remainingCreditsRaw), 10);
+
+    await recordUploadCreditDebit({
+      userId: String(podcast.userId),
+      podcastId: String(insertedRow.podcast_id),
+      balanceAfter: Number.isFinite(remainingCredits) ? remainingCredits : null,
+    }).catch((ledgerError) => {
+      console.error('D1 upload credit ledger insert failed:', ledgerError);
+    });
+
+    return {
+      success: true,
+      data: {
+        id: insertedRow.podcast_id,
+        remainingCredits: Number.isFinite(remainingCredits) ? remainingCredits : null,
+      },
+    };
+  }
+
+  if ((chargeResult?.results?.length || 0) > 0) {
+    await db
+      .prepare(
+        `
+        UPDATE users
+        SET credits = credits + 1
+        WHERE id = ?
+      `,
+      )
+      .bind(podcast.userId)
+      .all()
+      .catch((refundError) => {
+        console.error('D1 credit refund after failed podcast insert failed:', refundError);
+      });
+
+    return {
+      success: false,
+      error: 'D1 podcast insert did not return a row after credit deduction.',
+    };
+  }
+
+  if (!userResult?.results?.[0]?.id) {
+    return {
+      success: false,
+      errorCode: 'USER_NOT_FOUND',
+      error: 'User not found.',
+    };
+  }
+
+  return {
+    success: false,
+    errorCode: 'INSUFFICIENT_CREDITS',
+    error: 'Insufficient credits.',
+  };
+}
+
 // 保存播客信息并扣除 1 个转换积分（原子操作）
 export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<DbResult> {
   try {
@@ -571,6 +703,10 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
 
     if (!podcast.userId) {
       return { success: false, errorCode: 'USER_REQUIRED', error: 'userId is required for credit deduction.' };
+    }
+
+    if (isD1DatabaseProvider()) {
+      return await savePodcastWithD1CreditDeduction(podcast);
     }
 
     const result = await sql`
@@ -606,6 +742,14 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
       const remainingCreditsRaw = result.rows[0]?.remaining_credits;
       const remainingCredits =
         typeof remainingCreditsRaw === 'number' ? remainingCreditsRaw : Number.parseInt(String(remainingCreditsRaw), 10);
+
+      await recordUploadCreditDebit({
+        userId: podcast.userId,
+        podcastId,
+        balanceAfter: Number.isFinite(remainingCredits) ? remainingCredits : null,
+      }).catch((ledgerError) => {
+        console.error('Upload credit ledger insert failed:', ledgerError);
+      });
 
       return {
         success: true,
@@ -939,7 +1083,7 @@ export async function listPendingBilingualAlignmentRows(limit = 3): Promise<DbRe
       LIMIT ${normalizedLimit}
     `;
 
-    return { success: true, data: result.rows as PendingBilingualAlignmentRow[] };
+    return { success: true, data: result.rows as unknown as PendingBilingualAlignmentRow[] };
   } catch (error) {
     console.error('获取待回填双语对齐数据失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };

@@ -38,11 +38,11 @@ export default function RootLayout({
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-[13px] tracking-[0.02em] text-[var(--text-muted)]">PodSum.cc 2026, All rights reserved.</p>
             <div className="flex items-center gap-2.5 sm:justify-end">
+              <Link href="/?view=explore" className="rounded-full border border-[var(--border-soft)] bg-[var(--paper-muted)] px-3 py-1.5 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--heading)]">
+                Explore
+              </Link>
               <Link href="/about" className="rounded-full border border-[var(--border-soft)] bg-[var(--paper-muted)] px-3 py-1.5 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--heading)]">
                 About
-              </Link>
-              <Link href="/chrome-extension" className="rounded-full border border-[var(--border-soft)] bg-[var(--paper-muted)] px-3 py-1.5 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--heading)]">
-                Chrome Extension
               </Link>
             </div>
           </div>

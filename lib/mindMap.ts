@@ -24,7 +24,7 @@ interface GenerateMindMapResult {
   error?: string;
 }
 
-const MIND_MAP_MODEL = process.env.OPENROUTER_MINDMAP_MODEL || 'google/gemini-3-flash-preview';
+const MIND_MAP_MODEL = process.env.OPENROUTER_MINDMAP_MODEL || 'openai/gpt-4o-mini';
 const MAX_TREE_DEPTH = 5; // root depth = 0, max 6 levels
 const MAX_CHILDREN_PER_NODE = 14;
 const TARGET_MIN_DEPTH = 5; // root depth = 1
@@ -150,6 +150,63 @@ function extractJsonObject(raw: string): string {
   }
 
   return withoutFence.slice(start);
+}
+
+function extractFallbackLabels(text: string, limit: number): string[] {
+  const labels = text
+    .split(/\n+/g)
+    .map((line) =>
+      cleanLabel(
+        line
+          .replace(/^#{1,6}\s*/, '')
+          .replace(/^\s*[-*+]\s*/, '')
+          .replace(/^\s*\d+[.)]\s*/, '')
+          .replace(/\*\*/g, ''),
+      ),
+    )
+    .filter((line) => line.length >= 4);
+
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const label of labels) {
+    const key = label.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(label);
+    if (result.length >= limit) {
+      break;
+    }
+  }
+  return result;
+}
+
+function buildFallbackMindMapData(input: GenerateMindMapInput): MindMapData {
+  const isEnglish = input.language === 'en';
+  const summaryLabels = extractFallbackLabels(input.summary || '', 8);
+  const highlightLabels = extractFallbackLabels(input.highlights || '', 10);
+  const rootLabel = cleanLabel(input.title) || (isEnglish ? 'Podcast Summary' : '播客总结');
+
+  const root: MindMapNode = {
+    label: rootLabel,
+    children: [
+      {
+        label: isEnglish ? 'Core Summary' : '核心总结',
+        children: (summaryLabels.length > 0 ? summaryLabels : [isEnglish ? 'Summary generated' : '已生成摘要']).map((label) => ({
+          label,
+        })),
+      },
+      {
+        label: isEnglish ? 'Key Points' : '关键要点',
+        children: (highlightLabels.length > 0 ? highlightLabels : [isEnglish ? 'Highlights generated' : '已生成重点']).map((label) => ({
+          label,
+        })),
+      },
+    ],
+  };
+
+  return { root };
 }
 
 function readChoiceContent(choice: unknown): string {
@@ -298,8 +355,11 @@ export async function generateMindMapData(input: GenerateMindMapInput): Promise<
     };
   }
 
+  const fallback = buildFallbackMindMapData(input);
   return {
-    success: false,
-    error: lastError || 'Failed to generate mind map',
+    success: true,
+    data: fallback,
+    rawOutput: JSON.stringify(fallback),
+    error: lastError || 'Generated deterministic fallback mind map',
   };
 }

@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { sql } from '../../../lib/sql';
 import { NextResponse } from 'next/server';
 import { requireAdminAccess } from '../../../lib/adminGuard';
 

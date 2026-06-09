@@ -12,11 +12,14 @@
 
 # testing
 /coverage
+/output
 
 # next.js
 /.next/
 /.next.backup.*/
 /out/
+/.open-next/
+/.wrangler/
 
 # production
 /build

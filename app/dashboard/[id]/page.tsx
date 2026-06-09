@@ -3,7 +3,6 @@
 import { Children, isValidElement, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
@@ -12,7 +11,7 @@ import remarkGfm from 'remark-gfm';
 import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getClientErrors } from '../../../lib/debugUtils';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
-import ThemeModeSwitch from '../../../components/ThemeModeSwitch';
+import AppHeader from '../../../components/AppHeader';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 import { extractPodcastTags } from '../../../lib/podcastTags';
 import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
@@ -655,7 +654,7 @@ export default function DashboardPage() {
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
   const contentPanelRef = useRef<HTMLDivElement | null>(null);
-  const headerRef = useRef<HTMLElement | null>(null);
+  const headerRef = useRef<HTMLDivElement | null>(null);
   const isProcessingRef = useRef(false);
   const isAutoScrollEnabledRef = useRef(true);
   const viewScrollPositionsRef = useRef<Record<ViewMode, number>>({
@@ -1685,32 +1684,35 @@ export default function DashboardPage() {
 
   if (hasInvalidId) {
     return (
-      <div className="min-h-screen bg-[#f3eee3] text-[var(--text-main)] flex items-center justify-center px-4">
-        <div className="text-center max-w-md p-8 bg-[var(--paper-base)] border border-[var(--border-soft)] rounded-2xl shadow-[0_18px_42px_-30px_rgba(80,67,44,0.55)]">
-          <h1 className="text-2xl font-bold text-[var(--danger)] mb-4">Invalid File ID</h1>
-          <p className="text-[var(--text-secondary)] mb-6">
-            The file ID in the URL is invalid or missing. This usually happens when:
-          </p>
-          <ul className="text-left text-sm text-[var(--text-muted)] mb-6 space-y-2">
-            <li>• You navigated to an incomplete URL</li>
-            <li>• The file upload process was interrupted</li>
-            <li>• You&rsquo;re using an old or broken bookmark</li>
-          </ul>
-          <div className="space-y-3">
-            <Link
-              href="/upload"
-              className="block w-full bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] text-[var(--btn-primary-text)] font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              Upload New File
-            </Link>
-            <Link
-              href="/my"
-              className="block w-full bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              View File History
-            </Link>
+      <div className="dashboard-shell min-h-screen text-[var(--text-main)]" data-theme={themeMode}>
+        <AppHeader currentLabel="Invalid File" themeMode={themeMode} onThemeToggle={setThemeMode} showViewTabs={false} />
+        <main className="flex min-h-[70vh] items-center justify-center px-4 py-8">
+          <div className="dashboard-panel max-w-md rounded-lg p-8 text-center">
+            <h1 className="mb-4 text-2xl font-bold text-[var(--danger)]">Invalid File ID</h1>
+            <p className="mb-6 text-[var(--text-secondary)]">
+              The file ID in the URL is invalid or missing. This usually happens when:
+            </p>
+            <ul className="mb-6 list-disc space-y-2 pl-5 text-left text-sm text-[var(--text-muted)]">
+              <li>You navigated to an incomplete URL</li>
+              <li>The file upload process was interrupted</li>
+              <li>You&rsquo;re using an old or broken bookmark</li>
+            </ul>
+            <div className="space-y-3">
+              <Link
+                href="/upload"
+                className="block w-full rounded-lg bg-[var(--btn-primary)] px-4 py-3 font-semibold text-[var(--btn-primary-text)] transition-colors hover:bg-[var(--btn-primary-hover)]"
+              >
+                Upload New File
+              </Link>
+              <Link
+                href="/?view=my"
+                className="block w-full rounded-lg border border-[var(--border-soft)] bg-[var(--paper-subtle)] px-4 py-3 font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-muted)]"
+              >
+                View File History
+              </Link>
+            </div>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -1791,27 +1793,14 @@ export default function DashboardPage() {
   return (
     <ErrorBoundary>
       <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
-        <header ref={headerRef} className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
-          <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
-            {/* Breadcrumb Navigation */}
-            <nav className="app-breadcrumb-nav w-full md:w-auto">
-              <Link href="/" className="app-breadcrumb-link">
-                <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
-                <span>PodSum.cc</span>
-              </Link>
-              <span className="app-breadcrumb-divider">/</span>
-              <span
-                className="app-breadcrumb-current max-w-[60vw] sm:max-w-[68vw] md:max-w-xl lg:max-w-2xl"
-                title={data?.title || ''}
-              >
-                {data?.title || ''}
-              </span>
-            </nav>
-            <div className="flex items-center gap-2 flex-wrap justify-end w-full md:w-auto">
-              <ThemeModeSwitch themeMode={themeMode} onToggle={setThemeMode} />
-            </div>
-          </div>
-        </header>
+        <div ref={headerRef}>
+          <AppHeader
+            currentLabel={data?.title || (error ? 'Summary' : '')}
+            themeMode={themeMode}
+            onThemeToggle={setThemeMode}
+            showViewTabs={false}
+          />
+        </div>
 
         {/* 中间内容区域 */}
         {!data && !error && isLoading && (
@@ -1825,20 +1814,29 @@ export default function DashboardPage() {
 
         {error && (
            <div className="flex-grow flex items-center justify-center">
-             <div className="text-[var(--danger)] border border-[#d8b7b7] bg-[#fff5f5] p-6 sm:p-7 rounded-2xl flex flex-col items-center max-w-md shadow-[0_18px_42px_-30px_rgba(125,73,73,0.52)]">
-                <p className="mb-4 text-center leading-7">{error}</p>
-                <button 
-                  onClick={retryProcessing}
-                  className="px-6 py-2.5 bg-[var(--danger)] hover:bg-[#8f4343] rounded-xl text-white text-sm font-semibold transition-colors"
-                  disabled={isProcessing}
-                >
-                  {isProcessing ? (
-                    <>
-                      <span className="inline-block animate-spin mr-2">↻</span>
-                      处理中...
-                    </>
-                  ) : '重新处理文件'}
-                </button>
+             <div className="flex max-w-md flex-col items-center rounded-lg border border-[#d8b7b7] bg-[#fff5f5] p-6 text-[var(--danger)] shadow-[0_18px_42px_-30px_rgba(125,73,73,0.52)] sm:p-7">
+                <p className="mb-5 text-center leading-7">{error}</p>
+                <div className="grid w-full gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={retryProcessing}
+                    className="rounded-lg bg-[var(--danger)] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#8f4343] disabled:opacity-60"
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <>
+                        <span className="mr-2 inline-block animate-spin">↻</span>
+                        处理中...
+                      </>
+                    ) : '重新处理'}
+                  </button>
+                  <Link
+                    href="/?view=my"
+                    className="rounded-lg border border-[#d8b7b7] bg-[var(--paper-base)] px-5 py-2.5 text-center text-sm font-semibold text-[var(--danger)] transition-colors hover:bg-[var(--paper-muted)]"
+                  >
+                    My Summaries
+                  </Link>
+                </div>
               </div>
           </div>
         )}

@@ -1,6 +1,6 @@
-import { sql } from '@vercel/postgres';
+import { isD1DatabaseProvider, sql } from './sql';
 
-export type ProcessingJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type ProcessingJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 export type ProcessingTask = 'summary' | 'translation' | 'highlights' | null;
 
 export interface ProcessingJob {
@@ -25,6 +25,14 @@ export interface ProcessingJobResult {
   data?: ProcessingJob | null;
 }
 
+export interface ProcessingQueueHealth {
+  counts: Record<string, number>;
+  queuedOldestAt: string | null;
+  staleProcessingCount: number;
+  activeWorkers: number;
+  checkedAt: string;
+}
+
 const mapRowToProcessingJob = (row: Record<string, unknown>): ProcessingJob => ({
   podcastId: String(row.podcastId ?? ''),
   status: String(row.status ?? 'queued') as ProcessingJobStatus,
@@ -42,6 +50,9 @@ const mapRowToProcessingJob = (row: Record<string, unknown>): ProcessingJob => (
 });
 
 export async function ensureProcessingJobsTable(): Promise<void> {
+  if (isD1DatabaseProvider()) {
+    return;
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS processing_jobs (
       podcast_id TEXT PRIMARY KEY REFERENCES podcasts(id) ON DELETE CASCADE,
@@ -120,6 +131,20 @@ export async function enqueueProcessingJob(podcastId: string): Promise<Processin
   }
 }
 
+export async function retryProcessingJob(podcastId: string): Promise<ProcessingJobResult> {
+  const result = await enqueueProcessingJob(podcastId);
+  if (!result.success || !result.data) {
+    return result;
+  }
+  return {
+    success: true,
+    data: {
+      ...result.data,
+      statusMessage: 'Queued for manual retry',
+    },
+  };
+}
+
 export async function getProcessingJob(podcastId: string): Promise<ProcessingJobResult> {
   try {
     await ensureProcessingJobsTable();
@@ -157,6 +182,50 @@ export async function getProcessingJob(podcastId: string): Promise<ProcessingJob
 export async function claimNextProcessingJob(workerId: string): Promise<ProcessingJobResult> {
   try {
     await ensureProcessingJobsTable();
+    if (isD1DatabaseProvider()) {
+      const result = await sql`
+        UPDATE processing_jobs
+        SET
+          status = 'processing',
+          worker_id = ${workerId},
+          attempts = attempts + 1,
+          current_task = COALESCE(current_task, 'summary'),
+          status_message = 'Worker picked up the job',
+          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE podcast_id = (
+          SELECT podcast_id
+          FROM processing_jobs
+          WHERE status = 'queued'
+             OR (status = 'processing' AND updated_at < datetime('now', '-2 minutes'))
+          ORDER BY
+            CASE WHEN status = 'queued' THEN 0 ELSE 1 END,
+            updated_at ASC
+          LIMIT 1
+        )
+        RETURNING
+          podcast_id as "podcastId",
+          status,
+          current_task as "currentTask",
+          progress_current as "progressCurrent",
+          progress_total as "progressTotal",
+          status_message as "statusMessage",
+          attempts,
+          worker_id as "workerId",
+          last_error as "lastError",
+          created_at as "createdAt",
+          updated_at as "updatedAt",
+          started_at as "startedAt",
+          finished_at as "finishedAt"
+      `;
+
+      if (result.rows.length === 0) {
+        return { success: true, data: null };
+      }
+
+      return { success: true, data: mapRowToProcessingJob(result.rows[0]) };
+    }
+
     const result = await sql`
       WITH next_job AS (
         SELECT podcast_id
@@ -227,6 +296,7 @@ export async function updateProcessingJobProgress(
         status_message = COALESCE(${payload.statusMessage ?? null}, status_message),
         updated_at = CURRENT_TIMESTAMP
       WHERE podcast_id = ${podcastId}
+        AND status != 'cancelled'
       RETURNING
         podcast_id as "podcastId",
         status,
@@ -267,6 +337,7 @@ export async function completeProcessingJob(podcastId: string): Promise<Processi
         finished_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
       WHERE podcast_id = ${podcastId}
+        AND status != 'cancelled'
       RETURNING
         podcast_id as "podcastId",
         status,
@@ -306,6 +377,7 @@ export async function failProcessingJob(podcastId: string, message: string): Pro
         finished_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
       WHERE podcast_id = ${podcastId}
+        AND status != 'cancelled'
       RETURNING
         podcast_id as "podcastId",
         status,
@@ -329,6 +401,104 @@ export async function failProcessingJob(podcastId: string, message: string): Pro
     return { success: true, data: mapRowToProcessingJob(result.rows[0]) };
   } catch (error) {
     console.error('failProcessingJob failed:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function cancelProcessingJob(
+  podcastId: string,
+  message = 'Cancelled by admin',
+): Promise<ProcessingJobResult> {
+  try {
+    await ensureProcessingJobsTable();
+    const result = await sql`
+      UPDATE processing_jobs
+      SET
+        status = 'cancelled',
+        status_message = ${message},
+        current_task = NULL,
+        worker_id = NULL,
+        finished_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE podcast_id = ${podcastId}
+        AND status IN ('queued', 'processing', 'failed')
+      RETURNING
+        podcast_id as "podcastId",
+        status,
+        current_task as "currentTask",
+        progress_current as "progressCurrent",
+        progress_total as "progressTotal",
+        status_message as "statusMessage",
+        attempts,
+        worker_id as "workerId",
+        last_error as "lastError",
+        created_at as "createdAt",
+        updated_at as "updatedAt",
+        started_at as "startedAt",
+        finished_at as "finishedAt"
+    `;
+
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Processing job not found or cannot be cancelled' };
+    }
+
+    return { success: true, data: mapRowToProcessingJob(result.rows[0]) };
+  } catch (error) {
+    console.error('cancelProcessingJob failed:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function getProcessingQueueHealth(): Promise<{
+  success: boolean;
+  error?: string;
+  data?: ProcessingQueueHealth;
+}> {
+  try {
+    await ensureProcessingJobsTable();
+    const [countsResult, oldestResult, staleResult, workersResult] = await Promise.all([
+      sql`
+        SELECT status, COUNT(*) as count
+        FROM processing_jobs
+        GROUP BY status
+      `,
+      sql`
+        SELECT MIN(created_at) as "queuedOldestAt"
+        FROM processing_jobs
+        WHERE status = 'queued'
+      `,
+      sql`
+        SELECT COUNT(*) as count
+        FROM processing_jobs
+        WHERE status = 'processing'
+          AND updated_at < NOW() - INTERVAL '2 minutes'
+      `,
+      sql`
+        SELECT COUNT(DISTINCT worker_id) as count
+        FROM processing_jobs
+        WHERE status = 'processing'
+          AND worker_id IS NOT NULL
+          AND updated_at >= NOW() - INTERVAL '2 minutes'
+      `,
+    ]);
+
+    const counts: Record<string, number> = {};
+    for (const row of countsResult.rows) {
+      counts[String(row.status || 'unknown')] = Number(row.count || 0);
+    }
+
+    return {
+      success: true,
+      data: {
+        counts,
+        queuedOldestAt: (oldestResult.rows[0]?.queuedOldestAt as string | null) || null,
+        staleProcessingCount: Number(staleResult.rows[0]?.count || 0),
+        activeWorkers: Number(workersResult.rows[0]?.count || 0),
+        checkedAt: new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    console.error('getProcessingQueueHealth failed:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

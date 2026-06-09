@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 import { savePodcastWithCreditDeduction } from '../../../lib/db';
 import { enqueueProcessingJob } from '../../../lib/processingJobs';
@@ -9,6 +8,7 @@ import { Blob } from 'buffer';
 import { triggerWorkerProcessing } from '../../../lib/workerTrigger';
 import { fetchYoutubeSrtViaApify, ApifyTranscriptError } from '../../../lib/apifyTranscript';
 import { resolveFilePodcastTitle, resolveYoutubePodcastTitle } from '../../../lib/podcastTitle';
+import { deleteObject, uploadObject } from '../../../lib/objectStorage';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -160,17 +160,11 @@ export async function POST(request: NextRequest) {
 
     uploadDebug('[UPLOAD] Start upload:', { id, filename, fileSize, title, isPublic });
 
-    let blobUrl = '#mock-blob-url';
-
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      const blob = await put(filename, file, {
-        access: 'public',
-      });
-      blobUrl = blob.url;
-      uploadDebug('[UPLOAD] File uploaded to blob.');
-    } else {
-      console.warn('[UPLOAD] BLOB_READ_WRITE_TOKEN not configured, using mock storage');
-    }
+    const object = await uploadObject(filename, file, {
+      contentType: file.type || 'application/x-subrip',
+    });
+    const blobUrl = object.url;
+    uploadDebug('[UPLOAD] File uploaded to object storage.', { provider: object.provider });
 
     const dbResult = await savePodcastWithCreditDeduction({
       id,
@@ -185,6 +179,9 @@ export async function POST(request: NextRequest) {
     uploadDebug('[UPLOAD] savePodcast result:', { success: dbResult.success, errorCode: dbResult.errorCode });
 
     if (!dbResult.success) {
+      await deleteObject(blobUrl).catch((deleteError) => {
+        console.error('[UPLOAD] Failed to delete orphaned upload object:', deleteError);
+      });
       if (dbResult.errorCode === 'INSUFFICIENT_CREDITS') {
         return NextResponse.json(
           {

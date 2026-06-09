@@ -1,5 +1,4 @@
 import { after, NextRequest, NextResponse } from 'next/server';
-import { del, put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 import {
   ExtensionAuthError,
@@ -26,6 +25,7 @@ import {
 import { savePodcast } from '../../../../../lib/db';
 import { enqueueProcessingJob } from '../../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../../lib/workerTrigger';
+import { deleteObject, uploadObject } from '../../../../../lib/objectStorage';
 
 export const runtime = 'nodejs';
 
@@ -265,10 +265,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
           },
         });
       }
-      if (job.audioBlobUrl && process.env.BLOB_READ_WRITE_TOKEN) {
+      if (job.audioBlobUrl) {
         after(async () => {
           try {
-            await del(job.audioBlobUrl as string);
+            await deleteObject(job.audioBlobUrl as string);
           } catch (deleteError) {
             console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
           }
@@ -307,10 +307,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
           message: 'Volcano returned no payload.',
         });
       }
-      if (job.audioBlobUrl && process.env.BLOB_READ_WRITE_TOKEN) {
+      if (job.audioBlobUrl) {
         after(async () => {
           try {
-            await del(job.audioBlobUrl as string);
+            await deleteObject(job.audioBlobUrl as string);
           } catch (deleteError) {
             console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
           }
@@ -356,14 +356,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     const titleBase = (originalFileName || '').replace(/\.srt$/i, '') || job.videoId || podcastId;
     const podcastTitle = `Transcript Analysis: ${titleBase}`;
 
-    let srtBlobUrl = '#mock-blob-url';
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      const srtBlob = await put(`extension-srt/${podcastId}-${originalFileName}`, srtBuffer, {
-        access: 'public',
-        contentType: 'application/x-subrip',
-      });
-      srtBlobUrl = srtBlob.url;
-    }
+    const srtBlob = await uploadObject(`extension-srt/${podcastId}-${originalFileName}`, srtBuffer, {
+      contentType: 'application/x-subrip',
+    });
+    const srtBlobUrl = srtBlob.url;
 
     const saveResult = await savePodcast({
       id: podcastId,
@@ -377,6 +373,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     });
 
     if (!saveResult.success) {
+      await deleteObject(srtBlobUrl).catch((deleteError) => {
+        console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete orphaned SRT object:', deleteError);
+      });
       throw new Error(saveResult.error || 'Failed to save podcast from Path2 transcription.');
     }
 
@@ -435,10 +434,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
 
     await updateExtensionTranscriptionJobCompleted(job.id, user.id, podcastId);
 
-    if (job.audioBlobUrl && process.env.BLOB_READ_WRITE_TOKEN) {
+    if (job.audioBlobUrl) {
       after(async () => {
         try {
-          await del(job.audioBlobUrl as string);
+          await deleteObject(job.audioBlobUrl as string);
         } catch (deleteError) {
           console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
         }

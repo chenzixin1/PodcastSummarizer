@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+import { sql } from '../../../lib/sql';
 import { initDatabase } from '../../../lib/db';
 import { requireAdminAccess } from '../../../lib/adminGuard';
 

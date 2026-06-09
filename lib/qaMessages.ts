@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { sql } from '@vercel/postgres';
+import { isD1DatabaseProvider, sql } from './sql';
 
 export interface QaMessage {
   id: string;
@@ -36,6 +36,9 @@ const mapRowToQaMessage = (row: Record<string, unknown>): QaMessage => ({
 });
 
 export async function ensureQaMessagesTable(): Promise<void> {
+  if (isD1DatabaseProvider()) {
+    return;
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS qa_messages (
       id TEXT PRIMARY KEY,

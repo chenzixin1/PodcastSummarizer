@@ -3,11 +3,7 @@
 import { useState, ChangeEvent, FormEvent, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import Link from 'next/link';
-import Image from 'next/image';
-import ThemeModeSwitch from '../../components/ThemeModeSwitch';
-
-type ThemeMode = 'light' | 'dark';
+import AppFrame from '../../components/AppFrame';
 
 function parseCredits(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -30,28 +26,7 @@ export default function UploadPage() {
   const [isPublic, setIsPublic] = useState(false);
   const [remainingCredits, setRemainingCredits] = useState<number | null>(null);
   const [creditsLoading, setCreditsLoading] = useState(true);
-  const [themeMode, setThemeMode] = useState<ThemeMode>('light');
   const router = useRouter();
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    const storedTheme = window.localStorage.getItem('podsum-dashboard-theme');
-    if (storedTheme === 'light' || storedTheme === 'dark') {
-      setThemeMode(storedTheme);
-      return;
-    }
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    setThemeMode(prefersDark ? 'dark' : 'light');
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem('podsum-dashboard-theme', themeMode);
-  }, [themeMode]);
 
   useEffect(() => {
     if (status !== 'authenticated') {
@@ -90,12 +65,12 @@ export default function UploadPage() {
 
   if (status === 'loading') {
     return (
-      <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex items-center justify-center" data-theme={themeMode}>
+      <AppFrame currentLabel="Upload" showViewTabs={false} mainClassName="flex min-h-[70vh] items-center justify-center px-4">
         <div className="text-center rounded-2xl border border-[var(--border-soft)] bg-[var(--paper-base)] px-8 py-8 shadow-[0_18px_40px_-28px_rgba(80,67,44,0.45)]">
           <div className="animate-spin rounded-full h-12 w-12 border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)] mx-auto mb-4"></div>
           <p className="text-[var(--text-muted)]">Loading...</p>
         </div>
-      </div>
+      </AppFrame>
     );
   }
 
@@ -181,27 +156,7 @@ export default function UploadPage() {
     uploading || (!file && !youtubeUrl.trim()) || (remainingCredits !== null && remainingCredits <= 0);
 
   return (
-    <div className="dashboard-shell min-h-screen text-[var(--text-main)] flex flex-col" data-theme={themeMode}>
-      <header className="sticky top-0 z-20 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
-          <nav className="app-breadcrumb-nav">
-            <Link href="/" className="app-breadcrumb-link">
-              <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={28} height={28} className="app-breadcrumb-logo" />
-              <span>PodSum.cc</span>
-            </Link>
-            <span className="app-breadcrumb-divider">/</span>
-            <span className="app-breadcrumb-current">Upload</span>
-          </nav>
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <ThemeModeSwitch themeMode={themeMode} onToggle={setThemeMode} />
-            <Link href="/my" className="bg-[var(--paper-base)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] text-sm font-medium py-2 px-4 sm:px-6 rounded-lg transition-colors">
-              Back to History
-            </Link>
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8 flex-grow">
+    <AppFrame currentLabel="Upload" showViewTabs={false} mainClassName="mx-auto w-full max-w-[1400px] flex-grow p-4 sm:p-6 lg:p-8">
         <section className="dashboard-panel rounded-2xl p-5 sm:p-6 lg:p-8 w-full max-w-3xl mx-auto">
           <div className="mb-6 space-y-2">
             <h1 className="text-2xl sm:text-3xl font-bold text-[var(--heading)]">Upload SRT or YouTube</h1>
@@ -298,7 +253,6 @@ export default function UploadPage() {
             </button>
           </form>
         </section>
-      </main>
-    </div>
+    </AppFrame>
   );
 }

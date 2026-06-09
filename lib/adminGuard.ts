@@ -24,6 +24,20 @@ function parseAdminEmailAllowlist(): string[] {
     .filter(Boolean);
 }
 
+export function isAdminEmailAllowed(email: string | null | undefined): boolean {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) {
+    return false;
+  }
+
+  const allowlist = parseAdminEmailAllowlist();
+  if (allowlist.length === 0) {
+    return process.env.NODE_ENV !== 'production';
+  }
+
+  return allowlist.includes(normalizedEmail);
+}
+
 export async function requireAdminAccess(): Promise<AdminGuardResult> {
   if (process.env.NODE_ENV === 'test') {
     return {
@@ -53,29 +67,20 @@ export async function requireAdminAccess(): Promise<AdminGuardResult> {
     };
   }
 
-  const allowlist = parseAdminEmailAllowlist();
-  if (allowlist.length === 0) {
-    if (process.env.NODE_ENV !== 'production') {
+  if (!isAdminEmailAllowed(email)) {
+    if (parseAdminEmailAllowlist().length === 0 && process.env.NODE_ENV === 'production') {
       return {
-        ok: true,
-        email,
+        ok: false,
+        response: NextResponse.json(
+          {
+            success: false,
+            code: 'ADMIN_ALLOWLIST_NOT_CONFIGURED',
+            error: 'Server admin allowlist is not configured.',
+          },
+          { status: 503 },
+        ),
       };
     }
-
-    return {
-      ok: false,
-      response: NextResponse.json(
-        {
-          success: false,
-          code: 'ADMIN_ALLOWLIST_NOT_CONFIGURED',
-          error: 'Server admin allowlist is not configured.',
-        },
-        { status: 503 },
-      ),
-    };
-  }
-
-  if (!allowlist.includes(email)) {
     return {
       ok: false,
       response: NextResponse.json(

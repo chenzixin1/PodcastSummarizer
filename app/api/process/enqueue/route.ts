@@ -4,6 +4,7 @@ import { enqueueProcessingJob } from '../../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
+import { isAdminEmailAllowed } from '../../../../lib/adminGuard';
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,7 +27,8 @@ export async function POST(request: NextRequest) {
     }
 
     const ownershipResult = await verifyPodcastOwnership(id, session.user.id);
-    if (!ownershipResult.success) {
+    const isAdmin = isAdminEmailAllowed(session.user.email);
+    if (!ownershipResult.success && !isAdmin) {
       return NextResponse.json({ success: false, error: 'Access denied' }, { status: 403 });
     }
 

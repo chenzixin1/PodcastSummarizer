@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "podcast-summarizer",
+  "main": "worker.ts",
+  "compatibility_date": "2026-06-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "routes": [
+    {
+      "pattern": "cf-preview.podsum.cc",
+      "custom_domain": true
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PODSUM_BUCKET",
+      "bucket_name": "podsum-uploads"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "PODSUM_DB",
+      "database_name": "podsum-d1-preview",
+      "database_id": "adbd887b-dd92-4180-bdee-0b185c61fefe",
+      "migrations_dir": "migrations/d1"
+    }
+  ],
+  "vars": {
+    "STORAGE_PROVIDER": "r2",
+    "DATABASE_PROVIDER": "d1",
+    "DEPLOYMENT_STAGE": "preview",
+    "ENABLE_CRON": "false",
+    "OPENROUTER_MODEL": "openai/gpt-4o-mini",
+    "OPENROUTER_MINDMAP_MODEL": "openai/gpt-4o-mini",
+    "ADMIN_EMAILS": "chenzixin1@gmail.com",
+    "NEXTAUTH_URL": "https://cf-preview.podsum.cc",
+    "NEXT_PUBLIC_APP_URL": "https://cf-preview.podsum.cc"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "workers_dev": true
+}

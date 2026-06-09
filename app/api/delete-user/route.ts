@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+import { sql } from '../../../lib/sql';
 import { requireAdminAccess } from '../../../lib/adminGuard';
 
 export const runtime = 'nodejs';
@@ -30,7 +30,7 @@ export async function DELETE(request: NextRequest) {
     }
     
     // 首先检查用户是否存在
-    const userCheck = await sql`
+    const userCheck = await sql<{ id: string; email: string }>`
       SELECT id, email FROM users WHERE email = ${email}
     `;
     

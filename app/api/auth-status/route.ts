@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
-import { sql } from '@vercel/postgres';
+import { sql } from '../../../lib/sql';
 
 export async function GET(_request: NextRequest) {
   try {

@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import Image from 'next/image';
+import AppFrame from '@/components/AppFrame';
 
 type MonitorPath = '' | 'path1' | 'path2';
 type MonitorStatus =
@@ -236,10 +235,10 @@ export default function ExtensionMonitorPage() {
 
   if (status === 'loading') {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+      <div className="dashboard-shell flex min-h-screen items-center justify-center text-[var(--text-main)]" data-theme="light">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading monitor...</p>
+          <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-[var(--btn-primary)]"></div>
+          <p className="text-[var(--text-muted)]">Loading monitor...</p>
         </div>
       </div>
     );
@@ -247,35 +246,34 @@ export default function ExtensionMonitorPage() {
 
   if (status === 'unauthenticated') {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
-        <p className="text-slate-400">Redirecting to sign in...</p>
+      <div className="dashboard-shell flex min-h-screen items-center justify-center text-[var(--text-main)]" data-theme="light">
+        <p className="text-[var(--text-muted)]">Redirecting to sign in...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      <header className="p-4 bg-slate-800/60 backdrop-blur-md shadow-lg sticky top-0 z-10">
-        <div className="container mx-auto">
-          <nav className="flex items-center space-x-2 text-xl mb-3">
-            <Link href="/" className="inline-flex items-center gap-2 text-[#5f9582] hover:text-[#79ae9c] hover:underline font-semibold transition-colors">
-              <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={22} height={22} className="app-breadcrumb-logo" />
-              <span>PodSum.cc</span>
-            </Link>
-            <span className="text-slate-400">/</span>
-            <span className="text-white font-medium">Extension Monitor</span>
-          </nav>
-          <p className="text-sm text-slate-300">
-            已登录：<span className="text-sky-300">{session?.user?.email}</span> · Raw 日志：
-            <span className={captureRaw ? 'text-amber-300' : 'text-emerald-300'}>
-              {captureRaw ? ' 开启' : ' 关闭'}
-            </span>
+    <AppFrame currentLabel="Extension Monitor" showViewTabs={false}>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-[var(--heading)]">Extension Monitor</h1>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            Signed in as <span className="font-semibold text-[var(--heading)]">{session?.user?.email}</span>
           </p>
         </div>
-      </header>
+        <span className={[
+          'rounded-lg border px-3 py-1.5 text-xs font-semibold',
+          captureRaw
+            ? 'border-[#d6bd86] bg-[#fff6df] text-[#765a20]'
+            : 'border-[var(--border-soft)] bg-[var(--accent-soft)] text-[var(--heading)]',
+        ].join(' ')}
+        >
+          Raw logs {captureRaw ? 'on' : 'off'}
+        </span>
+      </div>
 
-      <main className="container mx-auto p-4 space-y-4">
-        <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
+      <div className="space-y-4">
+        <section className="dashboard-panel rounded-lg p-4">
           <div className="grid md:grid-cols-6 gap-3">
             <select
               value={path}
@@ -283,7 +281,7 @@ export default function ExtensionMonitorPage() {
                 setPath(event.target.value as MonitorPath);
                 setPage(1);
               }}
-              className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)]"
             >
               <option value="">全部路径</option>
               <option value="path1">Path1</option>
@@ -295,7 +293,7 @@ export default function ExtensionMonitorPage() {
                 setTaskStatus(event.target.value as MonitorStatus);
                 setPage(1);
               }}
-              className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)]"
             >
               <option value="">全部状态</option>
               <option value="received">received</option>
@@ -313,7 +311,7 @@ export default function ExtensionMonitorPage() {
                 setPage(1);
               }}
               placeholder="搜索邮箱/任务ID/trace/video..."
-              className="md:col-span-2 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] md:col-span-2"
             />
             <input
               type="datetime-local"
@@ -322,7 +320,7 @@ export default function ExtensionMonitorPage() {
                 setFrom(event.target.value);
                 setPage(1);
               }}
-              className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)]"
             />
             <input
               type="datetime-local"
@@ -331,7 +329,7 @@ export default function ExtensionMonitorPage() {
                 setTo(event.target.value);
                 setPage(1);
               }}
-              className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)]"
             />
           </div>
 
@@ -339,11 +337,11 @@ export default function ExtensionMonitorPage() {
             <button
               onClick={() => fetchList()}
               disabled={loadingList}
-              className="bg-sky-600 hover:bg-sky-700 disabled:opacity-50 px-4 py-2 rounded text-sm font-medium"
+              className="rounded-lg bg-[var(--btn-primary)] px-4 py-2 text-sm font-semibold text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)] disabled:opacity-50"
             >
               {loadingList ? '刷新中...' : '刷新'}
             </button>
-            <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
               <input
                 type="checkbox"
                 checked={autoRefresh}
@@ -357,56 +355,56 @@ export default function ExtensionMonitorPage() {
                 setPageSize(Number(event.target.value));
                 setPage(1);
               }}
-              className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)]"
             >
               <option value={10}>10 / 页</option>
               <option value={20}>20 / 页</option>
               <option value={50}>50 / 页</option>
             </select>
-            <span className="text-sm text-slate-400">总计 {total} 条</span>
+            <span className="text-sm text-[var(--text-muted)]">总计 {total} 条</span>
           </div>
         </section>
 
         {error && (
-          <section className="bg-red-900/40 border border-red-700 rounded-lg p-3 text-red-100 text-sm">{error}</section>
+          <section className="rounded-lg border border-[#d8b7b7] bg-[#fff5f5] p-3 text-sm text-[var(--danger)]">{error}</section>
         )}
 
-        <section className="grid lg:grid-cols-[1.1fr_1fr] gap-4">
-          <div className="bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-700 text-sm text-slate-300">任务列表</div>
+        <section className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
+          <div className="dashboard-panel overflow-hidden rounded-lg">
+            <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-semibold text-[var(--heading)]">任务列表</div>
             <div className="max-h-[70vh] overflow-auto">
               {tasks.length === 0 ? (
-                <div className="p-4 text-sm text-slate-400">暂无任务</div>
+                <div className="p-4 text-sm text-[var(--text-muted)]">暂无任务</div>
               ) : (
-                <ul className="divide-y divide-slate-700">
+                <ul className="divide-y divide-[var(--border-soft)]">
                   {tasks.map((task) => (
                     <li
                       key={task.id}
-                      className={`p-3 cursor-pointer hover:bg-slate-700/30 ${
-                        selectedTaskId === task.id ? 'bg-sky-900/20' : ''
+                      className={`cursor-pointer p-3 transition-colors hover:bg-[var(--paper-muted)] ${
+                        selectedTaskId === task.id ? 'bg-[var(--accent-soft)]' : ''
                       }`}
                       onClick={() => setSelectedTaskId(task.id)}
                     >
                       <div className="flex justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{task.title || task.videoId || task.id}</p>
-                          <p className="text-xs text-slate-400 truncate">
+                          <p className="truncate text-sm font-semibold text-[var(--text-main)]">{task.title || task.videoId || task.id}</p>
+                          <p className="truncate text-xs text-[var(--text-muted)]">
                             {task.userEmail || 'unknown'} · {task.path.toUpperCase()} · {task.stage}
                           </p>
                         </div>
                         <span
-                          className={`text-xs px-2 py-1 rounded h-fit ${
+                          className={`h-fit rounded-lg px-2 py-1 text-xs font-semibold ${
                             task.status === 'failed'
-                              ? 'bg-red-900/60 text-red-200'
+                              ? 'bg-[#fff5f5] text-[var(--danger)]'
                               : task.status === 'completed'
-                                ? 'bg-emerald-900/60 text-emerald-200'
-                                : 'bg-slate-700 text-slate-200'
+                                ? 'bg-[var(--accent-soft)] text-[var(--heading)]'
+                                : 'bg-[var(--paper-muted)] text-[var(--text-secondary)]'
                           }`}
                         >
                           {task.status}
                         </span>
                       </div>
-                      <div className="mt-1 text-xs text-slate-500">
+                      <div className="mt-1 text-xs text-[var(--text-muted)]">
                         更新于 {toDatetimeLocal(task.updatedAt)}
                         {task.lastErrorMessage ? ` · 错误: ${task.lastErrorMessage}` : ''}
                       </div>
@@ -415,67 +413,67 @@ export default function ExtensionMonitorPage() {
                 </ul>
               )}
             </div>
-            <div className="px-4 py-3 border-t border-slate-700 flex items-center justify-between">
+            <div className="flex items-center justify-between border-t border-[var(--border-soft)] px-4 py-3">
               <button
                 disabled={!hasPrevPage}
                 onClick={() => setPage((current) => Math.max(1, current - 1))}
-                className="px-3 py-1 text-sm rounded border border-slate-600 disabled:opacity-50"
+                className="rounded-lg border border-[var(--border-soft)] px-3 py-1 text-sm font-medium text-[var(--text-secondary)] disabled:opacity-50"
               >
                 上一页
               </button>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-[var(--text-muted)]">
                 第 {page} / {Math.max(1, totalPages)} 页
               </span>
               <button
                 disabled={!hasNextPage}
                 onClick={() => setPage((current) => current + 1)}
-                className="px-3 py-1 text-sm rounded border border-slate-600 disabled:opacity-50"
+                className="rounded-lg border border-[var(--border-soft)] px-3 py-1 text-sm font-medium text-[var(--text-secondary)] disabled:opacity-50"
               >
                 下一页
               </button>
             </div>
           </div>
 
-          <div className="bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-700 text-sm text-slate-300">
+          <div className="dashboard-panel overflow-hidden rounded-lg">
+            <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-semibold text-[var(--heading)]">
               任务详情 · {selectedTaskTitle}
             </div>
             {loadingDetail ? (
-              <div className="p-4 text-sm text-slate-400">加载详情中...</div>
+              <div className="p-4 text-sm text-[var(--text-muted)]">加载详情中...</div>
             ) : !selectedTask ? (
-              <div className="p-4 text-sm text-slate-400">请选择左侧任务</div>
+              <div className="p-4 text-sm text-[var(--text-muted)]">请选择左侧任务</div>
             ) : (
               <div className="max-h-[70vh] overflow-auto p-4 space-y-4">
                 <div className="text-sm space-y-1">
                   <p>
-                    <span className="text-slate-400">Task ID:</span> {selectedTask.id}
+                    <span className="text-[var(--text-muted)]">Task ID:</span> {selectedTask.id}
                   </p>
                   <p>
-                    <span className="text-slate-400">Client Task:</span> {selectedTask.clientTaskId || '-'}
+                    <span className="text-[var(--text-muted)]">Client Task:</span> {selectedTask.clientTaskId || '-'}
                   </p>
                   <p>
-                    <span className="text-slate-400">Trace:</span> {selectedTask.traceId || '-'}
+                    <span className="text-[var(--text-muted)]">Trace:</span> {selectedTask.traceId || '-'}
                   </p>
                   <p>
-                    <span className="text-slate-400">Transcription Job:</span> {selectedTask.transcriptionJobId || '-'}
+                    <span className="text-[var(--text-muted)]">Transcription Job:</span> {selectedTask.transcriptionJobId || '-'}
                   </p>
                   <p>
-                    <span className="text-slate-400">Podcast ID:</span> {selectedTask.podcastId || '-'}
+                    <span className="text-[var(--text-muted)]">Podcast ID:</span> {selectedTask.podcastId || '-'}
                   </p>
                   <p>
-                    <span className="text-slate-400">Provider Task:</span> {selectedTask.providerTaskId || '-'}
+                    <span className="text-[var(--text-muted)]">Provider Task:</span> {selectedTask.providerTaskId || '-'}
                   </p>
                 </div>
 
-                <div className="border border-slate-700 rounded">
-                  <div className="px-3 py-2 border-b border-slate-700 text-xs text-slate-300">事件时间线</div>
-                  <div className="divide-y divide-slate-700">
+                <div className="rounded-lg border border-[var(--border-soft)]">
+                  <div className="border-b border-[var(--border-soft)] px-3 py-2 text-xs font-semibold text-[var(--heading)]">事件时间线</div>
+                  <div className="divide-y divide-[var(--border-soft)]">
                     {events.length === 0 ? (
-                      <div className="px-3 py-3 text-xs text-slate-400">暂无事件</div>
+                      <div className="px-3 py-3 text-xs text-[var(--text-muted)]">暂无事件</div>
                     ) : (
                       events.map((event) => (
                         <details key={event.id} className="px-3 py-2">
-                          <summary className="cursor-pointer text-xs text-slate-200 flex items-center gap-2">
+                          <summary className="flex cursor-pointer items-center gap-2 text-xs text-[var(--text-main)]">
                             <span
                               className={`inline-block w-2 h-2 rounded-full ${
                                 event.level === 'error'
@@ -486,11 +484,11 @@ export default function ExtensionMonitorPage() {
                               }`}
                             />
                             <span>{event.stage}</span>
-                            <span className="text-slate-400">{toDatetimeLocal(event.createdAt)}</span>
+                            <span className="text-[var(--text-muted)]">{toDatetimeLocal(event.createdAt)}</span>
                           </summary>
                           <div className="mt-2 space-y-2">
-                            <p className="text-xs text-slate-400">{event.message || '-'}</p>
-                            <pre className="text-[11px] bg-slate-900 p-2 rounded overflow-auto">
+                            <p className="text-xs text-[var(--text-muted)]">{event.message || '-'}</p>
+                            <pre className="overflow-auto rounded-lg border border-[var(--pre-border)] bg-[var(--pre-bg)] p-2 text-[11px] text-[var(--pre-text)]">
 {JSON.stringify(
   {
     endpoint: event.endpoint,
@@ -516,7 +514,7 @@ export default function ExtensionMonitorPage() {
             )}
           </div>
         </section>
-      </main>
-    </div>
+      </div>
+    </AppFrame>
   );
 }

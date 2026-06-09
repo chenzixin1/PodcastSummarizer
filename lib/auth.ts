@@ -2,7 +2,7 @@ import NextAuth from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import GoogleProvider from 'next-auth/providers/google'
 import bcrypt from 'bcryptjs'
-import { sql } from '@vercel/postgres'
+import { sql } from './sql'
 import { nanoid } from 'nanoid'
 import type { Account, NextAuthOptions, Profile, Session, User } from 'next-auth'
 import type { JWT } from 'next-auth/jwt'
@@ -54,7 +54,12 @@ export const authOptions: NextAuthOptions = {
             return null
           }
 
-          const user = result.rows[0]
+          const user = result.rows[0] as {
+            id: string;
+            email: string;
+            password_hash: string;
+            name: string;
+          }
 
           // 验证密码
           const isPasswordValid = await bcrypt.compare(credentials.password, user.password_hash)

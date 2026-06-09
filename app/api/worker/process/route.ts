@@ -12,6 +12,7 @@ import {
   getWorkerSharedSecrets,
   isWorkerAuthorizedBySecret,
 } from '../../../../lib/workerAuth';
+import { POST as processPodcastRoute } from '../../process/route';
 
 interface PodcastJobPayload {
   blobUrl: string;
@@ -108,7 +109,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing worker secret' }, { status: 500 });
     }
 
-    const response = await fetch(`${getBaseUrl()}/api/process`, {
+    const response = await processPodcastRoute(new NextRequest(`${getBaseUrl()}/api/process`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -120,7 +121,7 @@ export async function POST(request: NextRequest) {
         fileName: podcast.originalFileName,
         debug: false,
       }),
-    });
+    }));
 
     if (!response.ok) {
       const text = await response.text();

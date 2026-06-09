@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 import {
   ExtensionAuthError,
@@ -14,6 +13,7 @@ import {
 import { savePodcastWithCreditDeduction } from '../../../../lib/db';
 import { enqueueProcessingJob } from '../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
+import { deleteObject, uploadObject } from '../../../../lib/objectStorage';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -168,14 +168,10 @@ export async function POST(request: NextRequest) {
     const srtBuffer = Buffer.from(srtContent, 'utf8');
     const fileSize = `${(srtBuffer.length / 1024).toFixed(2)} KB`;
 
-    let blobUrl = '#mock-blob-url';
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      const blob = await put(`${id}-${originalFileName}`, srtBuffer, {
-        access: 'public',
-        contentType: 'application/x-subrip',
-      });
-      blobUrl = blob.url;
-    }
+    const object = await uploadObject(`${id}-${originalFileName}`, srtBuffer, {
+      contentType: 'application/x-subrip',
+    });
+    const blobUrl = object.url;
 
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
@@ -207,6 +203,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (!saveResult.success) {
+      await deleteObject(blobUrl).catch((deleteError) => {
+        console.error('[EXTENSION_UPLOAD] Failed to delete orphaned SRT object:', deleteError);
+      });
       if (saveResult.errorCode === 'INSUFFICIENT_CREDITS') {
         if (monitorTaskId) {
           await updateExtensionMonitorTask(monitorTaskId, {

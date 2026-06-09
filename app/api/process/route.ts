@@ -5,8 +5,10 @@ import { saveAnalysisResults, saveAnalysisPartialResults } from '../../../lib/db
 import { getPodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
+import { isAdminEmailAllowed } from '../../../lib/adminGuard';
 import { isWorkerAuthorizedBySecret } from '../../../lib/workerAuth';
 import { rebuildQaContextChunksForPodcast } from '../../../lib/qaContextChunks';
+import { getObjectText } from '../../../lib/objectStorage';
 import { generateMindMapData, type MindMapData } from '../../../lib/mindMap';
 import {
   BILINGUAL_ALIGNMENT_VERSION,
@@ -372,6 +374,27 @@ const openRouterCallCounter = {
 // 指定模型 - 使用环境变量中的模型
 // 参考: https://openrouter.ai/docs#models
 const MODEL = modelConfig.MODEL;
+const DEFAULT_OPENROUTER_FALLBACK_MODELS = [
+  'qwen/qwen3-32b',
+  'deepseek/deepseek-chat-v3-0324',
+  'mistralai/mistral-small-3.2-24b-instruct',
+];
+function parseModelList(input: string | undefined): string[] {
+  return String(input || '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+}
+const MODEL_CANDIDATES = Array.from(
+  new Set([
+    MODEL,
+    ...parseModelList(process.env.OPENROUTER_FALLBACK_MODELS),
+    ...DEFAULT_OPENROUTER_FALLBACK_MODELS,
+  ]),
+);
+function isModelUnavailableForRegion(status: number, errorText: string): boolean {
+  return status === 403 && /region|not available|unavailable/i.test(errorText);
+}
 
 // 重试配置
 const MAX_RETRIES = modelConfig.MAX_RETRIES;
@@ -452,17 +475,12 @@ async function callModelWithRetry(
   onTokenStream?: (token: string) => Promise<void>,
   taskType: ModelTaskType = 'summary' // 添加任务类型参数
 ): Promise<string> {
-  let lastError = null;
-  
-  // 更新计数器
-  openRouterCallCounter.count++;
-  openRouterCallCounter.calls.push({ model: MODEL, task: taskType, timestamp: Date.now() });
+  let lastError: unknown = null;
   
   // 记录API请求详情
   const requestId = Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
   processDebug(`[OpenRouter Request ${requestId}] ---- START ----`);
-  processDebug(`[OpenRouter Request ${requestId}] Model: ${MODEL}`);
-  processDebug(`[OpenRouter Request ${requestId}] Task: ${taskType} (Call #${openRouterCallCounter.count}, Total: ${openRouterCallCounter.count})`);
+  processDebug(`[OpenRouter Request ${requestId}] Model candidates: ${MODEL_CANDIDATES.join(', ')}`);
   processDebug(`[OpenRouter Request ${requestId}] System: ${systemPrompt.substring(0, 100)}...`);
   processDebug(`[OpenRouter Request ${requestId}] User: ${userPrompt.substring(0, 100)}...`);
   processDebug(`[OpenRouter Request ${requestId}] MaxTokens: ${maxTokens}`);
@@ -470,72 +488,86 @@ async function callModelWithRetry(
   processDebug(`[OpenRouter Request ${requestId}] Streaming: ${!!onTokenStream}`);
   
   const startTime = Date.now();
-  let fullContent = '';
-  
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      if (attempt > 0) {
-        processDebug(`[OpenRouter Request ${requestId}] Retry attempt ${attempt}`);
-        await delay(RETRY_DELAY * attempt); // 指数退避
-      }
-      
-      // 记录实际请求时间
-      const callStartTime = Date.now();
-      processDebug(`[OpenRouter Request ${requestId}] Making API call at ${new Date().toISOString()}`);
-      
-      const apiKey = process.env.OPENROUTER_API_KEY || '';
-      processDebug(`[OpenRouter Request ${requestId}] API key configured: ${Boolean(apiKey)}`);
-      
-      // 使用fetch而不是openai.createChatCompletion，以便我们可以完全控制请求
-      const requestBody = {
-        model: MODEL,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        temperature,
-        max_tokens: maxTokens,
-        stream: !!onTokenStream,
-      };
-      
-      // 按照官方文档设置正确的请求头
-      const timeoutController = new AbortController();
-      const timeoutHandle = setTimeout(() => {
-        timeoutController.abort();
-      }, API_TIMEOUT_MS);
 
-      let response: Response;
+  for (let modelIndex = 0; modelIndex < MODEL_CANDIDATES.length; modelIndex += 1) {
+    const currentModel = MODEL_CANDIDATES[modelIndex];
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      let fullContent = '';
       try {
-        response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-            'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
-            'X-Title': 'PodSum.cc'
-          },
-          body: JSON.stringify(requestBody),
-          signal: timeoutController.signal,
-        });
-      } catch (fetchError) {
-        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error(`OpenRouter request timed out after ${API_TIMEOUT_MS}ms`);
+        if (attempt > 0) {
+          processDebug(`[OpenRouter Request ${requestId}] Retry attempt ${attempt} for ${currentModel}`);
+          await delay(RETRY_DELAY * attempt); // 指数退避
         }
-        throw fetchError;
-      } finally {
-        clearTimeout(timeoutHandle);
-      }
-      
-      const callEndTime = Date.now();
-      processDebug(`[OpenRouter Request ${requestId}] API call initiated in ${callEndTime - callStartTime}ms (stream: ${!!onTokenStream})`);
-      
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => `Failed to get error text, status: ${response.status}`);
-        console.error(`[OpenRouter Request ${requestId}] API ERROR: ${response.status} ${errorText}`);
-        throw new Error(`API response not ok: ${response.status} ${errorText}`);
-      }
-      
-      if (onTokenStream && response.body) {
+
+        // 更新计数器
+        openRouterCallCounter.count++;
+        openRouterCallCounter.calls.push({ model: currentModel, task: taskType, timestamp: Date.now() });
+        processDebug(`[OpenRouter Request ${requestId}] Model: ${currentModel}`);
+        processDebug(`[OpenRouter Request ${requestId}] Task: ${taskType} (Call #${openRouterCallCounter.count}, Total: ${openRouterCallCounter.count})`);
+
+        // 记录实际请求时间
+        const callStartTime = Date.now();
+        processDebug(`[OpenRouter Request ${requestId}] Making API call at ${new Date().toISOString()}`);
+
+        const apiKey = process.env.OPENROUTER_API_KEY || '';
+        processDebug(`[OpenRouter Request ${requestId}] API key configured: ${Boolean(apiKey)}`);
+
+        // 使用fetch而不是openai.createChatCompletion，以便我们可以完全控制请求
+        const requestBody = {
+          model: currentModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          temperature,
+          max_tokens: maxTokens,
+          stream: !!onTokenStream,
+        };
+
+        // 按照官方文档设置正确的请求头
+        const timeoutController = new AbortController();
+        const timeoutHandle = setTimeout(() => {
+          timeoutController.abort();
+        }, API_TIMEOUT_MS);
+
+        let response: Response;
+        try {
+          response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+              'HTTP-Referer': process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://podsum.cc',
+              'X-Title': 'PodSum.cc'
+            },
+            body: JSON.stringify(requestBody),
+            signal: timeoutController.signal,
+          });
+        } catch (fetchError) {
+          if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+            throw new Error(`OpenRouter request timed out after ${API_TIMEOUT_MS}ms for model ${currentModel}`);
+          }
+          throw fetchError;
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
+
+        const callEndTime = Date.now();
+        processDebug(`[OpenRouter Request ${requestId}] API call initiated in ${callEndTime - callStartTime}ms (stream: ${!!onTokenStream})`);
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => `Failed to get error text, status: ${response.status}`);
+          const error = new Error(`API response not ok for model ${currentModel}: ${response.status} ${errorText}`);
+          console.error(`[OpenRouter Request ${requestId}] API ERROR (${currentModel}): ${response.status} ${errorText}`);
+          if (isModelUnavailableForRegion(response.status, errorText) && modelIndex < MODEL_CANDIDATES.length - 1) {
+            lastError = error;
+            console.warn(`[OpenRouter Request ${requestId}] Model ${currentModel} unavailable from this region; trying next fallback.`);
+            break;
+          }
+          throw error;
+        }
+
+        if (onTokenStream && response.body) {
         // Manually read from response.body ReadableStream
         const reader = response.body.getReader();
         const decoder = new TextDecoder(); // Standard TextDecoder
@@ -615,8 +647,8 @@ async function callModelWithRetry(
         //     // Decide if this needs to be processed like other buffer content
         //     // For OpenRouter, this is unlikely to be needed if stream ends cleanly or with [DONE]
         // }
-        processDebug(`[OpenRouter Request ${requestId}] Streaming response finished processing loop.`);
-      } else {
+          processDebug(`[OpenRouter Request ${requestId}] Streaming response finished processing loop.`);
+        } else {
         // Handle non-streaming response
         const data = await response.json();
         if (!data.choices?.[0]?.message?.content) {
@@ -625,32 +657,37 @@ async function callModelWithRetry(
         }
         fullContent = data.choices[0].message.content;
         processDebug(`[OpenRouter Request ${requestId}] Non-streaming Response: ${fullContent.substring(0, 100)}...`);
-        if (data.usage) {
-          processDebug(`[OpenRouter Request ${requestId}] Token usage: ${JSON.stringify(data.usage)}`);
+          if (data.usage) {
+            processDebug(`[OpenRouter Request ${requestId}] Token usage: ${JSON.stringify(data.usage)}`);
+          }
         }
+
+        // 记录完成时间
+        const endTime = Date.now();
+        processDebug(`[OpenRouter Request ${requestId}] Processing completed in ${endTime - callStartTime}ms (total function time: ${endTime - startTime}ms)`);
+        processDebug(`[OpenRouter Request ${requestId}] ---- END ----`);
+        return fullContent;
+      } catch (error: unknown) {
+        console.error(`[OpenRouter Request ${requestId}] Error (${currentModel}, attempt ${attempt}):`, error);
+        lastError = error;
+        // 如果已经是最后一次尝试，换下一个模型；最后一个模型则抛出
+        if (attempt === MAX_RETRIES) {
+          if (modelIndex < MODEL_CANDIDATES.length - 1) {
+            processDebug(`[OpenRouter Request ${requestId}] ---- MODEL FAILED, TRYING NEXT (${currentModel}) ----`);
+            break;
+          }
+          processDebug(`[OpenRouter Request ${requestId}] ---- FAILED (Max Retries) ----`);
+          throw error;
+        }
+
+        // 非认证错误，继续重试
+        continue;
       }
-      
-      // 记录完成时间
-      const endTime = Date.now();
-      processDebug(`[OpenRouter Request ${requestId}] Processing completed in ${endTime - callStartTime}ms (total function time: ${endTime - startTime}ms)`);
-      processDebug(`[OpenRouter Request ${requestId}] ---- END ----`);
-      return fullContent;
-    } catch (error: unknown) {
-      console.error(`[OpenRouter Request ${requestId}] Error (attempt ${attempt}):`, error);
-      lastError = error;
-      // 如果已经是最后一次尝试，直接抛出
-      if (attempt === MAX_RETRIES) {
-        processDebug(`[OpenRouter Request ${requestId}] ---- FAILED (Max Retries) ----`);
-        throw error;
-      }
-      
-      // 非认证错误，继续重试
-      continue;
     }
   }
   
   processDebug(`[OpenRouter Request ${requestId}] ---- FAILED (Exhausted) ----`);
-  throw lastError; // 不应该到达这里，但为了类型安全
+  throw lastError instanceof Error ? lastError : new Error(String(lastError || 'OpenRouter request failed'));
 }
 
 async function runWithStatusHeartbeat<T>(
@@ -1093,7 +1130,7 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
-    if (!podcast.userId || podcast.userId !== session.user.id) {
+    if ((!podcast.userId || podcast.userId !== session.user.id) && !isAdminEmailAllowed(session.user.email)) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
   }
@@ -1142,12 +1179,9 @@ export async function POST(request: NextRequest) {
           }
         };
         
-        // 从Blob URL获取文件内容
-        const fileResponse = await fetch(blobUrl);
-        if (!fileResponse.ok) {
-          throw new Error(`Failed to fetch file content: ${fileResponse.statusText}`);
-        }
-        const srtContent = await fileResponse.text();
+        // 从对象存储读取文件内容。Cloudflare Worker 内部通过主域名 self-fetch
+        // `/api/files/...` 不稳定，因此优先直接读 R2 binding。
+        const srtContent = await getObjectText(blobUrl);
         
         // 移除BOM标记（如果存在）
         const cleanSrtContent = srtContent.replace(/^\uFEFF/, '');

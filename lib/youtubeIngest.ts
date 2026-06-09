@@ -1,4 +1,4 @@
-import { put } from '@vercel/blob';
+import { uploadObject } from './objectStorage';
 import { randomUUID } from 'crypto';
 
 const YOUTUBE_USER_AGENT =
@@ -1138,8 +1138,7 @@ async function transcribeWithVolcanoFromYoutube(youtubeUrl: string, videoId: str
   const audio = await downloadYoutubeAudio(youtubeUrl);
 
   const audioFileName = `${videoId}-${Date.now()}.${audio.extension}`;
-  const audioBlob = await put(audioFileName, audio.audioBuffer, {
-    access: 'public',
+  const audioBlob = await uploadObject(audioFileName, audio.audioBuffer, {
     contentType: audio.contentType,
   });
 

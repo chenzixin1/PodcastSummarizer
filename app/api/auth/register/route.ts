@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import { sql } from '@vercel/postgres'
+import { sql } from '../../../../lib/sql'
 import { nanoid } from 'nanoid'
 import { ensureUserCreditsSchema, getInitialSrtCreditsForEmail } from '../../../../lib/db'
 

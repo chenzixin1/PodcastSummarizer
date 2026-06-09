@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { sql } from './sql';
 import { randomUUID } from 'crypto';
 import { ensureExtensionMonitorTables } from './db';
 

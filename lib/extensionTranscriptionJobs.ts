@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { sql } from './sql';
 import { ensureExtensionTranscriptionJobsTable } from './db';
 
 export type ExtensionTranscriptionJobStatus = 'submitted' | 'transcribing' | 'completed' | 'failed';

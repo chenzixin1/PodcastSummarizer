@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+import { sql } from '../../../lib/sql';
 import { requireAdminAccess } from '../../../lib/adminGuard';
 
 export const runtime = 'nodejs';

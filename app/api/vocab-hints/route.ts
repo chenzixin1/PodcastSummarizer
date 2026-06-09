@@ -9,7 +9,7 @@ interface HintResultMap {
   [word: string]: string;
 }
 
-const MODEL = process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
+const MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 function normalizeItems(items: unknown): HintInputItem[] {

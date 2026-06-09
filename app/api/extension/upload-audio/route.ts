@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { del, put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 import {
   ExtensionAuthError,
@@ -21,6 +20,7 @@ import {
   submitVolcanoTask,
   toVolcanoAudioFormat,
 } from '../../../../lib/volcanoTranscription';
+import { deleteObject, isObjectStorageConfigured, uploadObject } from '../../../../lib/objectStorage';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -211,7 +211,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    if (!(await isObjectStorageConfigured())) {
       return failAndRespond('BLOB_NOT_CONFIGURED', 'Storage is not configured on server.', 503);
     }
 
@@ -279,8 +279,7 @@ export async function POST(request: NextRequest) {
     }
 
     const audioStorageName = `extension-audio/${transcriptionJobId}-${fileName}`;
-    const audioBlob = await put(audioStorageName, file, {
-      access: 'public',
+    const audioBlob = await uploadObject(audioStorageName, file, {
       contentType: file.type || 'application/octet-stream',
     });
     uploadedAudioUrl = audioBlob.url;
@@ -381,9 +380,9 @@ export async function POST(request: NextRequest) {
       await updateExtensionTranscriptionJobFailed(transcriptionJobId, userId, message);
     }
 
-    if (uploadedAudioUrl && process.env.BLOB_READ_WRITE_TOKEN) {
+    if (uploadedAudioUrl) {
       try {
-        await del(uploadedAudioUrl);
+        await deleteObject(uploadedAudioUrl);
       } catch (deleteError) {
         console.error('[EXTENSION_UPLOAD_AUDIO] Failed to cleanup blob:', deleteError);
       }
