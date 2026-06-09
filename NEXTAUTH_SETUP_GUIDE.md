@@ -2,7 +2,7 @@
 
 ## Required Environment Variables
 
-To fix the NextAuth configuration error, you need to set these environment variables in your Vercel deployment:
+Set these values as Cloudflare Worker secrets or local development environment variables.
 
 ### 1. NEXTAUTH_SECRET
 A random secret used to encrypt JWT tokens. Generate a secure random string:
@@ -29,17 +29,17 @@ GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 ```
 
-## How to Set in Vercel
+## How to Set in Cloudflare
 
-1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
-2. Select your project (PodcastSummarizer)
-3. Go to Settings > Environment Variables
-4. Add each variable:
-   - **Name**: `NEXTAUTH_SECRET`
-   - **Value**: Your generated secret
-   - **Environment**: Production, Preview, Development
+Use Wrangler against the production Worker config:
 
-5. Repeat for `NEXTAUTH_URL`
+```bash
+printf '%s' "$NEXTAUTH_SECRET" | npx wrangler secret put NEXTAUTH_SECRET -c output/cutover/wrangler.production.jsonc
+printf '%s' "$GOOGLE_CLIENT_ID" | npx wrangler secret put GOOGLE_CLIENT_ID -c output/cutover/wrangler.production.jsonc
+printf '%s' "$GOOGLE_CLIENT_SECRET" | npx wrangler secret put GOOGLE_CLIENT_SECRET -c output/cutover/wrangler.production.jsonc
+```
+
+`NEXTAUTH_URL=https://podsum.cc` is configured in the production Wrangler config.
 
 ## Minimal Setup (Authentication will work)
 
@@ -63,7 +63,7 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 
 ## After Setting Variables
 
-1. Redeploy your application or wait for automatic deployment
+1. Deploy the Cloudflare Worker
 2. Test authentication at: https://podsum.cc/auth/signin
 3. Verify no more configuration errors
 

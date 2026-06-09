@@ -129,11 +129,11 @@ The application uses several environment variables to configure the LLM model an
 When uploading a YouTube URL, the backend now does:
 1. Try native/auto YouTube captions with language fallback
 2. If captions are unavailable and `GLADIA_FALLBACK_ENABLED=true`, call Gladia pre-recorded API directly with the YouTube URL and request SRT
-3. If Gladia is disabled/unavailable/fails, download audio, upload audio to Vercel Blob, then call Volcano Engine ASR and convert result to SRT
+3. If Gladia is disabled/unavailable/fails, download audio, store audio through the configured object storage provider, then call Volcano Engine ASR and convert result to SRT
 
 Environment variables for this pipeline:
 
-- `BLOB_READ_WRITE_TOKEN`: Required for storing uploaded SRT and fallback audio on Vercel Blob
+- `BLOB_READ_WRITE_TOKEN`: Legacy local fallback for Vercel Blob. Cloudflare production stores files in R2 through the `PODSUM_BUCKET` binding.
 - `GLADIA_FALLBACK_ENABLED`: Default disabled. Set `true`/`1` to enable Gladia fallback.
 - `GLADIA_API_KEY`: Optional paid fallback provider key (required only when `GLADIA_FALLBACK_ENABLED=true`)
 - `GLADIA_BASE_URL`: Default `https://api.gladia.io`
@@ -174,7 +174,7 @@ Notes:
 - Any `password` field is always redacted before persistence.
 
 You can set these environment variables:
-1. Through your hosting platform (e.g., Vercel)
+1. As Cloudflare Worker secrets or Wrangler vars for production
 2. In a local `.env.local` file for development
 3. They can also be overridden in `next.config.js`
 
@@ -187,8 +187,16 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Deploy on Cloudflare
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+PodSum.cc production runs on Cloudflare Workers with OpenNext.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+set -a
+source .env.vercel.production
+set +a
+npx opennextjs-cloudflare build
+npx wrangler deploy -c output/cutover/wrangler.production.jsonc
+```
+
+The old Vercel project has been retired; do not add Vercel cron triggers back to this repository.
