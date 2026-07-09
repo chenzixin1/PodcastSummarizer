@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { getPodcast, updatePodcastMetadata, verifyPodcastOwnership } from '../../../../lib/db';
+import { refreshSnapshotsForPodcastMutation } from '../../../../lib/staticSnapshotHooks';
 
 interface PatchBody {
   isPublic?: boolean;
@@ -65,6 +66,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     if (!result.success) {
       return NextResponse.json({ success: false, error: result.error }, { status: 500 });
     }
+
+    await refreshSnapshotsForPodcastMutation(id, 'user podcast metadata update');
 
     return NextResponse.json({ success: true, data: result.data });
   } catch (error) {

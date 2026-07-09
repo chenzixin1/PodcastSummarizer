@@ -19,10 +19,15 @@ jest.mock('../../lib/db', () => ({
   updatePodcastMetadata: jest.fn(),
 }));
 
+jest.mock('../../lib/staticSnapshotHooks', () => ({
+  refreshSnapshotsForPodcastMutation: jest.fn(),
+}));
+
 const mockGetServerSession = jest.fn();
 const mockGetPodcast = jest.fn();
 const mockVerifyPodcastOwnership = jest.fn();
 const mockUpdatePodcastMetadata = jest.fn();
+const mockRefreshSnapshotsForPodcastMutation = jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -31,6 +36,7 @@ beforeEach(() => {
   require('../../lib/db').getPodcast = mockGetPodcast;
   require('../../lib/db').verifyPodcastOwnership = mockVerifyPodcastOwnership;
   require('../../lib/db').updatePodcastMetadata = mockUpdatePodcastMetadata;
+  require('../../lib/staticSnapshotHooks').refreshSnapshotsForPodcastMutation = mockRefreshSnapshotsForPodcastMutation;
 
   mockGetServerSession.mockResolvedValue({
     user: {
@@ -53,6 +59,7 @@ beforeEach(() => {
       sourceReference: 'https://www.youtube.com/watch?v=abc123xyz00',
     },
   });
+  mockRefreshSnapshotsForPodcastMutation.mockResolvedValue({ success: true, published: true });
 });
 
 function buildRequest(body: Record<string, unknown>) {
@@ -77,6 +84,7 @@ describe('PATCH /api/podcasts/[id]', () => {
     expect(mockUpdatePodcastMetadata).toHaveBeenCalledWith('pod-1', {
       isPublic: true,
     });
+    expect(mockRefreshSnapshotsForPodcastMutation).toHaveBeenCalledWith('pod-1', 'user podcast metadata update');
   });
 
   it('should trim and persist sourceReference when provided', async () => {
@@ -97,4 +105,3 @@ describe('PATCH /api/podcasts/[id]', () => {
     });
   });
 });
-

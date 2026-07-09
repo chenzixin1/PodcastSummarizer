@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prompts } from '../../../lib/prompts';
 import { modelConfig } from '../../../lib/modelConfig';
 import { saveAnalysisResults, saveAnalysisPartialResults } from '../../../lib/db';
+import { refreshSnapshotsForPodcastMutation } from '../../../lib/staticSnapshotHooks';
 import { getPodcast } from '../../../lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { isAdminEmailAllowed } from '../../../lib/adminGuard';
 import { isWorkerAuthorizedBySecret } from '../../../lib/workerAuth';
-import { rebuildQaContextChunksForPodcast } from '../../../lib/qaContextChunks';
 import { getObjectText } from '../../../lib/objectStorage';
 import { generateMindMapData, type MindMapData } from '../../../lib/mindMap';
 import {
@@ -173,6 +173,17 @@ function resolveBlocksPerChunk(totalBlocks: number, baseBlocksPerChunk: number, 
   }
   const minBlocksPerChunkForBudget = Math.ceil(totalBlocks / Math.max(1, maxChunks));
   return Math.max(baseBlocksPerChunk, minBlocksPerChunkForBudget);
+}
+
+async function rebuildQaContextChunks(input: {
+  podcastId: string;
+  summary: string;
+  translation: string;
+  highlights: string;
+  transcriptSrt: string;
+}) {
+  const { rebuildQaContextChunksForPodcast } = await import('../../../lib/qaContextChunks');
+  return rebuildQaContextChunksForPodcast(input);
 }
 
 async function mapWithConcurrency<T>(
@@ -1392,6 +1403,7 @@ export async function POST(request: NextRequest) {
             characterCount: textStats.characterCount,
           });
           processDebug(`分析结果保存成功，podcastId: ${id}`);
+          await refreshSnapshotsForPodcastMutation(id, 'process analysis completion');
         } catch (dbError) {
           console.error('保存分析结果到数据库失败:', dbError);
           // 即使数据库保存失败，我们也继续返回结果给用户
@@ -1402,7 +1414,7 @@ export async function POST(request: NextRequest) {
           message: 'Building QA retrieval index...'
         });
 
-        const qaIndexResult = await rebuildQaContextChunksForPodcast({
+        const qaIndexResult = await rebuildQaContextChunks({
           podcastId: id,
           summary: summaryZh || summary,
           translation,

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminAccess } from '../../../../../lib/adminGuard';
 import { deletePodcast, updatePodcastMetadata } from '../../../../../lib/db';
 import { recordAdminAuditLog } from '../../../../../lib/credits';
+import {
+  refreshPublicListSnapshotsAfterDelete,
+  refreshSnapshotsForPodcastMutation,
+} from '../../../../../lib/staticSnapshotHooks';
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const admin = await requireAdminAccess();
@@ -42,6 +46,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     console.warn('[admin podcasts] audit update skipped:', error);
   });
 
+  await refreshSnapshotsForPodcastMutation(id, 'admin podcast metadata update');
+
   return NextResponse.json({ success: true, data: result.data });
 }
 
@@ -65,6 +71,8 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
   }).catch((error) => {
     console.warn('[admin podcasts] audit delete skipped:', error);
   });
+
+  await refreshPublicListSnapshotsAfterDelete('admin podcast delete');
 
   return NextResponse.json({ success: true, data: result.data });
 }
