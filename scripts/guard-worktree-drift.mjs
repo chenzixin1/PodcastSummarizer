@@ -8,6 +8,7 @@ export const PROTECTED_DIR_PREFIXES = [
   'lib/',
   'migrations/',
   'scripts/',
+  'types/',
   '__tests__/',
 ];
 
@@ -17,9 +18,12 @@ export const PROTECTED_FILES = new Set([
   'yarn.lock',
   'pnpm-lock.yaml',
   'wrangler.jsonc',
+  'open-next.config.ts',
   'next.config.ts',
   'next.config.js',
   'middleware.ts',
+  'worker.ts',
+  'cloudflare-env.d.ts',
   'tsconfig.json',
   'jest.config.js',
 ]);

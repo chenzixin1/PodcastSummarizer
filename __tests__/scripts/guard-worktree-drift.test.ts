@@ -36,6 +36,10 @@ describe('guard-worktree-drift', () => {
     expect(guard.isProtectedPath('components/AppHeader.tsx')).toBe(true);
     expect(guard.isProtectedPath('lib/staticSnapshots.ts')).toBe(true);
     expect(guard.isProtectedPath('wrangler.jsonc')).toBe(true);
+    expect(guard.isProtectedPath('worker.ts')).toBe(true);
+    expect(guard.isProtectedPath('open-next.config.ts')).toBe(true);
+    expect(guard.isProtectedPath('cloudflare-env.d.ts')).toBe(true);
+    expect(guard.isProtectedPath('types/next-auth.d.ts')).toBe(true);
     expect(guard.isProtectedPath('output/playwright/report.json')).toBe(false);
     expect(guard.isProtectedPath('public/downloads/podsum-chrome-extension.zip')).toBe(false);
   });
@@ -81,6 +85,19 @@ describe('guard-worktree-drift', () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors.join('\n')).toContain('Primary workspace has protected uncommitted changes');
+  });
+
+  test('blocks deploy when primary workspace has deploy-relevant config drift', () => {
+    const result = guard.assertNoDeployDrift({
+      repoRoot: '/repo/.worktrees/branch',
+      primaryRoot: '/repo',
+      statusForRoot: (root) => (root === '/repo' ? ' M open-next.config.ts\n' : ''),
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join('\n')).toContain('Primary workspace has protected uncommitted changes');
+    expect(result.errors.join('\n')).toContain('M open-next.config.ts');
   });
 
   test('allows explicit emergency bypass', () => {
