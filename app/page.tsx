@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
@@ -8,9 +8,15 @@ import AppFrame from '../components/AppFrame';
 import { extractPodcastTags, normalizeDbTags } from '../lib/podcastTags';
 import { resolveFilePodcastTitle } from '../lib/podcastTitle';
 
-type HomeView = 'my' | 'explore' | 'topics';
+type HomeView = 'my' | 'explore' | 'topics' | 'starred';
 type SortKey = 'date' | 'name' | 'size';
-type NavIcon = 'library' | 'compass' | 'topic' | 'star' | 'archive' | 'trash' | 'credits' | 'gift' | 'search' | 'filter';
+type NavIcon = 'library' | 'compass' | 'topic' | 'star' | 'credits' | 'gift' | 'search' | 'filter';
+
+const SUMMARY_PAGE_SIZE = 12;
+const STARRED_SUMMARIES_STORAGE_KEY = 'podsum-starred-summary-ids';
+const TOPIC_TAG_LIMIT = 48;
+const TOPIC_FILTER_LIMIT = 32;
+const RECENT_TOPIC_LIMIT = 22;
 
 interface PodcastApiRow {
   id: string;
@@ -20,6 +26,7 @@ interface PodcastApiRow {
   fileSize?: string | null;
   blobUrl?: string | null;
   sourceReference?: string | null;
+  sourcePublishedAt?: string | null;
   createdAt: string;
   processedAt?: string | null;
   isProcessed?: boolean;
@@ -29,18 +36,13 @@ interface PodcastApiRow {
   tags?: unknown;
 }
 
-interface AccountOverview {
-  user: {
-    credits: number;
-  };
-}
-
 interface SummaryItem {
   id: string;
   title: string;
   briefSummary: string | null;
   fileSize: string | null;
   sourceReference: string | null;
+  sourcePublishedAt: string | null;
   createdAt: string;
   isProcessed: boolean;
   isPublic: boolean;
@@ -48,6 +50,15 @@ interface SummaryItem {
   durationSec: number | null;
   tags: string[];
   scope: 'my' | 'explore';
+}
+
+interface EditorialCoverSpec {
+  kicker: string;
+  titleLines: string[];
+  footer: string;
+  ghost: string;
+  toneClass: string;
+  isCjk: boolean;
 }
 
 function normalizeBriefSummary(value: unknown): string | null {
@@ -85,6 +96,7 @@ function mapPodcastRow(row: PodcastApiRow, scope: SummaryItem['scope']): Summary
     briefSummary: normalizeBriefSummary(row.briefSummary),
     fileSize: row.fileSize || null,
     sourceReference: row.sourceReference || null,
+    sourcePublishedAt: row.sourcePublishedAt || null,
     createdAt: row.createdAt,
     isProcessed: Boolean(row.isProcessed),
     isPublic: Boolean(row.isPublic),
@@ -95,11 +107,42 @@ function mapPodcastRow(row: PodcastApiRow, scope: SummaryItem['scope']): Summary
   };
 }
 
+function mergeSummaryItems(current: SummaryItem[], incoming: SummaryItem[], replace: boolean): SummaryItem[] {
+  if (replace) {
+    return incoming;
+  }
+  const merged = new Map<string, SummaryItem>();
+  current.forEach((item) => merged.set(item.id, item));
+  incoming.forEach((item) => merged.set(item.id, item));
+  return Array.from(merged.values());
+}
+
+function parseStoredStarredIds(value: string | null): Set<string> {
+  if (!value) {
+    return new Set();
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((id): id is string => typeof id === 'string' && id.trim().length > 0));
+    }
+  } catch {
+    // Ignore malformed local storage data and start with an empty collection.
+  }
+
+  return new Set();
+}
+
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime())
     ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
     : '-';
+}
+
+function itemDisplayDate(item: SummaryItem): string {
+  return item.sourcePublishedAt || item.createdAt;
 }
 
 function formatDuration(seconds: number | null): string | null {
@@ -126,19 +169,78 @@ function parseSizeKb(value: string | null): number {
 function getInitialView(status: string): HomeView {
   if (typeof window !== 'undefined') {
     const view = new URLSearchParams(window.location.search).get('view');
-    if (view === 'my' || view === 'explore' || view === 'topics') {
+    if (view === 'my' || view === 'explore' || view === 'topics' || view === 'starred') {
       return view;
     }
   }
   return status === 'authenticated' ? 'my' : 'explore';
 }
 
+function cleanSourceCandidate(value: string): string | null {
+  const cleaned = value
+    .replace(/\b(interview|podcast|episode|full conversation)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\-–—|:：]+|[\s\-–—|:：]+$/g, '')
+    .trim();
+
+  if (cleaned.length < 2 || cleaned.length > 34) {
+    return null;
+  }
+  if (!/[A-Za-z0-9\u3400-\u9fff]/.test(cleaned)) {
+    return null;
+  }
+  return cleaned;
+}
+
+function inferSourceLabelFromTitle(title: string): string | null {
+  const withMatch = title.match(/\bwith\s+([^,|–—-]{2,34})$/i);
+  const withCandidate = withMatch?.[1] ? cleanSourceCandidate(withMatch[1]) : null;
+  if (withCandidate) {
+    return withCandidate;
+  }
+
+  const chinesePrefix = title.includes('：') ? cleanSourceCandidate(title.split('：')[0] || '') : null;
+  if (chinesePrefix) {
+    return chinesePrefix;
+  }
+
+  const asciiPrefix = title.includes(':') ? cleanSourceCandidate(title.split(':')[0] || '') : null;
+  if (asciiPrefix) {
+    return asciiPrefix;
+  }
+
+  const pipePieces = title.split('|').map((piece) => piece.trim()).filter(Boolean);
+  const pipeSuffix = pipePieces.length > 1 ? cleanSourceCandidate(pipePieces[pipePieces.length - 1] || '') : null;
+  if (pipeSuffix) {
+    return pipeSuffix;
+  }
+
+  const dashPieces = title.split(/\s+[–—-]\s+/).map((piece) => piece.trim()).filter(Boolean);
+  if (dashPieces.length > 1) {
+    const suffix = cleanSourceCandidate(dashPieces[dashPieces.length - 1] || '');
+    if (suffix) {
+      return suffix;
+    }
+    const prefix = cleanSourceCandidate(dashPieces[0] || '');
+    if (prefix) {
+      return prefix;
+    }
+  }
+
+  return null;
+}
+
 function getSourceLabel(item: SummaryItem): string {
   const source = item.sourceReference || '';
+  const inferredSource = inferSourceLabelFromTitle(item.title);
   if (/youtube\.com|youtu\.be/i.test(source)) {
-    return 'YouTube';
+    const channelTag = item.tags.find((tag) => tag.toLowerCase() !== 'youtube');
+    return inferredSource || channelTag || 'YouTube';
   }
-  const pieces = item.title.split(/[-:|]/).map((piece) => piece.trim()).filter(Boolean);
+  if (inferredSource) {
+    return inferredSource;
+  }
+  const pieces = item.title.split(/[-:|：]/).map((piece) => piece.trim()).filter(Boolean);
   return pieces[0]?.slice(0, 34) || (item.scope === 'my' ? 'Private Library' : 'PodSum');
 }
 
@@ -170,7 +272,231 @@ function getCoverClass(title: string): string {
   return palettes[index];
 }
 
-function SmallIcon({ type, className = 'h-5 w-5' }: { type: NavIcon; className?: string }) {
+const EDITORIAL_COVER_TONES = [
+  'from-[#20483e] to-[#88a58e] text-[#fff8e8] border-[#70947f]',
+  'from-[#6f3932] to-[#d49b75] text-[#fff8e8] border-[#ad765e]',
+  'from-[#7d551c] to-[#e2bc5d] text-[#fff9df] border-[#b88a31]',
+  'from-[#24231f] to-[#5f6254] text-[#fff7e6] border-[#656453]',
+  'from-[#2f594d] to-[#c1b779] text-[#fff9e7] border-[#8e9667]',
+];
+
+const COVER_STOP_WORDS = new Set([
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'of',
+  'to',
+  'in',
+  'with',
+  'for',
+  'from',
+  'how',
+  'why',
+  'what',
+  'actually',
+  'interview',
+  'podcast',
+  'building',
+  'next',
+  'generation',
+]);
+
+const COVER_PREFERRED_TERMS = [
+  'GPT',
+  'Claude',
+  'Gemini',
+  'OpenAI',
+  'Codex',
+  'LLM',
+  'GPU',
+  'AI',
+  'KV',
+  'API',
+  'Tokens',
+  'Inference',
+  'Agents',
+  'Agentic',
+  'Vibe',
+  'Coding',
+  'Memory',
+  'Context',
+  'Eval',
+  'Routing',
+  'Edge',
+];
+
+function getCoverHash(text: string): number {
+  return Array.from(text).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
+
+function compactCoverWord(word: string): string {
+  if (/[\u3400-\u9fff]/.test(word)) {
+    return word.length <= 4 ? word : word.slice(0, 4);
+  }
+
+  const normalized = word.toUpperCase();
+  const compact: Record<string, string> = {
+    ACTUALLY: 'REAL',
+    AGGREGATION: 'AGGREG',
+    BANDWIDTH: 'BANDWD',
+    BUSINESS: 'BIZ',
+    CHANGES: 'SHIFTS',
+    CONTEXT: 'CTX',
+    DEVELOPER: 'DEV',
+    DEVELOPERS: 'DEVS',
+    ECONOMICS: 'ECON',
+    ENGINEERING: 'ENG',
+    EVALUATION: 'EVALS',
+    INFERENCE: 'INFER',
+    INFRASTRUCTURE: 'INFRA',
+    KNOWLEDGE: 'KNOW',
+    PRODUCTS: 'PRODUCT',
+    RELIABLE: 'RELIAB',
+    ROUTING: 'ROUTE',
+    SOFTWARE: 'SOFTWR',
+    WORKFLOWS: 'FLOW',
+    DWARKESH: 'DWARK',
+    SEMIANALYSIS: 'SEMI',
+    PRAGMATIC: 'PRAG',
+    ENGINEER: 'ENGR',
+    INVEST: 'INVEST',
+  };
+  return compact[normalized] || (normalized.length <= 7 ? normalized : normalized.slice(0, 7));
+}
+
+function formatCoverDate(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase()
+    : '';
+}
+
+function getCoverInitials(title: string): string {
+  if (/[\u3400-\u9fff]/.test(title)) {
+    return '中';
+  }
+  return getCoverText(title);
+}
+
+function getCoverKicker(item: SummaryItem): string {
+  const sourceName = getSourceLabel(item);
+  const sourceAliases: Record<string, string> = {
+    'Andrej Karpathy': 'KARPATHY',
+    'Dylan Patel': 'DYLAN',
+    'Invest Like the Best': 'ILTB',
+    'Jensen Huang': 'JENSEN',
+    'Latent Space': 'LATENT',
+    'No Priors': 'NO PRIORS',
+    "OpenAI's Codex Lead": 'CODEX',
+    'Reiner Pope': 'REINER',
+    SemiAnalysis: 'SEMI',
+    'Sundar Pichai': 'SUNDAR',
+    'Demis Hassabis': 'DEMIS',
+    'The Pragmatic Engineer': 'PRAG ENG',
+    最佳拍档: '最佳拍档',
+  };
+  if (sourceAliases[sourceName]) {
+    return sourceAliases[sourceName];
+  }
+
+  const sourceWords = sourceName
+    .split(/[^A-Za-z0-9\u3400-\u9fff]+/)
+    .map((word) => compactCoverWord(word))
+    .filter((word) => word && !['A', 'AN', 'THE'].includes(word));
+
+  return sourceWords.length > 1 ? sourceWords.slice(0, 2).join(' ') : sourceWords[0] || 'PODSUM';
+}
+
+function buildCoverTitleLines(item: SummaryItem): string[] {
+  const afterAsciiColon = item.title.includes(':') ? item.title.split(':').slice(1).join(':') : item.title;
+  const titleBody = afterAsciiColon.includes('：')
+    ? afterAsciiColon.split('：').slice(1).join('：')
+    : afterAsciiColon;
+
+  if (/[\u3400-\u9fff]/.test(titleBody)) {
+    if (/蓝鲸|ITSM|落地/.test(titleBody)) {
+      return ['蓝鲸', 'ITSM', '落地'];
+    }
+    if (/AI 原生|AI Native/i.test(titleBody)) {
+      return ['AI', '原生', '工作流'];
+    }
+    if (/半导体|HBM|算力/.test(titleBody)) {
+      return ['HBM', '供需', '算力'];
+    }
+    if (/Agent|Demo|交付/i.test(titleBody)) {
+      return ['AGENT', '真实', '交付'];
+    }
+
+    const chineseTerms = titleBody.match(/[\u3400-\u9fff]{2,4}|[A-Za-z]{2,8}/g) || [];
+    return chineseTerms
+      .filter((term) => !['为什么', '如何', '走向', '真实'].includes(term))
+      .slice(0, 3)
+      .map((term) => compactCoverWord(term));
+  }
+
+  if (/Vibe Coding/i.test(afterAsciiColon)) {
+    return ['VIBE', 'CODING'];
+  }
+  if (/AI Tokens/i.test(afterAsciiColon)) {
+    return ['AI', 'TOKENS'];
+  }
+  if (/Infrastructure/i.test(afterAsciiColon)) {
+    return ['INFRA', 'AGENTS'];
+  }
+  if (/Long Context/i.test(afterAsciiColon)) {
+    return ['LONG', 'CTX'];
+  }
+  if (/Model Routing/i.test(afterAsciiColon)) {
+    return ['MODEL', 'ROUTE'];
+  }
+  if (/Private Knowledge/i.test(afterAsciiColon)) {
+    return ['PRIVATE', 'KNOW'];
+  }
+  if (/TPU competition/i.test(afterAsciiColon)) {
+    return ['TPU', 'CHINA', 'NVIDIA'];
+  }
+  if (/history and future of AI at Google/i.test(afterAsciiColon)) {
+    return ['GOOGLE', 'AI', 'FUTURE'];
+  }
+  if (/bottlenecks in AI/i.test(afterAsciiColon)) {
+    return ['AGI', 'AI', 'LIMITS'];
+  }
+
+  const matches = COVER_PREFERRED_TERMS.filter((term) => new RegExp(`\\b${term}\\b`, 'i').test(afterAsciiColon));
+  if (matches.length >= 2) {
+    return Array.from(new Set(matches.slice(0, 3).map((term) => compactCoverWord(term))));
+  }
+
+  const words = afterAsciiColon
+    .split(/[^A-Za-z0-9]+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length > 2 && !COVER_STOP_WORDS.has(word.toLowerCase()));
+
+  return words.slice(0, 3).map((word) => compactCoverWord(word));
+}
+
+function buildEditorialCoverSpec(item: SummaryItem): EditorialCoverSpec {
+  const titleLines = buildCoverTitleLines(item);
+  const ghost = getCoverInitials(item.title);
+  const lines = titleLines.length > 0 ? titleLines.slice(0, 3) : [ghost];
+  const kicker = getCoverKicker(item);
+  const duration = formatDuration(item.durationSec)?.replace(/\s+/g, '').toUpperCase() || '';
+  const footer = [formatCoverDate(itemDisplayDate(item)), duration].filter(Boolean).join(' / ');
+  const toneClass = EDITORIAL_COVER_TONES[getCoverHash(item.title) % EDITORIAL_COVER_TONES.length];
+
+  return {
+    kicker,
+    titleLines: lines,
+    footer,
+    ghost,
+    toneClass,
+    isCjk: /[\u3400-\u9fff]/.test(lines.join('') + kicker),
+  };
+}
+
+function SmallIcon({ type, className = 'h-5 w-5', filled = false }: { type: NavIcon; className?: string; filled?: boolean }) {
   const common = 'currentColor';
   if (type === 'library') {
     return (
@@ -199,23 +525,8 @@ function SmallIcon({ type, className = 'h-5 w-5' }: { type: NavIcon; className?:
   }
   if (type === 'star') {
     return (
-      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <svg viewBox="0 0 24 24" className={className} fill={filled ? common : 'none'} aria-hidden="true">
         <path d="M12 4.2L14.3 9L19.6 9.7L15.8 13.4L16.8 18.6L12 16.1L7.2 18.6L8.2 13.4L4.4 9.7L9.7 9L12 4.2Z" stroke={common} strokeWidth="1.7" strokeLinejoin="round" />
-      </svg>
-    );
-  }
-  if (type === 'archive') {
-    return (
-      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-        <path d="M5 8H19V19H5V8Z" stroke={common} strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M4 5H20V8H4V5ZM9 12H15" stroke={common} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    );
-  }
-  if (type === 'trash') {
-    return (
-      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-        <path d="M7 8H17M10 11V17M14 11V17M9 8L9.5 5.5H14.5L15 8M8 8L8.7 19H15.3L16 8" stroke={common} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     );
   }
@@ -338,6 +649,81 @@ function StatusBadge({ item }: { item: SummaryItem }) {
 }
 
 function SummaryCover({ item }: { item: SummaryItem }) {
+  const [coverSpec, setCoverSpec] = useState<EditorialCoverSpec | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const idleWindow = window as unknown as {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const requestIdle = idleWindow.requestIdleCallback?.bind(window);
+    const cancelIdle = idleWindow.cancelIdleCallback?.bind(window);
+
+    setCoverSpec(null);
+    const buildCover = () => {
+      if (!cancelled) {
+        setCoverSpec(buildEditorialCoverSpec(item));
+      }
+    };
+
+    const idleHandle = requestIdle
+      ? requestIdle(buildCover, { timeout: 500 })
+      : window.setTimeout(buildCover, 0);
+
+    return () => {
+      cancelled = true;
+      if (cancelIdle && requestIdle) {
+        cancelIdle(idleHandle);
+      } else {
+        window.clearTimeout(idleHandle);
+      }
+    };
+  }, [item]);
+
+  if (coverSpec) {
+    return (
+      <div
+        className={[
+          'relative grid h-24 w-24 shrink-0 grid-rows-[auto_1fr_auto] overflow-hidden rounded-lg border bg-gradient-to-br p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-18px_36px_rgba(43,34,24,0.10),0_16px_30px_-25px_rgba(77,61,39,0.90)] sm:h-28 sm:w-28',
+          coverSpec.toneClass,
+        ].join(' ')}
+        aria-label={`${coverSpec.kicker}: ${coverSpec.titleLines.join(' ')}`}
+      >
+        <div className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[8px] font-bold uppercase leading-none tracking-[0.07em] text-current/80 sm:text-[9px]">
+          {coverSpec.kicker}
+        </div>
+        <div
+          className={[
+            'flex min-w-0 flex-col justify-center overflow-hidden font-extrabold uppercase leading-[0.96] tracking-normal text-current',
+            coverSpec.titleLines.length === 1
+              ? 'text-[23px] sm:text-[25px]'
+              : coverSpec.titleLines.length === 2
+                ? 'text-[18px] sm:text-[20px]'
+                : 'text-[14px] leading-[1.06] sm:text-[16px]',
+          ].join(' ')}
+          style={coverSpec.isCjk ? {
+            fontFamily: '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif',
+            letterSpacing: '0.02em',
+          } : undefined}
+        >
+          {coverSpec.titleLines.map((line, index) => (
+            <span key={`${line}-${index}`} className="block max-w-full overflow-hidden text-clip whitespace-nowrap">
+              {line}
+            </span>
+          ))}
+        </div>
+        <div className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[7px] font-bold uppercase leading-none tracking-[0.08em] text-current/80 sm:text-[8px]">
+          {coverSpec.footer}
+        </div>
+        <div aria-hidden="true" className="pointer-events-none absolute -bottom-4 -right-2 text-[64px] font-black leading-none tracking-[-0.08em] text-current/10 sm:text-[72px]">
+          {coverSpec.ghost}
+        </div>
+        <div aria-hidden="true" className="pointer-events-none absolute inset-2.5 border-y border-[rgba(255,250,236,0.22)]" />
+      </div>
+    );
+  }
+
   return (
     <div className={[
       'flex h-24 w-24 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br p-3 text-center text-lg font-semibold leading-tight shadow-[inset_0_0_28px_rgba(255,255,255,0.12)] sm:h-28 sm:w-28',
@@ -349,7 +735,15 @@ function SummaryCover({ item }: { item: SummaryItem }) {
   );
 }
 
-function SummaryCard({ item }: { item: SummaryItem }) {
+function SummaryCard({
+  item,
+  isStarred,
+  onToggleStar,
+}: {
+  item: SummaryItem;
+  isStarred: boolean;
+  onToggleStar: (item: SummaryItem) => void;
+}) {
   const duration = formatDuration(item.durationSec);
   return (
     <article className="group rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-4 shadow-[0_14px_38px_-34px_rgba(80,67,44,0.55)] transition-colors hover:bg-[var(--paper-muted)]">
@@ -363,9 +757,21 @@ function SummaryCard({ item }: { item: SummaryItem }) {
                   {item.title}
                 </h2>
               </Link>
-              <span className="mt-0.5 shrink-0 text-[var(--text-muted)]">
-                <SmallIcon type="star" className="h-5 w-5" />
-              </span>
+              <button
+                type="button"
+                onClick={() => onToggleStar(item)}
+                aria-pressed={isStarred}
+                aria-label={`${isStarred ? 'Remove from' : 'Add to'} Starred: ${item.title}`}
+                title={isStarred ? 'Remove from Starred' : 'Add to Starred'}
+                className={[
+                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors',
+                  isStarred
+                    ? 'text-[#b87912] hover:bg-[#fff2cf]'
+                    : 'text-[var(--text-muted)] hover:bg-[var(--paper-subtle)] hover:text-[#b87912]',
+                ].join(' ')}
+              >
+                <SmallIcon type="star" className="h-5 w-5" filled={isStarred} />
+              </button>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--text-secondary)]">
               <span>{getSourceLabel(item)}</span>
@@ -396,7 +802,7 @@ function SummaryCard({ item }: { item: SummaryItem }) {
           <div className="flex items-end justify-between gap-3 md:flex-col md:items-end">
             <div className="space-y-3 text-left md:text-right">
               <StatusBadge item={item} />
-              <div className="text-sm text-[var(--text-secondary)]">{formatDate(item.createdAt)}</div>
+              <div className="text-sm text-[var(--text-secondary)]">{formatDate(itemDisplayDate(item))}</div>
             </div>
             <div className="flex items-center gap-2">
               <Link
@@ -426,18 +832,24 @@ function HomeWorkspace() {
   const [view, setView] = useState<HomeView>('explore');
   const [myItems, setMyItems] = useState<SummaryItem[]>([]);
   const [exploreItems, setExploreItems] = useState<SummaryItem[]>([]);
-  const [accountOverview, setAccountOverview] = useState<AccountOverview | null>(null);
+  const [myPage, setMyPage] = useState(0);
+  const [explorePage, setExplorePage] = useState(0);
+  const [hasMoreMy, setHasMoreMy] = useState(true);
+  const [hasMoreExplore, setHasMoreExplore] = useState(true);
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [selectedTag, setSelectedTag] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isLoadingMy, setIsLoadingMy] = useState(false);
-  const [isLoadingExplore, setIsLoadingExplore] = useState(true);
+  const [isLoadingExplore, setIsLoadingExplore] = useState(false);
+  const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
+  const [starredLoaded, setStarredLoaded] = useState(false);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const viewParam = searchParams.get('view');
-    if (viewParam === 'my' || viewParam === 'explore' || viewParam === 'topics') {
+    if (viewParam === 'my' || viewParam === 'explore' || viewParam === 'topics' || viewParam === 'starred') {
       setView(viewParam);
     } else {
       setView(getInitialView(status));
@@ -459,61 +871,137 @@ function HomeWorkspace() {
   }, []);
 
   useEffect(() => {
-    async function loadExplore() {
-      setIsLoadingExplore(true);
-      setError(null);
-      try {
-        const response = await fetch('/api/podcasts?page=1&pageSize=50', { cache: 'no-store' });
-        const payload = await response.json();
-        if (!response.ok || !payload.success || !Array.isArray(payload.data)) {
-          throw new Error(payload.error || 'Failed to load public summaries');
-        }
-        setExploreItems(payload.data.map((row: PodcastApiRow) => mapPodcastRow(row, 'explore')));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setIsLoadingExplore(false);
-      }
-    }
-    loadExplore();
-  }, []);
-
-  useEffect(() => {
     if (status !== 'authenticated') {
       setMyItems([]);
-      setAccountOverview(null);
+      setMyPage(0);
+      setHasMoreMy(true);
+    }
+  }, [status]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
       return;
     }
 
-    async function loadMySummaries() {
-      setIsLoadingMy(true);
-      setError(null);
-      try {
-        const [podcastResponse, accountResponse] = await Promise.all([
-          fetch('/api/podcasts?page=1&pageSize=50&includePrivate=true', { cache: 'no-store' }),
-          fetch('/api/account/overview', { cache: 'no-store' }),
-        ]);
-        const podcastPayload = await podcastResponse.json();
-        if (!podcastResponse.ok || !podcastPayload.success || !Array.isArray(podcastPayload.data)) {
-          throw new Error(podcastPayload.error || 'Failed to load my summaries');
-        }
-        setMyItems(podcastPayload.data.map((row: PodcastApiRow) => mapPodcastRow(row, 'my')));
+    setStarredIds(parseStoredStarredIds(window.localStorage.getItem(STARRED_SUMMARIES_STORAGE_KEY)));
+    setStarredLoaded(true);
+  }, []);
 
-        if (accountResponse.ok) {
-          const accountPayload = await accountResponse.json();
-          if (accountPayload.success) {
-            setAccountOverview(accountPayload.data);
-          }
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setIsLoadingMy(false);
-      }
+  useEffect(() => {
+    if (!starredLoaded || typeof window === 'undefined') {
+      return;
     }
 
-    loadMySummaries();
+    window.localStorage.setItem(STARRED_SUMMARIES_STORAGE_KEY, JSON.stringify(Array.from(starredIds)));
+  }, [starredIds, starredLoaded]);
+
+  const toggleStarred = useCallback((item: SummaryItem) => {
+    setStarredIds((current) => {
+      const next = new Set(current);
+      if (next.has(item.id)) {
+        next.delete(item.id);
+      } else {
+        next.add(item.id);
+      }
+      return next;
+    });
+  }, []);
+
+  const loadSummaryPage = useCallback(async (scope: SummaryItem['scope'], page: number) => {
+    if (scope === 'my' && status !== 'authenticated') {
+      return;
+    }
+
+    const setLoading = scope === 'my' ? setIsLoadingMy : setIsLoadingExplore;
+    setLoading(true);
+    setError(null);
+
+    try {
+      let payload: { success?: boolean; data?: unknown; error?: string } | null = null;
+      let responseOk = true;
+
+      if (scope === 'explore') {
+        try {
+          const snapshotResponse = await fetch(
+            `/api/snapshots/lists/public?page=${page}&pageSize=${SUMMARY_PAGE_SIZE}`,
+            { cache: 'force-cache' },
+          );
+          if (snapshotResponse.ok) {
+            const snapshotPayload = await snapshotResponse.json();
+            if (snapshotPayload?.success && Array.isArray(snapshotPayload.data)) {
+              payload = snapshotPayload;
+            }
+          }
+        } catch {
+          // Static snapshots are an acceleration layer; the DB API remains authoritative.
+        }
+      }
+
+      if (!payload) {
+        const includePrivate = scope === 'my' ? '&includePrivate=true' : '';
+        const response = await fetch(`/api/podcasts?page=${page}&pageSize=${SUMMARY_PAGE_SIZE}${includePrivate}`, {
+          cache: 'no-store',
+        });
+        responseOk = response.ok;
+        payload = await response.json();
+      }
+
+      if (!responseOk || !payload || !payload.success || !Array.isArray(payload.data)) {
+        throw new Error(payload?.error || `Failed to load ${scope === 'my' ? 'my' : 'public'} summaries`);
+      }
+
+      const items = payload.data.map((row: PodcastApiRow) => mapPodcastRow(row, scope));
+      if (scope === 'my') {
+        setMyItems((current) => mergeSummaryItems(current, items, page === 1));
+        setMyPage(page);
+        setHasMoreMy(payload.data.length === SUMMARY_PAGE_SIZE);
+      } else {
+        setExploreItems((current) => mergeSummaryItems(current, items, page === 1));
+        setExplorePage(page);
+        setHasMoreExplore(payload.data.length === SUMMARY_PAGE_SIZE);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      if (scope === 'my') {
+        setMyPage((current) => Math.max(current, page));
+        setHasMoreMy(false);
+      } else {
+        setExplorePage((current) => Math.max(current, page));
+        setHasMoreExplore(false);
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [status]);
+
+  useEffect(() => {
+    const explicitView = searchParams.get('view');
+    if (status === 'loading' && !explicitView) {
+      return;
+    }
+
+    const shouldLoadCombined = view === 'topics' || (view === 'starred' && starredLoaded && starredIds.size > 0);
+    const shouldLoadExplore = (view === 'explore' || shouldLoadCombined) && explorePage === 0 && !isLoadingExplore;
+    const shouldLoadMy = (view === 'my' || shouldLoadCombined) && status === 'authenticated' && myPage === 0 && !isLoadingMy;
+
+    if (shouldLoadExplore) {
+      loadSummaryPage('explore', 1);
+    }
+    if (shouldLoadMy) {
+      loadSummaryPage('my', 1);
+    }
+  }, [
+    explorePage,
+    isLoadingExplore,
+    isLoadingMy,
+    loadSummaryPage,
+    myPage,
+    searchParams,
+    starredIds.size,
+    starredLoaded,
+    status,
+    view,
+  ]);
 
   const allTopicItems = useMemo(() => {
     const map = new Map<string, SummaryItem>();
@@ -528,10 +1016,20 @@ function HomeWorkspace() {
     });
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 28);
+      .slice(0, TOPIC_TAG_LIMIT);
   }, [allTopicItems]);
 
-  const sourceItems = view === 'my' ? myItems : view === 'topics' ? allTopicItems : exploreItems;
+  const starredItems = useMemo(() => {
+    return allTopicItems.filter((item) => starredIds.has(item.id));
+  }, [allTopicItems, starredIds]);
+
+  const sourceItems = view === 'my'
+    ? myItems
+    : view === 'topics'
+      ? allTopicItems
+      : view === 'starred'
+        ? starredItems
+        : exploreItems;
   const normalizedQuery = query.trim().toLowerCase();
   const visibleItems = useMemo(() => {
     const filtered = sourceItems.filter((item) => {
@@ -556,24 +1054,101 @@ function HomeWorkspace() {
       } else if (sortBy === 'size') {
         comparison = parseSizeKb(a.fileSize) - parseSizeKb(b.fileSize);
       } else {
-        comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        comparison = new Date(itemDisplayDate(a)).getTime() - new Date(itemDisplayDate(b)).getTime();
       }
       return sortDirection === 'asc' ? comparison : -comparison;
     });
   }, [normalizedQuery, selectedTag, sortBy, sortDirection, sourceItems, view]);
 
-  const isLoading = view === 'my' ? isLoadingMy : isLoadingExplore;
-  const completedCount = sourceItems.filter((item) => item.isProcessed).length;
-  const processingCount = sourceItems.length - completedCount;
-  const creditCount = accountOverview?.user.credits ?? null;
+  const loadMoreActiveView = useCallback(() => {
+    if (view === 'my') {
+      if (status === 'authenticated' && hasMoreMy && !isLoadingMy) {
+        loadSummaryPage('my', myPage + 1);
+      }
+      return;
+    }
+
+    if (view === 'explore') {
+      if (hasMoreExplore && !isLoadingExplore) {
+        loadSummaryPage('explore', explorePage + 1);
+      }
+      return;
+    }
+
+    if (hasMoreExplore && !isLoadingExplore) {
+      loadSummaryPage('explore', explorePage + 1);
+    }
+    if (status === 'authenticated' && hasMoreMy && !isLoadingMy) {
+      loadSummaryPage('my', myPage + 1);
+    }
+  }, [
+    explorePage,
+    hasMoreExplore,
+    hasMoreMy,
+    isLoadingExplore,
+    isLoadingMy,
+    loadSummaryPage,
+    myPage,
+    status,
+    view,
+  ]);
+
+  const isCombinedView = view === 'topics' || view === 'starred';
+  const shouldLoadStarredLibrary = view === 'starred' && starredLoaded && starredIds.size > 0;
+  const canLoadMore = view === 'my'
+    ? status === 'authenticated' && hasMoreMy
+    : view === 'starred'
+      ? shouldLoadStarredLibrary && (hasMoreExplore || (status === 'authenticated' && hasMoreMy))
+      : isCombinedView
+        ? hasMoreExplore || (status === 'authenticated' && hasMoreMy)
+        : hasMoreExplore;
+  const hasRequestedCurrentView = view === 'my'
+    ? status === 'authenticated' && myPage > 0
+    : view === 'starred'
+      ? starredLoaded && (starredIds.size === 0 || (explorePage > 0 && (status !== 'authenticated' || myPage > 0)))
+      : isCombinedView
+        ? explorePage > 0 && (status !== 'authenticated' || myPage > 0)
+        : explorePage > 0;
+  const isLoading = view === 'my'
+    ? isLoadingMy
+    : view === 'starred'
+      ? !starredLoaded || (shouldLoadStarredLibrary && (isLoadingExplore || (status === 'authenticated' && isLoadingMy)))
+      : isCombinedView
+        ? isLoadingExplore || (status === 'authenticated' && isLoadingMy)
+        : isLoadingExplore;
+  const showInitialLoading = !error && visibleItems.length === 0 && (isLoading || !hasRequestedCurrentView);
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !canLoadMore) {
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        loadMoreActiveView();
+      }
+    }, { rootMargin: '600px 0px' });
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [canLoadMore, loadMoreActiveView]);
+
+  useEffect(() => {
+    if (view !== 'starred' || starredIds.size === 0 || visibleItems.length > 0 || !canLoadMore || isLoading) {
+      return;
+    }
+
+    loadMoreActiveView();
+  }, [canLoadMore, isLoading, loadMoreActiveView, starredIds.size, view, visibleItems.length]);
 
   return (
     <AppFrame
-      activeView={view}
+      activeView={view === 'starred' ? undefined : view}
       showViewTabs={false}
       mainClassName="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8"
     >
-      <div className="grid gap-6 xl:grid-cols-[270px_minmax(0,1fr)_300px]">
+      <div className="grid gap-6 xl:grid-cols-[270px_minmax(0,1fr)_340px]">
         <aside className="hidden xl:block">
           <div className="sticky top-[6.5rem] flex h-[calc(100vh-8rem)] flex-col justify-between">
             <nav className="space-y-2">
@@ -581,38 +1156,10 @@ function HomeWorkspace() {
               <SidebarLink icon="compass" active={view === 'explore'} onClick={() => updateView('explore')}>Explore</SidebarLink>
               <SidebarLink icon="topic" active={view === 'topics'} onClick={() => updateView('topics')}>Topics</SidebarLink>
               <div className="h-2" />
-              <SidebarLink icon="star">Starred</SidebarLink>
-              <SidebarLink icon="archive">Archive</SidebarLink>
-              <SidebarLink icon="trash">Trash</SidebarLink>
+              <SidebarLink icon="star" active={view === 'starred'} onClick={() => updateView('starred')}>Starred</SidebarLink>
             </nav>
 
-            <div className="space-y-4">
-              <Link href="/account/credits" className="dashboard-panel block rounded-lg p-5 transition-colors hover:bg-[var(--paper-muted)]">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#fff2cf] text-[#8a6224]">
-                    <SmallIcon type="credits" />
-                  </span>
-                  <div>
-                    <div className="text-sm text-[var(--text-secondary)]">Credits</div>
-                    <div className="text-2xl font-semibold text-[var(--text-main)]">
-                      {creditCount === null ? '-' : creditCount.toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-4 text-sm font-medium text-[var(--heading)]">View usage {'->'}</div>
-              </Link>
-
-              <Link href="/pricing" className="dashboard-panel flex items-center gap-3 rounded-lg p-4 transition-colors hover:bg-[var(--paper-muted)]">
-                <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--paper-subtle)] text-[#8a6224]">
-                  <SmallIcon type="gift" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-[var(--text-main)]">Invite friends</div>
-                  <div className="text-sm text-[var(--text-muted)]">Get more credits</div>
-                </div>
-                <span className="text-[var(--text-muted)]">{'->'}</span>
-              </Link>
-            </div>
+            <div />
           </div>
         </aside>
 
@@ -658,7 +1205,7 @@ function HomeWorkspace() {
             {view === 'topics' && topicTags.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
                 <FilterButton active={!selectedTag} onClick={() => setSelectedTag('')}>All topics</FilterButton>
-                {topicTags.slice(0, 12).map(([tag, count]) => (
+                {topicTags.slice(0, TOPIC_FILTER_LIMIT).map(([tag, count]) => (
                   <button
                     key={tag}
                     type="button"
@@ -677,7 +1224,7 @@ function HomeWorkspace() {
             )}
           </div>
 
-          {view === 'my' && status !== 'authenticated' ? (
+          {view === 'my' && status === 'unauthenticated' ? (
             <section className="dashboard-panel rounded-lg p-10 text-center">
               <h1 className="text-2xl font-semibold text-[var(--heading)]">Sign in to see My Summaries</h1>
               <p className="mx-auto mt-2 max-w-xl text-sm text-[var(--text-secondary)]">
@@ -687,13 +1234,17 @@ function HomeWorkspace() {
                 Sign in
               </Link>
             </section>
-          ) : isLoading && visibleItems.length === 0 ? (
+          ) : showInitialLoading ? (
             <section className="dashboard-panel rounded-lg p-10 text-center text-[var(--text-muted)]">Loading summaries...</section>
           ) : visibleItems.length === 0 ? (
             <section className="dashboard-panel rounded-lg p-10 text-center">
               <h1 className="text-2xl font-semibold text-[var(--heading)]">No summaries found</h1>
               <p className="mx-auto mt-2 max-w-xl text-sm text-[var(--text-secondary)]">
-                {view === 'my' ? 'Try a different filter or upload a new transcript.' : 'Try another search or topic.'}
+                {view === 'my'
+                  ? 'Try a different filter or upload a new transcript.'
+                  : view === 'starred'
+                    ? 'Star summaries to collect them here.'
+                    : 'Try another search or topic.'}
               </p>
               {view === 'my' && (
                 <Link href="/upload" className="mt-5 inline-flex rounded-lg bg-[var(--btn-primary)] px-5 py-2.5 text-sm font-semibold text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)]">
@@ -704,18 +1255,29 @@ function HomeWorkspace() {
           ) : (
             <div className="space-y-4">
               {visibleItems.map((item) => (
-                <SummaryCard key={`${item.scope}:${item.id}`} item={item} />
+                <SummaryCard
+                  key={`${item.scope}:${item.id}`}
+                  item={item}
+                  isStarred={starredIds.has(item.id)}
+                  onToggleStar={toggleStarred}
+                />
               ))}
+              <div ref={loadMoreRef} className="py-6 text-center text-sm text-[var(--text-muted)]">
+                {isLoading ? 'Loading more summaries...' : canLoadMore ? 'Scroll to load more' : 'All summaries loaded'}
+              </div>
             </div>
           )}
         </section>
 
         <aside className="hidden xl:block">
-          <div className="sticky top-[6.5rem] space-y-5">
+          <div className="sticky top-[6.5rem]">
             <section className="dashboard-panel rounded-lg p-5">
-              <h2 className="text-base font-semibold text-[var(--text-main)]">Recent Topics</h2>
-              <div className="mt-4 space-y-3">
-                {topicTags.slice(0, 7).map(([tag, count]) => (
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold text-[var(--text-main)]">Recent Topics</h2>
+                <span className="text-xs font-medium text-[var(--text-muted)]">{topicTags.length}</span>
+              </div>
+              <div className="mt-4 flex max-h-[calc(100vh-15rem)] flex-wrap content-start gap-1.5 overflow-y-auto pr-1">
+                {topicTags.slice(0, RECENT_TOPIC_LIMIT).map(([tag, count], index) => (
                   <button
                     key={tag}
                     type="button"
@@ -729,10 +1291,15 @@ function HomeWorkspace() {
                         window.history.replaceState(null, '', `${url.pathname}${url.search}`);
                       }
                     }}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg text-left text-sm text-[var(--heading)] hover:bg-[var(--paper-muted)]"
+                    className={[
+                      'inline-flex max-w-full items-center gap-1.5 rounded-full border text-left font-medium leading-tight text-[var(--heading)] transition-colors hover:bg-[var(--paper-muted)]',
+                      index < 4
+                        ? 'border-[var(--border-medium)] bg-[var(--paper-subtle)] px-3 py-1.5 text-xs'
+                        : 'border-[var(--border-soft)] bg-[var(--paper-base)] px-2.5 py-1 text-[11px]',
+                    ].join(' ')}
                   >
-                    <span className="rounded-full bg-[var(--paper-subtle)] px-3 py-1">{tag}</span>
-                    <span className="rounded-full bg-[var(--paper-subtle)] px-2 py-1 text-xs text-[var(--text-muted)]">{count}</span>
+                    <span className="min-w-0 break-words">{tag}</span>
+                    <span className="shrink-0 text-[10px] text-[var(--text-muted)]">{count}</span>
                   </button>
                 ))}
                 {topicTags.length === 0 && <p className="text-sm text-[var(--text-muted)]">Topics appear after summaries are loaded.</p>}
@@ -744,23 +1311,6 @@ function HomeWorkspace() {
               >
                 View all topics {'->'}
               </button>
-            </section>
-
-            <section className="dashboard-panel rounded-lg p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-[var(--text-main)]">Library</h2>
-                <span className="text-sm text-[var(--text-muted)]">{sourceItems.length}</span>
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-lg bg-[var(--paper-subtle)] p-3">
-                  <div className="text-2xl font-semibold text-[var(--heading)]">{completedCount}</div>
-                  <div className="text-xs text-[var(--text-muted)]">Completed</div>
-                </div>
-                <div className="rounded-lg bg-[var(--paper-subtle)] p-3">
-                  <div className="text-2xl font-semibold text-[#9a5f12]">{processingCount}</div>
-                  <div className="text-xs text-[var(--text-muted)]">Processing</div>
-                </div>
-              </div>
             </section>
           </div>
         </aside>
