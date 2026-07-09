@@ -90,6 +90,27 @@ describe('podcastUploadPipeline', () => {
     });
   });
 
+  it('uses an explicit object key when provided by the caller', async () => {
+    mockUploadObject.mockResolvedValueOnce({
+      key: 'extension-srt/podcast-123-Yy3JH6dDugc.srt',
+      provider: 'r2',
+      url: 'https://podsum.cc/api/files/extension-srt/podcast-123-Yy3JH6dDugc.srt',
+    });
+
+    const result = await createPodcastFromSrt({
+      ...baseInput,
+      objectKey: 'extension-srt/podcast-123-Yy3JH6dDugc.srt',
+    });
+
+    expect(mockUploadObject).toHaveBeenCalledWith(
+      'extension-srt/podcast-123-Yy3JH6dDugc.srt',
+      baseInput.srtContent,
+      { contentType: 'application/x-subrip' },
+    );
+    expect(result.objectKey).toBe('extension-srt/podcast-123-Yy3JH6dDugc.srt');
+    expect(result.blobUrl).toBe('https://podsum.cc/api/files/extension-srt/podcast-123-Yy3JH6dDugc.srt');
+  });
+
   it('deletes the uploaded object when saving the podcast row fails', async () => {
     mockSavePodcastWithCreditDeduction.mockResolvedValueOnce({
       success: false,

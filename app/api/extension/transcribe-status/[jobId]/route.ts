@@ -22,10 +22,13 @@ import {
   queryVolcanoTask,
   srtFromVolcanoResult,
 } from '../../../../../lib/volcanoTranscription';
-import { savePodcast } from '../../../../../lib/db';
-import { enqueueProcessingJob } from '../../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../../lib/workerTrigger';
-import { deleteObject, uploadObject } from '../../../../../lib/objectStorage';
+import { deleteObject } from '../../../../../lib/objectStorage';
+import {
+  createPodcastFromSrt,
+  PodcastUploadError,
+  type CreatePodcastFromSrtResult,
+} from '../../../../../lib/podcastUploadPipeline';
 
 export const runtime = 'nodejs';
 
@@ -57,6 +60,20 @@ function getAppBaseUrl(request: NextRequest): string {
   }
 
   return 'https://podsum.cc';
+}
+
+function scheduleAudioCleanup(audioBlobUrl: string | null | undefined) {
+  if (!audioBlobUrl) {
+    return;
+  }
+
+  after(async () => {
+    try {
+      await deleteObject(audioBlobUrl);
+    } catch (deleteError) {
+      console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
+    }
+  });
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ jobId: string }> }) {
@@ -265,15 +282,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
           },
         });
       }
-      if (job.audioBlobUrl) {
-        after(async () => {
-          try {
-            await deleteObject(job.audioBlobUrl as string);
-          } catch (deleteError) {
-            console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
-          }
-        });
-      }
+      scheduleAudioCleanup(job.audioBlobUrl);
       return NextResponse.json({
         success: true,
         data: {
@@ -307,15 +316,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
           message: 'Volcano returned no payload.',
         });
       }
-      if (job.audioBlobUrl) {
-        after(async () => {
-          try {
-            await deleteObject(job.audioBlobUrl as string);
-          } catch (deleteError) {
-            console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
-          }
-        });
-      }
+      scheduleAudioCleanup(job.audioBlobUrl);
       return NextResponse.json({
         success: true,
         data: {
@@ -352,32 +353,35 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     const srtBuffer = Buffer.from(srtContent, 'utf8');
     const podcastId = nanoid();
     const originalFileName = sanitizeSrtFileName(job.originalFileName || `${job.videoId || job.id}.srt`);
-    const fileSize = `${(srtBuffer.length / 1024).toFixed(2)} KB`;
     const titleBase = (originalFileName || '').replace(/\.srt$/i, '') || job.videoId || podcastId;
     const podcastTitle = `Transcript Analysis: ${titleBase}`;
-
-    const srtBlob = await uploadObject(`extension-srt/${podcastId}-${originalFileName}`, srtBuffer, {
-      contentType: 'application/x-subrip',
-    });
-    const srtBlobUrl = srtBlob.url;
-
-    const saveResult = await savePodcast({
-      id: podcastId,
-      title: job.title?.trim() || podcastTitle,
-      originalFileName,
-      fileSize,
-      blobUrl: srtBlobUrl,
-      sourceReference: job.sourceReference,
-      isPublic: job.isPublic,
-      userId: user.id,
-    });
-
-    if (!saveResult.success) {
-      await deleteObject(srtBlobUrl).catch((deleteError) => {
-        console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete orphaned SRT object:', deleteError);
+    let result: CreatePodcastFromSrtResult;
+    try {
+      result = await createPodcastFromSrt({
+        id: podcastId,
+        title: job.title?.trim() || podcastTitle,
+        originalFileName,
+        srtContent: srtBuffer,
+        objectKey: `extension-srt/${podcastId}-${originalFileName}`,
+        sourceReference: job.sourceReference || null,
+        isPublic: Boolean(job.isPublic),
+        userId: job.userId,
+        contentType: 'application/x-subrip',
       });
-      throw new Error(saveResult.error || 'Failed to save podcast from Path2 transcription.');
+    } catch (error) {
+      if (error instanceof PodcastUploadError) {
+        await updateExtensionTranscriptionJobFailed(
+          job.id,
+          user.id,
+          error.message || 'Failed to save podcast from Path2 transcription.',
+        );
+        scheduleAudioCleanup(job.audioBlobUrl);
+      }
+      throw error;
     }
+
+    const blobUrl = result.blobUrl;
+    const remainingCredits = result.remainingCredits;
 
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
@@ -392,25 +396,30 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
         message: 'Podcast row saved from Path2 transcription.',
         meta: {
           podcastId,
-          srtBlobUrl,
+          blobUrl,
+          remainingCredits,
         },
       });
     }
 
-    const queueResult = await enqueueProcessingJob(podcastId);
-    if (queueResult.success) {
+    if (result.processingQueued) {
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('upload', podcastId);
         if (!triggerResult.success) {
           console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to trigger worker:', triggerResult.error);
         }
       });
+    } else {
+      console.error(
+        '[EXTENSION_TRANSCRIBE_STATUS] Processing queue failed after Path2 transcription completion:',
+        result.queueError,
+      );
     }
 
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
-        status: queueResult.success ? 'queued' : 'accepted',
-        stage: queueResult.success ? 'processing_queued' : 'response_sent',
+        status: result.processingQueued ? 'queued' : 'accepted',
+        stage: result.processingQueued ? 'processing_queued' : 'response_sent',
         podcastId,
         transcriptionJobId: job.id,
         providerTaskId: job.providerTaskId,
@@ -418,31 +427,24 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
       });
       await recordExtensionMonitorEvent({
         taskId: monitorTaskId,
-        level: queueResult.success ? 'info' : 'warn',
-        stage: queueResult.success ? 'processing_queued' : 'response_sent',
+        level: result.processingQueued ? 'info' : 'warn',
+        stage: result.processingQueued ? 'processing_queued' : 'response_sent',
         endpoint,
-        message: queueResult.success
+        message: result.processingQueued
           ? 'Path2 transcription completed and processing queued.'
           : 'Path2 transcription completed, but processing queue failed.',
         meta: {
-          queueSuccess: queueResult.success,
-          queueError: queueResult.error || null,
+          queueSuccess: result.processingQueued,
+          queueError: result.queueError,
           podcastId,
+          remainingCredits,
         },
       });
     }
 
     await updateExtensionTranscriptionJobCompleted(job.id, user.id, podcastId);
 
-    if (job.audioBlobUrl) {
-      after(async () => {
-        try {
-          await deleteObject(job.audioBlobUrl as string);
-        } catch (deleteError) {
-          console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
-        }
-      });
-    }
+    scheduleAudioCleanup(job.audioBlobUrl);
 
     return NextResponse.json({
       success: true,
