@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { useParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import DashboardPage from '../../app/dashboard/[id]/page';
 import { enforceLineBreaks } from '../../lib/fullTextFormatting';
 
@@ -12,19 +13,27 @@ jest.mock('remark-gfm', () => {
   return () => null;
 });
 
+jest.mock('next-auth/react', () => ({
+  useSession: jest.fn(),
+}));
+
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
 
 function buildAnalysisResponse(payload: unknown) {
   return {
+    ok: true,
     status: 200,
+    headers: new Headers({ 'content-type': 'application/json' }),
     json: jest.fn().mockResolvedValue(payload),
+    text: jest.fn().mockResolvedValue(JSON.stringify(payload)),
   };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   (useParams as jest.Mock).mockReturnValue({ id: 'podcast-123' });
+  (useSession as jest.Mock).mockReturnValue({ data: null, status: 'unauthenticated' });
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
     writable: true,
     value: jest.fn(),
@@ -123,7 +132,10 @@ describe('Dashboard title source', () => {
     render(<DashboardPage />);
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/analysis/podcast-123',
+        expect.objectContaining({ method: 'GET' }),
+      );
     });
     expect((await screen.findAllByText('Queued YouTube Title')).length).toBeGreaterThan(0);
 

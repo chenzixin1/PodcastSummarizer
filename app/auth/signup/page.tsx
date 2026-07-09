@@ -5,26 +5,7 @@ import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import AppFrame from '@/components/AppFrame';
-
-function normalizeCallbackUrl(value: string | null, fallback: string) {
-  if (!value) {
-    return fallback;
-  }
-  if (value.startsWith('/') && !value.startsWith('//')) {
-    return value;
-  }
-  if (typeof window !== 'undefined') {
-    try {
-      const parsed = new URL(value);
-      if (parsed.origin === window.location.origin) {
-        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-      }
-    } catch {
-      return fallback;
-    }
-  }
-  return fallback;
-}
+import { normalizeAuthCallbackUrl } from '@/lib/authCallbackUrl';
 
 function GoogleIcon() {
   return (
@@ -46,7 +27,7 @@ function SignUpForm() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = normalizeCallbackUrl(searchParams.get('callbackUrl'), '/upload');
+  const callbackUrl = normalizeAuthCallbackUrl(searchParams.get('callbackUrl'), '/upload');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

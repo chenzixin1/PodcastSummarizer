@@ -2,6 +2,7 @@
 
 import { Children, isValidElement, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
@@ -79,6 +80,47 @@ interface ProcessingJobData {
   lastError?: string | null;
 }
 
+interface DashboardPodcastPayload {
+  title?: string | null;
+  originalFileName?: string | null;
+  fileSize?: string | null;
+  blobUrl?: string | null;
+  sourceReference?: string | null;
+  isPublic?: boolean;
+  userId?: string | null;
+}
+
+interface DashboardAnalysisPayload {
+  summary?: string | null;
+  summaryZh?: string | null;
+  summaryEn?: string | null;
+  translation?: string | null;
+  highlights?: string | null;
+  fullTextBilingualJson?: unknown;
+  summaryBilingualJson?: unknown;
+  bilingualAlignmentVersion?: number | null;
+  mindMapJson?: unknown;
+  mindMapJsonZh?: unknown;
+  mindMapJsonEn?: unknown;
+  processedAt?: string;
+  tokenCount?: number | null;
+  wordCount?: number | null;
+  characterCount?: number | null;
+}
+
+interface DashboardApiPayload {
+  success?: boolean;
+  error?: string;
+  data?: {
+    podcast?: DashboardPodcastPayload | null;
+    analysis?: DashboardAnalysisPayload | null;
+    isProcessed?: boolean;
+    canEdit?: boolean;
+    processingJob?: ProcessingJobData | null;
+    session?: unknown;
+  };
+}
+
 type ViewMode = 'summary' | 'fullText' | 'mindMap';
 type ProcessingTask = 'summary' | 'translation' | 'highlights';
 type ThemeMode = 'light' | 'dark';
@@ -99,6 +141,29 @@ const TASK_LABELS: Record<ProcessingTask, string> = {
   translation: 'Translation',
   highlights: 'Highlights',
 };
+
+async function readJsonResponse(response: Response, label: string): Promise<unknown> {
+  const text = await response.text();
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    if (response.ok) {
+      return null;
+    }
+    throw new Error(`${label} returned HTTP ${response.status} with an empty response.`);
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const contentType = response.headers.get('content-type') || '';
+    const preview = trimmed.replace(/\s+/g, ' ').slice(0, 90);
+    if (contentType.includes('text/html') || trimmed.toLowerCase().startsWith('<!doctype')) {
+      throw new Error(`${label} returned an HTML page instead of JSON (HTTP ${response.status}).`);
+    }
+    throw new Error(`${label} returned invalid JSON (HTTP ${response.status}): ${preview}`);
+  }
+}
 
 const normalizeMarkdownOutput = (text: string) => {
   return text
@@ -570,6 +635,67 @@ const isValidHttpUrl = (value: string) => {
   }
 };
 
+const getYouTubeVideoId = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    if (host === 'youtu.be') {
+      const id = parsed.pathname.split('/').filter(Boolean)[0];
+      return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    }
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtube-nocookie.com') {
+      const watchId = parsed.searchParams.get('v');
+      if (watchId && /^[A-Za-z0-9_-]{11}$/.test(watchId)) {
+        return watchId;
+      }
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      const markerIndex = parts.findIndex((part) => ['embed', 'shorts', 'live', 'v'].includes(part));
+      const id = markerIndex >= 0 ? parts[markerIndex + 1] : null;
+      return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    }
+  } catch {
+    const fallback = trimmed.match(/(?:v=|be\/|shorts\/|embed\/|live\/)([A-Za-z0-9_-]{11})/i);
+    return fallback?.[1] || null;
+  }
+
+  return null;
+};
+
+const getSourceHost = (value: string): string => {
+  if (!value) {
+    return 'No source';
+  }
+  try {
+    return new URL(value).hostname.replace(/^www\./, '');
+  } catch {
+    return 'Source note';
+  }
+};
+
+const resolveTranscriptFetchUrl = (blobUrl: string): string => {
+  if (typeof window === 'undefined') {
+    return blobUrl;
+  }
+
+  try {
+    const parsed = new URL(blobUrl, window.location.href);
+    if (parsed.pathname.startsWith('/api/files/')) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return parsed.href;
+  } catch {
+    return blobUrl;
+  }
+};
+
 const formatMetricValue = (value: number | null | undefined) => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return '-';
@@ -620,6 +746,8 @@ declare global {
 export default function DashboardPage() {
   const params = useParams();
   const id = params?.id as string;
+  const { status: sessionStatus } = useSession();
+  const dashboardAccessMode = sessionStatus === 'authenticated' ? 'authenticated' : 'public';
   
   // Initialize all hooks first, before any conditional returns
   const [activeView, setActiveView] = useState<ViewMode>('summary');
@@ -862,7 +990,11 @@ export default function DashboardPage() {
         body: JSON.stringify({ id, force }),
       });
 
-      const result = await response.json();
+      const result = await readJsonResponse(response, 'Process enqueue API') as {
+        success?: boolean;
+        data?: { job?: unknown };
+        error?: string;
+      };
       if (!response.ok || !result.success) {
         throw new Error(result.error || `Failed to enqueue job (${response.status})`);
       }
@@ -1231,23 +1363,74 @@ export default function DashboardPage() {
         hasResolvedInitialFetchRef.current = true;
         setIsLoading(false);
       };
+      const handleLoadFailure = (message: string) => {
+        if (hasResolvedInitialFetchRef.current) {
+          dashboardDebugLog('[DEBUG] Dashboard refresh failed after initial load:', message);
+          setProcessingStatus((current) => current || '等待后台处理...');
+          finishLoadCycle();
+          return;
+        }
+        setError(message);
+        finishLoadCycle();
+      };
       
       if (isInitialLoadForCurrentId) {
         setIsLoading(true);
       }
       setError(null);
       
-      // Only load from database API
-      dashboardDebugLog('[DEBUG] 从数据库获取分析结果...');
-      debugFetch(`/api/analysis/${id}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      })
-      .then(response => response.json())
-      .then(result => {
-        dashboardDebugLog('[DEBUG] 数据库API响应:', result);
+      const loadDatabaseResult = () => {
+        dashboardDebugLog('[DEBUG] 从数据库获取分析结果...');
+        return debugFetch(`/api/analysis/${id}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
+          .then(response => readJsonResponse(response, 'Analysis API'))
+          .then(result => ({
+            result: result as DashboardApiPayload,
+            source: 'database' as const,
+          }));
+      };
+
+      const loadSnapshotResult = () => {
+        dashboardDebugLog('[DEBUG] 从静态快照获取分析结果...');
+        return debugFetch(`/api/snapshots/analysis/${encodeURIComponent(id)}`, {
+          method: 'GET',
+          cache: 'force-cache',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
+          .then(async response => {
+            if (!response.ok) {
+              throw new Error(`Static snapshot unavailable (${response.status})`);
+            }
+            const result = await readJsonResponse(response, 'Static analysis snapshot API') as DashboardApiPayload;
+            if (
+              !result?.success ||
+              !result?.data?.isProcessed ||
+              !result?.data?.analysis ||
+              !result?.data?.podcast?.isPublic
+            ) {
+              throw new Error('Static snapshot is not usable for this dashboard load.');
+            }
+            return { result, source: 'snapshot' as const };
+          });
+      };
+
+      const shouldTrySnapshot = pollTick === 0 && dashboardAccessMode === 'public';
+      const resultRequest = shouldTrySnapshot
+        ? loadSnapshotResult().catch((snapshotError) => {
+            dashboardDebugLog('[DEBUG] 静态快照不可用，回退数据库:', snapshotError);
+            return loadDatabaseResult();
+          })
+        : loadDatabaseResult();
+
+      resultRequest
+      .then(({ result, source }) => {
+        dashboardDebugLog(`[DEBUG] ${source === 'snapshot' ? '静态快照' : '数据库'}API响应:`, result);
         // 调试：打印 canEdit 相关信息
         if (typeof window !== 'undefined') {
           window.__PODSUM_DEBUG__ = result;
@@ -1260,8 +1443,9 @@ export default function DashboardPage() {
         
         if (result.success && result.data) {
           const { podcast, analysis, isProcessed, canEdit, processingJob } = result.data;
+          const canEditValue = Boolean(canEdit);
           
-          if (isProcessed && analysis) {
+          if (isProcessed && analysis && podcast) {
             // 数据库中有完整的分析结果
             dashboardDebugLog('[DEBUG] 从数据库加载完整分析结果');
             const legacySummary = extractLegacyBilingualSummary(analysis.summary || '');
@@ -1269,8 +1453,8 @@ export default function DashboardPage() {
             const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis.summaryBilingualJson);
             const loadedData: ProcessedData = {
               title: resolveDashboardTitle(podcast),
-              originalFileName: podcast.originalFileName,
-              originalFileSize: podcast.fileSize,
+              originalFileName: podcast.originalFileName || 'Transcript',
+              originalFileSize: podcast.fileSize || '-',
               blobUrl: podcast.blobUrl ?? null,
               summaryZh: normalizeMarkdownOutput(
                 analysis.summaryZh || legacySummary.zh || analysis.summary || 'Summary not available.'
@@ -1307,10 +1491,13 @@ export default function DashboardPage() {
             isProcessingRef.current = false;
             requestSentRef.current = false;
             finishLoadCycle();
-            setCanEdit(canEdit); // 新增
+            setCanEdit(canEditValue); // 新增
             
             const loadTime = performance.now() - startTime;
-            logPerformance('dashboard-load-database-data', loadTime, { 
+              logPerformance(
+                source === 'snapshot' ? 'dashboard-load-static-snapshot' : 'dashboard-load-database-data',
+                loadTime,
+                {
               id, 
               dataSize: {
                 summaryZh: (analysis.summaryZh || analysis.summary)?.length || 0,
@@ -1328,8 +1515,8 @@ export default function DashboardPage() {
               const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis?.summaryBilingualJson);
               return ({
               title: resolveDashboardTitle(podcast),
-              originalFileName: podcast.originalFileName,
-              originalFileSize: podcast.fileSize,
+              originalFileName: podcast.originalFileName || 'Transcript',
+              originalFileSize: podcast.fileSize || '-',
               blobUrl: podcast.blobUrl ?? prev?.blobUrl ?? null,
               summaryZh: analysis?.summaryZh || analysis?.summary
                 ? normalizeMarkdownOutput(analysis?.summaryZh || legacySummary.zh || analysis?.summary || '')
@@ -1377,11 +1564,11 @@ export default function DashboardPage() {
               resetProcessingProgress();
             }
             finishLoadCycle();
-            setCanEdit(canEdit);
+            setCanEdit(canEditValue);
             
             if (processingJob) {
-              applyProcessingJobState(processingJob as ProcessingJobData);
-            } else if (canEdit) {
+              applyProcessingJobState(processingJob);
+            } else if (canEditValue) {
               enqueueBackgroundProcessing(false);
             } else {
               setIsProcessing(false);
@@ -1391,23 +1578,21 @@ export default function DashboardPage() {
           } else {
             // 数据库中完全没有该ID的信息
             dashboardDebugLog('[DEBUG] 数据库中没有找到该ID的信息');
-            setError('File not found in database. The file may have been deleted or never uploaded.');
-            finishLoadCycle();
+            handleLoadFailure('File not found in database. The file may have been deleted or never uploaded.');
           }
         } else {
           // API调用失败
           dashboardDebugLog('[DEBUG] 数据库API调用失败');
-          setError(result.error || 'Failed to load file information from database.');
-          finishLoadCycle();
+          handleLoadFailure(result.error || 'Failed to load file information from database.');
         }
       })
       .catch(error => {
         console.error('[DEBUG] 数据库API调用出错:', error);
-        setError('Failed to connect to database: ' + error.message);
-        finishLoadCycle();
+        const message = error instanceof Error ? error.message : String(error);
+        handleLoadFailure('Failed to load dashboard data: ' + message);
       });
     }
-  }, [id, pollTick]); // 轮询时刷新状态
+  }, [dashboardAccessMode, id, pollTick]); // 轮询时刷新状态
 
   // 后台处理中时轮询数据库状态（页面只做展示）
   useEffect(() => {
@@ -1459,7 +1644,10 @@ export default function DashboardPage() {
         }),
       });
 
-      const result = await response.json();
+      const result = await readJsonResponse(response, 'Podcast metadata API') as {
+        success?: boolean;
+        error?: string;
+      };
       if (!response.ok || !result.success) {
         throw new Error(result.error || `Save failed (${response.status})`);
       }
@@ -1476,6 +1664,9 @@ export default function DashboardPage() {
 
   const currentSourceReference = (data?.sourceReference || '').trim();
   const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
+  const youtubeVideoId = getYouTubeVideoId(currentSourceReference);
+  const youtubeEmbedUrl = youtubeVideoId ? `https://www.youtube-nocookie.com/embed/${youtubeVideoId}` : null;
+  const sourceHost = getSourceHost(currentSourceReference);
 
   const toggleVisibility = async () => {
     if (!id || !canEdit || !data || isSavingVisibility) {
@@ -1497,7 +1688,10 @@ export default function DashboardPage() {
         }),
       });
 
-      const result = await response.json();
+      const result = await readJsonResponse(response, 'Podcast visibility API') as {
+        success?: boolean;
+        error?: string;
+      };
       if (!response.ok || !result.success) {
         throw new Error(result.error || `Visibility update failed (${response.status})`);
       }
@@ -1516,6 +1710,7 @@ export default function DashboardPage() {
       return;
     }
 
+    const transcriptFetchUrl = resolveTranscriptFetchUrl(blobUrl);
     let cancelled = false;
     const applyOriginalMarkdown = (rawSrt: string) => {
       const formatted = formatOriginalSrtAsMarkdown({
@@ -1541,7 +1736,7 @@ export default function DashboardPage() {
       });
     };
 
-    const cachedTranscript = transcriptCacheRef.current.get(blobUrl);
+    const cachedTranscript = transcriptCacheRef.current.get(transcriptFetchUrl);
     if (typeof cachedTranscript === 'string') {
       applyOriginalMarkdown(cachedTranscript);
       return () => {
@@ -1551,12 +1746,12 @@ export default function DashboardPage() {
 
     const fetchTranscript = async () => {
       try {
-        const response = await fetch(blobUrl);
+        const response = await fetch(transcriptFetchUrl);
         if (!response.ok) {
           throw new Error(`Failed to fetch transcript (${response.status})`);
         }
         const rawSrt = (await response.text()).replace(/^\uFEFF/, '');
-        transcriptCacheRef.current.set(blobUrl, rawSrt);
+        transcriptCacheRef.current.set(transcriptFetchUrl, rawSrt);
         applyOriginalMarkdown(rawSrt);
       } catch (transcriptError) {
         console.error('[DEBUG] Failed to prepare original full text:', transcriptError);
@@ -1843,33 +2038,77 @@ export default function DashboardPage() {
 
         {data && (
           <main className="container mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8 flex-grow flex flex-col gap-4 md:gap-6">
-            <section className="dashboard-panel rounded-2xl p-3 sm:p-4">
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-                <div className="min-w-0 space-y-2">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs">
-                    <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
-                      <span className="text-[var(--text-muted)]">Original</span>
-                      <span className="truncate max-w-[200px] sm:max-w-[300px]" title={data.originalFileName}>{data.originalFileName}</span>
-                    </span>
-                    {data.processedAt && (
-                      <span className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
-                        <span className="text-[var(--text-muted)]">Time</span>
-                        <span>{new Date(data.processedAt).toLocaleString()}</span>
-                      </span>
+            <section className="dashboard-panel overflow-hidden rounded-2xl">
+              <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
+                <div className="border-b border-[var(--border-soft)] bg-[var(--paper-subtle)] lg:border-b-0 lg:border-r">
+                  {youtubeEmbedUrl ? (
+                    <iframe
+                      src={youtubeEmbedUrl}
+                      title={`Original video for ${data.title}`}
+                      className="aspect-video h-full min-h-[220px] w-full bg-[#141814] sm:min-h-[320px] lg:min-h-[520px]"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      allowFullScreen
+                    />
+                  ) : (
+                    <div className="flex aspect-video min-h-[220px] w-full flex-col justify-between p-5 sm:min-h-[320px] lg:min-h-[520px]">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Source</p>
+                        <p className="mt-2 break-words text-sm leading-6 text-[var(--text-secondary)]">
+                          {currentSourceReference || 'No source link saved yet.'}
+                        </p>
+                      </div>
+                      <p className="text-xs text-[var(--text-muted)]">{sourceHost}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-3 p-4 sm:p-5">
+                  <div className="flex flex-col gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
+                        <span className="font-semibold uppercase tracking-[0.14em]">Source</span>
+                        <span className="h-1 w-1 rounded-full bg-[var(--border-medium)]" />
+                        <span>{youtubeVideoId ? 'YouTube video' : sourceHost}</span>
+                      </div>
+                      <h2 className="mt-1 line-clamp-2 text-base font-semibold leading-6 text-[var(--heading)] sm:text-lg">
+                        {data.title}
+                      </h2>
+                    </div>
+
+                    {canEdit && (
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void toggleVisibility()}
+                          disabled={isSavingVisibility}
+                          className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-subtle)] disabled:cursor-not-allowed disabled:opacity-60"
+                          aria-pressed={Boolean(data.isPublic)}
+                        >
+                          <span className={`relative h-5 w-9 rounded-full transition-colors ${data.isPublic ? 'bg-[var(--btn-primary)]' : 'bg-[var(--border-medium)]'}`}>
+                            <span className={`absolute left-1 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${data.isPublic ? 'translate-x-4' : ''}`} />
+                          </span>
+                          <span>{data.isPublic ? 'Public' : 'Private'}</span>
+                        </button>
+                        <button
+                          onClick={retryProcessing}
+                          className="inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--border-soft)] bg-transparent px-3 py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--text-main)] disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={isProcessing}
+                        >
+                          {isProcessing ? (
+                            <>
+                              <span className="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)]" />
+                              处理中
+                            </>
+                          ) : '重新处理'}
+                        </button>
+                      </div>
                     )}
-                    <span className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
-                      <span className="text-[var(--text-muted)]">Tokens</span>
-                      <span>{formatMetricValue(data.tokenCount)}</span>
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--paper-base)] px-2 py-0.5 text-[var(--text-secondary)]">
-                      <span className="text-[var(--text-muted)]">Words</span>
-                      <span>{formatMetricValue(data.wordCount)}</span>
-                    </span>
                   </div>
 
-                  <div>
+                  <div className="space-y-2">
                     {canEdit ? (
-                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                      <div className="flex flex-col gap-2">
                         <input
                           type="text"
                           value={sourceInput}
@@ -1885,30 +2124,24 @@ export default function DashboardPage() {
                             }
                           }}
                           placeholder="Source URL 或备注"
-                          className="w-full rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-[var(--text-main)] text-sm focus:outline-none focus:border-[var(--border-medium)]"
+                          className="min-h-10 w-full rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] focus:border-[var(--border-medium)] focus:outline-none"
                         />
-                        <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        <div className="flex shrink-0 flex-wrap items-center gap-2">
                           <button
                             onClick={saveSourceReference}
                             disabled={isSavingSource}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--paper-subtle)] hover:bg-[var(--paper-muted)] border border-[var(--border-soft)] text-[var(--text-secondary)] disabled:opacity-60 disabled:cursor-not-allowed"
+                            className="min-h-9 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-subtle)] px-3 py-2 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--paper-muted)] disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {isSavingSource ? 'Saving...' : 'Save Source'}
                           </button>
-                          {sourceSaveStatus === 'saved' && (
-                            <span className="text-xs text-emerald-700">Saved</span>
-                          )}
-                          {sourceSaveStatus === 'failed' && (
-                            <span className="text-xs text-[var(--danger)]">{sourceSaveError || 'Save failed'}</span>
-                          )}
                           {currentSourceReference && sourceReferenceIsUrl && (
                             <a
                               href={currentSourceReference}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-[var(--btn-primary)] underline"
+                              className="min-h-9 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-xs font-medium text-[var(--btn-primary)] transition-colors hover:bg-[var(--paper-subtle)]"
                             >
-                              打开来源链接
+                              打开来源
                             </a>
                           )}
                         </div>
@@ -1921,52 +2154,52 @@ export default function DashboardPage() {
                               href={currentSourceReference}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-[var(--btn-primary)] underline break-all"
+                              className="break-all text-[var(--btn-primary)] underline"
                             >
                               {currentSourceReference}
                             </a>
                           ) : (
-                            <p className="text-[var(--text-main)] break-words leading-6">{currentSourceReference}</p>
+                            <p className="break-words leading-6 text-[var(--text-main)]">{currentSourceReference}</p>
                           )
                         ) : (
                           <p className="text-[var(--text-muted)]">-</p>
                         )}
                       </div>
                     )}
+                    <div className="min-h-4 text-xs">
+                      {sourceSaveStatus === 'saved' && <span className="text-emerald-700">Saved</span>}
+                      {sourceSaveStatus === 'failed' && <span className="text-[var(--danger)]">{sourceSaveError || 'Save failed'}</span>}
+                      {visibilitySaveError && <span className="text-[var(--danger)]">{visibilitySaveError}</span>}
+                    </div>
                   </div>
-                </div>
 
-                {canEdit && (
-                  <div className="w-full lg:w-auto lg:min-w-[132px] flex flex-col items-stretch gap-2">
-                    <button
-                      onClick={retryProcessing}
-                      className="w-full py-1.5 px-3 bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] rounded-lg text-[var(--btn-primary-text)] text-xs font-semibold transition-colors flex items-center justify-center shadow-[0_12px_28px_-20px_rgba(63,122,104,0.85)]"
-                      disabled={isProcessing}
-                    >
-                      {isProcessing ? (
-                        <>
-                          <div className="animate-spin mr-1.5 h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full"></div>
-                          处理中...
-                        </>
-                      ) : '重新处理文件'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void toggleVisibility()}
-                      disabled={isSavingVisibility}
-                      className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-[var(--paper-subtle)] disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
-                      aria-pressed={Boolean(data.isPublic)}
-                    >
-                      <span className={`relative h-5 w-9 rounded-full transition-colors ${data.isPublic ? 'bg-[var(--btn-primary)]' : 'bg-[var(--border-medium)]'}`}>
-                        <span className={`absolute left-1 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${data.isPublic ? 'translate-x-4' : ''}`}></span>
+                  <details className="group rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                    <summary className="cursor-pointer list-none text-[var(--text-muted)] marker:hidden">
+                      <span className="inline-flex items-center gap-2">
+                        <span>文件信息</span>
+                        <span className="text-[10px] transition-transform group-open:rotate-90">›</span>
                       </span>
-                      <span>{data.isPublic ? 'Public' : 'Private'}</span>
-                    </button>
-                    {visibilitySaveError && (
-                      <p className="text-[11px] text-[var(--danger)] leading-4">{visibilitySaveError}</p>
-                    )}
-                  </div>
-                )}
+                    </summary>
+                    <dl className="mt-2 grid gap-x-3 gap-y-1.5 border-t border-[var(--border-soft)] pt-2">
+                      <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
+                        <dt className="text-[var(--text-muted)]">Original</dt>
+                        <dd className="truncate text-[var(--text-main)]" title={data.originalFileName}>{data.originalFileName}</dd>
+                      </div>
+                      <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                        <dt className="text-[var(--text-muted)]">Processed</dt>
+                        <dd className="text-[var(--text-main)]">{data.processedAt ? new Date(data.processedAt).toLocaleString() : '-'}</dd>
+                      </div>
+                      <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                        <dt className="text-[var(--text-muted)]">Tokens</dt>
+                        <dd className="text-[var(--text-main)]">{formatMetricValue(data.tokenCount)}</dd>
+                      </div>
+                      <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                        <dt className="text-[var(--text-muted)]">Words</dt>
+                        <dd className="text-[var(--text-main)]">{formatMetricValue(data.wordCount)}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                </div>
               </div>
 
               {debugMode && (

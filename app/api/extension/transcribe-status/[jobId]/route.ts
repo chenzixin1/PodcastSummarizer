@@ -7,6 +7,7 @@ import {
 } from '../../../../../lib/extensionAuth';
 import {
   getExtensionTranscriptionJobForUser,
+  reserveExtensionTranscriptionJobPodcastId,
   touchExtensionTranscriptionJob,
   updateExtensionTranscriptionJobCompleted,
   updateExtensionTranscriptionJobFailed,
@@ -22,10 +23,15 @@ import {
   queryVolcanoTask,
   srtFromVolcanoResult,
 } from '../../../../../lib/volcanoTranscription';
-import { savePodcast } from '../../../../../lib/db';
-import { enqueueProcessingJob } from '../../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../../lib/workerTrigger';
-import { deleteObject, uploadObject } from '../../../../../lib/objectStorage';
+import { deleteObject, getObjectText, uploadObject } from '../../../../../lib/objectStorage';
+import {
+  createPodcastFromSrt,
+  PodcastUploadError,
+  type CreatePodcastFromSrtResult,
+} from '../../../../../lib/podcastUploadPipeline';
+import { getPodcast, updatePodcastStoredFile } from '../../../../../lib/db';
+import { enqueueProcessingJob, getProcessingJob } from '../../../../../lib/processingJobs';
 
 export const runtime = 'nodejs';
 
@@ -57,6 +63,118 @@ function getAppBaseUrl(request: NextRequest): string {
   }
 
   return 'https://podsum.cc';
+}
+
+function scheduleAudioCleanup(audioBlobUrl: string | null | undefined) {
+  if (!audioBlobUrl) {
+    return;
+  }
+
+  after(async () => {
+    try {
+      await deleteObject(audioBlobUrl);
+    } catch (deleteError) {
+      console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
+    }
+  });
+}
+
+type ExistingPodcastRow = {
+  blobUrl?: string | null;
+  fileSize?: string | null;
+  originalFileName?: string | null;
+};
+
+function srtFileSizeLabel(value: Buffer): string {
+  return `${(value.byteLength / 1024).toFixed(2)} KB`;
+}
+
+async function ensureProcessingQueued(podcastId: string, allowEnqueue: boolean) {
+  const existingJobResult = await getProcessingJob(podcastId);
+  if (existingJobResult.success && existingJobResult.data) {
+    return {
+      processingQueued: true,
+      processingJob: existingJobResult.data,
+      queueError: null,
+    };
+  }
+
+  if (existingJobResult.error === 'Processing job not found' && allowEnqueue) {
+    const enqueueResult = await enqueueProcessingJob(podcastId);
+    return {
+      processingQueued: enqueueResult.success,
+      processingJob: enqueueResult.success ? enqueueResult.data || null : null,
+      queueError: enqueueResult.success ? null : enqueueResult.error || 'Failed to queue processing.',
+    };
+  }
+
+  return {
+    processingQueued: false,
+    processingJob: null,
+    queueError: existingJobResult.error || 'Failed to inspect processing job.',
+  };
+}
+
+async function completedQueueState(
+  podcastId: string,
+  monitorTask: { status?: string | null; stage?: string | null } | null | undefined,
+) {
+  const responseSent = monitorTask?.status === 'accepted' && monitorTask?.stage === 'response_sent';
+  const queueState = await ensureProcessingQueued(podcastId, !responseSent);
+
+  return {
+    processingQueued: queueState.processingQueued,
+    processingJob: queueState.processingJob,
+    queueError:
+      responseSent && !queueState.processingQueued && queueState.queueError === 'Processing job not found'
+        ? 'Processing was not queued automatically.'
+        : queueState.queueError,
+    remainingCredits: null as number | null,
+  };
+}
+
+async function ensureExistingPodcastFile(
+  podcastId: string,
+  existingPodcast: ExistingPodcastRow,
+  originalFileName: string,
+  srtBuffer: Buffer,
+  objectKey: string,
+) {
+  const fileSize = existingPodcast.fileSize || srtFileSizeLabel(srtBuffer);
+  const storedBlobUrl = existingPodcast.blobUrl || '';
+
+  if (storedBlobUrl) {
+    try {
+      await getObjectText(storedBlobUrl);
+      return {
+        blobUrl: storedBlobUrl,
+        objectKey: '',
+        originalFileName: existingPodcast.originalFileName || originalFileName,
+        fileSize,
+      };
+    } catch (error) {
+      console.error('[EXTENSION_TRANSCRIBE_STATUS] Existing Path2 podcast file is unreadable; re-uploading SRT:', error);
+    }
+  }
+
+  const repairedObject = await uploadObject(objectKey, srtBuffer, {
+    contentType: 'application/x-subrip',
+  });
+  const updateResult = await updatePodcastStoredFile(podcastId, {
+    originalFileName: existingPodcast.originalFileName || originalFileName,
+    fileSize,
+    blobUrl: repairedObject.url,
+  });
+  if (!updateResult.success) {
+    throw new Error(updateResult.error || 'Failed to repair existing Path2 podcast file metadata.');
+  }
+
+  return {
+    blobUrl: repairedObject.url,
+    objectKey: repairedObject.key,
+    originalFileName: existingPodcast.originalFileName || originalFileName,
+    fileSize,
+  };
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ jobId: string }> }) {
@@ -138,14 +256,23 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     }
 
     if (job.status === 'completed' && job.podcastId) {
+      const queueState = await completedQueueState(job.podcastId, monitorTask);
       if (monitorTaskId) {
         await updateExtensionMonitorTask(monitorTaskId, {
-          status: 'queued',
-          stage: 'processing_queued',
+          status: queueState.processingQueued ? 'queued' : 'accepted',
+          stage: queueState.processingQueued ? 'processing_queued' : 'response_sent',
           transcriptionJobId: job.id,
           podcastId: job.podcastId,
           providerTaskId: job.providerTaskId,
           clearError: true,
+        });
+      }
+      if (queueState.processingQueued && queueState.processingJob?.status === 'queued') {
+        after(async () => {
+          const triggerResult = await triggerWorkerProcessing('upload', job.podcastId as string);
+          if (!triggerResult.success) {
+            console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to trigger worker:', triggerResult.error);
+          }
         });
       }
       return NextResponse.json({
@@ -156,6 +283,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
           dashboardUrl: `${dashboardBase}/dashboard/${job.podcastId}`,
           lastError: null,
           monitorTaskId,
+          processingQueued: queueState.processingQueued,
+          queueError: queueState.queueError,
+          remainingCredits: queueState.remainingCredits,
         },
       });
     }
@@ -265,15 +395,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
           },
         });
       }
-      if (job.audioBlobUrl) {
-        after(async () => {
-          try {
-            await deleteObject(job.audioBlobUrl as string);
-          } catch (deleteError) {
-            console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
-          }
-        });
-      }
+      scheduleAudioCleanup(job.audioBlobUrl);
       return NextResponse.json({
         success: true,
         data: {
@@ -307,15 +429,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
           message: 'Volcano returned no payload.',
         });
       }
-      if (job.audioBlobUrl) {
-        after(async () => {
-          try {
-            await deleteObject(job.audioBlobUrl as string);
-          } catch (deleteError) {
-            console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
-          }
-        });
-      }
+      scheduleAudioCleanup(job.audioBlobUrl);
       return NextResponse.json({
         success: true,
         data: {
@@ -350,33 +464,102 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     }
 
     const srtBuffer = Buffer.from(srtContent, 'utf8');
-    const podcastId = nanoid();
+    const requestedPodcastId = job.podcastId || nanoid();
+    const reserveResult = await reserveExtensionTranscriptionJobPodcastId(job.id, user.id, requestedPodcastId);
+    if (!reserveResult.success || !reserveResult.data?.podcastId) {
+      throw new Error(reserveResult.error || 'Failed to reserve podcast id for Path2 transcription.');
+    }
+    const podcastId = reserveResult.data.podcastId;
     const originalFileName = sanitizeSrtFileName(job.originalFileName || `${job.videoId || job.id}.srt`);
-    const fileSize = `${(srtBuffer.length / 1024).toFixed(2)} KB`;
     const titleBase = (originalFileName || '').replace(/\.srt$/i, '') || job.videoId || podcastId;
     const podcastTitle = `Transcript Analysis: ${titleBase}`;
+    const objectKey = `extension-srt/${podcastId}-${originalFileName}`;
+    let result: CreatePodcastFromSrtResult;
+    const existingPodcastResult = await getPodcast(podcastId);
 
-    const srtBlob = await uploadObject(`extension-srt/${podcastId}-${originalFileName}`, srtBuffer, {
-      contentType: 'application/x-subrip',
-    });
-    const srtBlobUrl = srtBlob.url;
+    if (existingPodcastResult.success && existingPodcastResult.data) {
+      const existingPodcast = existingPodcastResult.data as ExistingPodcastRow;
+      const existingFile = await ensureExistingPodcastFile(
+        podcastId,
+        existingPodcast,
+        originalFileName,
+        srtBuffer,
+        objectKey,
+      );
+      const queueState = await ensureProcessingQueued(podcastId, true);
+      result = {
+        id: podcastId,
+        blobUrl: existingFile.blobUrl,
+        objectKey: existingFile.objectKey,
+        originalFileName: existingFile.originalFileName,
+        fileSize: existingFile.fileSize,
+        remainingCredits: null,
+        processingQueued: queueState.processingQueued,
+        processingJob: queueState.processingJob,
+        queueError: queueState.queueError,
+      };
+    } else {
+      if (!existingPodcastResult.success && existingPodcastResult.error !== 'Podcast not found') {
+        throw new Error(existingPodcastResult.error || 'Failed to check existing Path2 podcast.');
+      }
 
-    const saveResult = await savePodcast({
-      id: podcastId,
-      title: job.title?.trim() || podcastTitle,
-      originalFileName,
-      fileSize,
-      blobUrl: srtBlobUrl,
-      sourceReference: job.sourceReference,
-      isPublic: job.isPublic,
-      userId: user.id,
-    });
+      try {
+        result = await createPodcastFromSrt({
+          id: podcastId,
+          title: job.title?.trim() || podcastTitle,
+          originalFileName,
+          srtContent: srtBuffer,
+          objectKey,
+          sourceReference: job.sourceReference || null,
+          isPublic: Boolean(job.isPublic),
+          userId: job.userId,
+          contentType: 'application/x-subrip',
+        });
+      } catch (error) {
+        if (error instanceof PodcastUploadError && error.code === 'PODCAST_ALREADY_EXISTS') {
+          const recoveredPodcastResult = await getPodcast(podcastId);
+          if (!recoveredPodcastResult.success || !recoveredPodcastResult.data) {
+            throw error;
+          }
+          const existingFile = await ensureExistingPodcastFile(
+            podcastId,
+            recoveredPodcastResult.data as ExistingPodcastRow,
+            originalFileName,
+            srtBuffer,
+            objectKey,
+          );
+          const queueState = await ensureProcessingQueued(podcastId, true);
+          result = {
+            id: podcastId,
+            blobUrl: existingFile.blobUrl,
+            objectKey: existingFile.objectKey,
+            originalFileName: existingFile.originalFileName,
+            fileSize: existingFile.fileSize,
+            remainingCredits: null,
+            processingQueued: queueState.processingQueued,
+            processingJob: queueState.processingJob,
+            queueError: queueState.queueError,
+          };
+        } else if (error instanceof PodcastUploadError) {
+          await updateExtensionTranscriptionJobFailed(
+            job.id,
+            user.id,
+            error.message || 'Failed to save podcast from Path2 transcription.',
+          );
+          scheduleAudioCleanup(job.audioBlobUrl);
+          throw error;
+        } else {
+          throw error;
+        }
+      }
+    }
 
-    if (!saveResult.success) {
-      await deleteObject(srtBlobUrl).catch((deleteError) => {
-        console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete orphaned SRT object:', deleteError);
-      });
-      throw new Error(saveResult.error || 'Failed to save podcast from Path2 transcription.');
+    const blobUrl = result.blobUrl;
+    const remainingCredits = result.remainingCredits;
+
+    const completionResult = await updateExtensionTranscriptionJobCompleted(job.id, user.id, podcastId);
+    if (!completionResult.success) {
+      throw new Error(completionResult.error || 'Failed to mark Path2 transcription job completed.');
     }
 
     if (monitorTaskId) {
@@ -392,25 +575,31 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
         message: 'Podcast row saved from Path2 transcription.',
         meta: {
           podcastId,
-          srtBlobUrl,
+          blobUrl,
+          remainingCredits,
         },
       });
     }
 
-    const queueResult = await enqueueProcessingJob(podcastId);
-    if (queueResult.success) {
+    const shouldTriggerWorker = result.processingQueued && result.processingJob?.status === 'queued';
+    if (shouldTriggerWorker) {
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('upload', podcastId);
         if (!triggerResult.success) {
           console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to trigger worker:', triggerResult.error);
         }
       });
+    } else if (!result.processingQueued) {
+      console.error(
+        '[EXTENSION_TRANSCRIBE_STATUS] Processing queue failed after Path2 transcription completion:',
+        result.queueError,
+      );
     }
 
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
-        status: queueResult.success ? 'queued' : 'accepted',
-        stage: queueResult.success ? 'processing_queued' : 'response_sent',
+        status: result.processingQueued ? 'queued' : 'accepted',
+        stage: result.processingQueued ? 'processing_queued' : 'response_sent',
         podcastId,
         transcriptionJobId: job.id,
         providerTaskId: job.providerTaskId,
@@ -418,31 +607,22 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
       });
       await recordExtensionMonitorEvent({
         taskId: monitorTaskId,
-        level: queueResult.success ? 'info' : 'warn',
-        stage: queueResult.success ? 'processing_queued' : 'response_sent',
+        level: result.processingQueued ? 'info' : 'warn',
+        stage: result.processingQueued ? 'processing_queued' : 'response_sent',
         endpoint,
-        message: queueResult.success
+        message: result.processingQueued
           ? 'Path2 transcription completed and processing queued.'
           : 'Path2 transcription completed, but processing queue failed.',
         meta: {
-          queueSuccess: queueResult.success,
-          queueError: queueResult.error || null,
+          queueSuccess: result.processingQueued,
+          queueError: result.queueError,
           podcastId,
+          remainingCredits,
         },
       });
     }
 
-    await updateExtensionTranscriptionJobCompleted(job.id, user.id, podcastId);
-
-    if (job.audioBlobUrl) {
-      after(async () => {
-        try {
-          await deleteObject(job.audioBlobUrl as string);
-        } catch (deleteError) {
-          console.error('[EXTENSION_TRANSCRIBE_STATUS] Failed to delete temporary audio blob:', deleteError);
-        }
-      });
-    }
+    scheduleAudioCleanup(job.audioBlobUrl);
 
     return NextResponse.json({
       success: true,
@@ -452,6 +632,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
         dashboardUrl: `${dashboardBase}/dashboard/${podcastId}`,
         lastError: null,
         monitorTaskId,
+        processingQueued: result.processingQueued,
+        queueError: result.queueError,
+        remainingCredits: result.remainingCredits,
       },
     });
   } catch (error) {

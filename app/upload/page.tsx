@@ -76,7 +76,8 @@ export default function UploadPage() {
 
   if (status === 'unauthenticated') {
     if (typeof window !== 'undefined') {
-      router.replace(`/auth/signin?callbackUrl=/upload`);
+      const callbackUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      router.replace(`/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`);
       return null;
     }
     return null;

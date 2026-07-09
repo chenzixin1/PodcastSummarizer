@@ -10,12 +10,10 @@ import {
   recordExtensionMonitorEvent,
   updateExtensionMonitorTask,
 } from '../../../../lib/extensionMonitor';
-import { savePodcastWithCreditDeduction } from '../../../../lib/db';
-import { enqueueProcessingJob } from '../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
 import { ApifyTranscriptError, fetchYoutubeSrtViaApify } from '../../../../lib/apifyTranscript';
 import { resolveYoutubePodcastTitle } from '../../../../lib/podcastTitle';
-import { deleteObject, uploadObject } from '../../../../lib/objectStorage';
+import { createPodcastFromSrt, PodcastUploadError } from '../../../../lib/podcastUploadPipeline';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -201,10 +199,17 @@ export async function POST(request: NextRequest) {
     const srtBuffer = Buffer.from(transcriptResult.srtContent, 'utf8');
     const fileSize = `${(srtBuffer.length / 1024).toFixed(2)} KB`;
 
-    const object = await uploadObject(`${id}-${originalFileName}`, srtBuffer, {
+    const result = await createPodcastFromSrt({
+      id,
+      title,
+      originalFileName,
+      srtContent: srtBuffer,
+      sourceReference,
+      isPublic,
+      userId: user.id,
       contentType: 'application/x-subrip',
     });
-    const blobUrl = object.url;
+    const blobUrl = result.blobUrl;
 
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
@@ -227,30 +232,6 @@ export async function POST(request: NextRequest) {
           transcriptEntries: transcriptResult.entries,
         },
       });
-    }
-
-    const saveResult = await savePodcastWithCreditDeduction({
-      id,
-      title,
-      originalFileName,
-      fileSize,
-      blobUrl,
-      sourceReference,
-      isPublic,
-      userId: user.id,
-    });
-
-    if (!saveResult.success) {
-      await deleteObject(blobUrl).catch((deleteError) => {
-        console.error('[EXT_UPLOAD_YOUTUBE] Failed to delete orphaned SRT object:', deleteError);
-      });
-      if (saveResult.errorCode === 'INSUFFICIENT_CREDITS') {
-        return failAndRespond('INSUFFICIENT_CREDITS', '积分不足，无法继续转换 SRT。', 402);
-      }
-      return failAndRespond('SAVE_FAILED', 'Failed to save podcast.', 500, saveResult.error || null);
-    }
-
-    if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
         stage: 'podcast_saved',
         podcastId: id,
@@ -270,32 +251,33 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const queueResult = await enqueueProcessingJob(id);
-    if (queueResult.success) {
+    if (result.processingQueued) {
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('upload', id);
         if (!triggerResult.success) {
           console.error('[EXT_UPLOAD_YOUTUBE] Failed to trigger worker:', triggerResult.error);
         }
       });
+    } else {
+      console.error('[EXT_UPLOAD_YOUTUBE] enqueueProcessingJob failed:', result.queueError);
     }
 
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
-        status: queueResult.success ? 'queued' : 'accepted',
-        stage: queueResult.success ? 'processing_queued' : 'response_sent',
+        status: result.processingQueued ? 'queued' : 'accepted',
+        stage: result.processingQueued ? 'processing_queued' : 'response_sent',
         podcastId: id,
         clearError: true,
       });
       await recordExtensionMonitorEvent({
         taskId: monitorTaskId,
-        level: queueResult.success ? 'info' : 'warn',
-        stage: queueResult.success ? 'processing_queued' : 'response_sent',
+        level: result.processingQueued ? 'info' : 'warn',
+        stage: result.processingQueued ? 'processing_queued' : 'response_sent',
         endpoint,
-        message: queueResult.success ? 'Processing job queued.' : 'Processing queue failed.',
+        message: result.processingQueued ? 'Processing job queued.' : 'Processing queue failed.',
         meta: {
-          queueSuccess: queueResult.success,
-          queueError: queueResult.error || null,
+          queueSuccess: result.processingQueued,
+          queueError: result.queueError,
         },
       });
     }
@@ -305,10 +287,11 @@ export async function POST(request: NextRequest) {
       data: {
         podcastId: id,
         dashboardUrl: `${getAppBaseUrl(request)}/dashboard/${id}`,
-        processingQueued: queueResult.success,
+        processingQueued: result.processingQueued,
+        queueError: result.queueError,
         monitorTaskId,
         fileName: originalFileName,
-        remainingCredits: (saveResult.data as { remainingCredits?: number } | undefined)?.remainingCredits ?? null,
+        remainingCredits: result.remainingCredits,
         youtubeIngest: {
           source: transcriptResult.source,
           videoId: transcriptResult.videoId,
@@ -317,13 +300,35 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    const failure =
+      error instanceof ExtensionAuthError
+        ? {
+            code: error.code,
+            status: error.status,
+            message: error.message,
+            details: null,
+          }
+        : error instanceof PodcastUploadError
+          ? {
+              code: error.code,
+              status: error.status,
+              message: error.message,
+              details: error.details || null,
+            }
+          : {
+              code: 'UPLOAD_YOUTUBE_FAILED',
+              status: 500,
+              message: 'Failed to upload YouTube transcript from extension.',
+              details: error instanceof Error ? error.message : String(error),
+            };
+
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
         status: 'failed',
         stage: 'failed',
-        lastErrorCode: error instanceof ExtensionAuthError ? error.code : 'UPLOAD_YOUTUBE_FAILED',
-        lastErrorMessage: error instanceof Error ? error.message : String(error),
-        lastHttpStatus: error instanceof ExtensionAuthError ? error.status : 500,
+        lastErrorCode: failure.code,
+        lastErrorMessage: failure.message,
+        lastHttpStatus: failure.status,
       }).catch((monitorError) => {
         console.error('[EXT_MON] failed to update monitor task:', monitorError);
       });
@@ -332,8 +337,14 @@ export async function POST(request: NextRequest) {
         level: 'error',
         stage: 'failed',
         endpoint,
-        httpStatus: error instanceof ExtensionAuthError ? error.status : 500,
-        message: error instanceof Error ? error.message : String(error),
+        httpStatus: failure.status,
+        message: failure.message,
+        responseBody: {
+          success: false,
+          code: failure.code,
+          error: failure.message,
+          details: failure.details,
+        },
         errorStack: error instanceof Error ? error.stack || null : null,
       }).catch((monitorError) => {
         console.error('[EXT_MON] failed to record monitor event:', monitorError);
@@ -351,14 +362,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (error instanceof PodcastUploadError) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: failure.code,
+          error: failure.message,
+          details: failure.details,
+        },
+        { status: failure.status },
+      );
+    }
+
     return NextResponse.json(
       {
         success: false,
-        code: 'UPLOAD_YOUTUBE_FAILED',
-        error: 'Failed to upload YouTube transcript from extension.',
-        details: error instanceof Error ? error.message : String(error),
+        code: failure.code,
+        error: failure.message,
+        details: failure.details,
       },
-      { status: 500 },
+      { status: failure.status },
     );
   }
 }

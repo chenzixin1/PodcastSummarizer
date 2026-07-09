@@ -6,8 +6,23 @@ jest.mock('@vercel/postgres', () => ({
   sql: jest.fn(),
 }));
 
+jest.mock('@opennextjs/cloudflare', () => ({
+  getCloudflareContext: jest.fn(() => ({
+    env: {},
+  })),
+}));
+
+jest.mock('../../lib/credits', () => ({
+  ensureCreditLedgerTables: jest.fn().mockResolvedValue(undefined),
+  recordUploadCreditDebit: jest.fn().mockResolvedValue(undefined),
+}));
+
+import fs from 'fs';
+import path from 'path';
+
 import {
   savePodcast,
+  savePodcastWithCreditDeduction,
   getPodcast,
   getAllPodcasts,
   saveAnalysisResults,
@@ -43,6 +58,7 @@ describe('Database Integration Tests', () => {
         originalFileName: 'test.srt',
         fileSize: '1.5 KB',
         blobUrl: 'https://example.com/test.srt',
+        sourcePublishedAt: '2026-07-09T00:00:00.000Z',
         isPublic: true,
       };
 
@@ -56,7 +72,58 @@ describe('Database Integration Tests', () => {
       expect(insertCall[4]).toBe('1.5 KB');
       expect(insertCall[5]).toBe('https://example.com/test.srt');
       expect(insertCall[6]).toBeNull();
-      expect(insertCall[7]).toBe(true);
+      expect(insertCall[7]).toBe('2026-07-09T00:00:00.000Z');
+      expect(insertCall[8]).toBe(true);
+    });
+
+    test('savePodcastWithCreditDeduction should persist sourcePublishedAt in the insert SQL', async () => {
+      const podcast: Podcast = {
+        id: 'credit-123',
+        title: 'Credit Podcast',
+        originalFileName: 'credit.srt',
+        fileSize: '2.0 KB',
+        blobUrl: 'https://example.com/credit.srt',
+        sourceReference: 'https://youtube.com/watch?v=abc123',
+        sourcePublishedAt: '2026-07-09T00:00:00.000Z',
+        isPublic: false,
+        userId: 'user-123',
+      };
+
+      mockSql.mockResolvedValue({ rows: [{ podcast_id: 'credit-123', remaining_credits: 9 }] } as never);
+      const result = await savePodcastWithCreditDeduction(podcast);
+
+      expect(result.success).toBe(true);
+      const insertCall = findSqlCall('WITH charged AS');
+      const query = insertCall[0].join('');
+      expect(query).toContain('source_published_at');
+      expect(insertCall[7]).toBe('https://youtube.com/watch?v=abc123');
+      expect(insertCall[8]).toBe('2026-07-09T00:00:00.000Z');
+      expect(insertCall[9]).toBe(false);
+      expect(insertCall[10]).toBe('user-123');
+    });
+
+    test('savePodcastWithCreditDeduction maps duplicate podcast ids to a recoverable error code', async () => {
+      const podcast: Podcast = {
+        id: 'duplicate-123',
+        title: 'Duplicate Podcast',
+        originalFileName: 'duplicate.srt',
+        fileSize: '2.0 KB',
+        blobUrl: 'https://example.com/duplicate.srt',
+        isPublic: false,
+        userId: 'user-123',
+      };
+      const duplicateError = Object.assign(new Error('duplicate key value violates unique constraint "podcasts_pkey"'), {
+        code: '23505',
+      });
+
+      mockSql.mockRejectedValueOnce(duplicateError as never);
+      const result = await savePodcastWithCreditDeduction(podcast);
+
+      expect(result).toEqual({
+        success: false,
+        errorCode: 'PODCAST_ALREADY_EXISTS',
+        error: 'Podcast already exists.',
+      });
     });
 
     test('getPodcast should use correct column aliases', async () => {
@@ -149,6 +216,41 @@ describe('Database Integration Tests', () => {
       expect(updateCall[2]).toBe('test-123');
       expect(updateCall[0].join('')).toContain('is_public =');
     });
+
+    test('D1 migrations keep source_published_at in 0002 upgrade only', () => {
+      const initialSchema = fs.readFileSync(
+        path.resolve(__dirname, '../../migrations/d1/0001_initial_schema.sql'),
+        'utf8',
+      );
+      const upgradeSchema = fs.readFileSync(
+        path.resolve(__dirname, '../../migrations/d1/0002_add_source_published_at.sql'),
+        'utf8',
+      );
+
+      expect(initialSchema).not.toContain('source_published_at TEXT');
+      expect(upgradeSchema).toContain('ALTER TABLE podcasts');
+      expect(upgradeSchema).toContain('ADD COLUMN source_published_at TEXT');
+    });
+
+    test('D1 import and export scripts preserve source_published_at', () => {
+      const exportScript = fs.readFileSync(
+        path.resolve(__dirname, '../../scripts/export-postgres-to-d1-sql.mjs'),
+        'utf8',
+      );
+      const importScript = fs.readFileSync(
+        path.resolve(__dirname, '../../scripts/import-postgres-to-d1.mjs'),
+        'utf8',
+      );
+      const packageJson = JSON.parse(
+        fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+      ) as { scripts: Record<string, string> };
+
+      expect(exportScript).toContain("'source_published_at'");
+      expect(importScript).toContain("'source_published_at'");
+      expect(packageJson.scripts['d1:migrations:apply:prod']).toContain(
+        'wrangler d1 migrations apply PODSUM_DB --remote --config output/cutover/wrangler.production.jsonc',
+      );
+    });
   });
 
   describe('Edge Cases and Data Validation', () => {
@@ -171,7 +273,8 @@ describe('Database Integration Tests', () => {
       expect(insertCall[2]).toBe(`Test's "Special" Characters & Symbols`);
       expect(insertCall[3]).toBe('test file (1).srt');
       expect(insertCall[5]).toBe('https://example.com/test%20file.srt');
-      expect(insertCall[7]).toBe(false);
+      expect(insertCall[7]).toBeNull();
+      expect(insertCall[8]).toBe(false);
     });
 
     test('should handle long content in analysis results', async () => {
@@ -216,7 +319,8 @@ describe('Database Integration Tests', () => {
       expect(insertCall[4]).toBe('');
       expect(insertCall[5]).toBe('');
       expect(insertCall[6]).toBeNull();
-      expect(insertCall[7]).toBe(false);
+      expect(insertCall[7]).toBeNull();
+      expect(insertCall[8]).toBe(false);
     });
 
     test('should handle extreme pagination values', async () => {

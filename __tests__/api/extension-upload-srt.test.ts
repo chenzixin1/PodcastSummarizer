@@ -2,8 +2,18 @@
  * @jest-environment node
  */
 
+jest.mock('next/server', () => {
+  const actual = jest.requireActual('next/server');
+  return {
+    ...actual,
+    after: jest.fn((callback: () => unknown) => {
+      void callback();
+    }),
+  };
+});
+
 import { NextRequest } from 'next/server';
-import { POST } from '../../app/api/extension/upload-youtube/route';
+import { POST } from '../../app/api/extension/upload-srt/route';
 
 jest.mock('nanoid', () => ({
   nanoid: jest.fn(),
@@ -39,27 +49,6 @@ jest.mock('../../lib/workerTrigger', () => ({
   triggerWorkerProcessing: jest.fn(),
 }));
 
-jest.mock('../../lib/apifyTranscript', () => {
-  class MockApifyTranscriptError extends Error {
-    code: string;
-    status: number;
-    details?: string;
-
-    constructor(code: string, status: number, message: string, details?: string) {
-      super(message);
-      this.name = 'ApifyTranscriptError';
-      this.code = code;
-      this.status = status;
-      this.details = details;
-    }
-  }
-
-  return {
-    ApifyTranscriptError: MockApifyTranscriptError,
-    fetchYoutubeSrtViaApify: jest.fn(),
-  };
-});
-
 jest.mock('../../lib/podcastUploadPipeline', () => ({
   createPodcastFromSrt: jest.fn(),
   PodcastUploadError: class PodcastUploadError extends Error {
@@ -81,10 +70,10 @@ const mockNanoid = jest.fn();
 const mockParseBearerToken = jest.fn();
 const mockVerifyExtensionAccessToken = jest.fn();
 const mockCreateExtensionMonitorTask = jest.fn();
-const mockFetchYoutubeSrtViaApify = jest.fn();
-const mockCreatePodcastFromSrt = jest.fn();
 const mockRecordExtensionMonitorEvent = jest.fn();
 const mockUpdateExtensionMonitorTask = jest.fn();
+const mockTriggerWorkerProcessing = jest.fn();
+const mockCreatePodcastFromSrt = jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -95,7 +84,7 @@ beforeEach(() => {
   require('../../lib/extensionMonitor').createExtensionMonitorTask = mockCreateExtensionMonitorTask;
   require('../../lib/extensionMonitor').recordExtensionMonitorEvent = mockRecordExtensionMonitorEvent;
   require('../../lib/extensionMonitor').updateExtensionMonitorTask = mockUpdateExtensionMonitorTask;
-  require('../../lib/apifyTranscript').fetchYoutubeSrtViaApify = mockFetchYoutubeSrtViaApify;
+  require('../../lib/workerTrigger').triggerWorkerProcessing = mockTriggerWorkerProcessing;
   require('../../lib/podcastUploadPipeline').createPodcastFromSrt = mockCreatePodcastFromSrt;
 
   mockNanoid.mockReturnValue('podcast-123');
@@ -107,11 +96,12 @@ beforeEach(() => {
   mockCreateExtensionMonitorTask.mockResolvedValue(null);
   mockRecordExtensionMonitorEvent.mockResolvedValue(undefined);
   mockUpdateExtensionMonitorTask.mockResolvedValue(undefined);
+  mockTriggerWorkerProcessing.mockResolvedValue({ success: true });
   mockCreatePodcastFromSrt.mockResolvedValue({
     id: 'podcast-123',
-    blobUrl: 'https://podsum.cc/api/files/podcast-123-I9aGC6Ui3eE.srt',
-    objectKey: 'podcast-123-I9aGC6Ui3eE.srt',
-    originalFileName: 'I9aGC6Ui3eE.srt',
+    blobUrl: 'https://podsum.cc/api/files/podcast-123-transcript.srt',
+    objectKey: 'podcast-123-transcript.srt',
+    originalFileName: 'transcript.srt',
     fileSize: '0.04 KB',
     remainingCredits: 9,
     processingQueued: true,
@@ -120,93 +110,67 @@ beforeEach(() => {
   });
 });
 
-function buildRequest(body: Record<string, unknown>) {
-  return new NextRequest('http://localhost:3000/api/extension/upload-youtube', {
+function buildRequest(
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {
+    authorization: 'Bearer token-123',
+    'content-type': 'application/json',
+  },
+) {
+  return new NextRequest('http://localhost:3000/api/extension/upload-srt', {
     method: 'POST',
-    headers: {
-      authorization: 'Bearer token-123',
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
 }
 
-describe('Extension upload-youtube API title handling', () => {
-  it('calls createPodcastFromSrt with resolved title and transcript buffer', async () => {
-    mockFetchYoutubeSrtViaApify.mockResolvedValue({
-      videoId: 'I9aGC6Ui3eE',
-      title: '  20x Companies with Claude  ',
-      source: 'apify_text_with_timestamps',
-      srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
-      fullText: 'hello',
-      entries: 1,
-    });
-
-    const response = await POST(
-      buildRequest({
-        youtubeUrl: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
-      }),
-    );
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'podcast-123',
-        title: '20x Companies with Claude',
-        originalFileName: 'I9aGC6Ui3eE.srt',
-        sourceReference: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
-        isPublic: false,
-        userId: 'user-123',
-        contentType: 'application/x-subrip',
-      }),
-    );
-    expect(mockCreatePodcastFromSrt.mock.calls[0][0].srtContent).toBeInstanceOf(Buffer);
-    expect(mockCreatePodcastFromSrt.mock.calls[0][0].srtContent.toString('utf8')).toContain('hello');
-  });
-
-  it('should fallback to videoId when APIFY title is placeholder', async () => {
-    mockFetchYoutubeSrtViaApify.mockResolvedValue({
-      videoId: 'I9aGC6Ui3eE',
-      title: 'Untitled',
-      source: 'apify_text_with_timestamps',
-      srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
-      fullText: 'hello',
-      entries: 1,
-    });
-
-    const response = await POST(
-      buildRequest({
-        youtubeUrl: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
-      }),
-    );
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: 'I9aGC6Ui3eE',
-      }),
-    );
-  });
-
-  it('returns queue failure metadata without failing the request', async () => {
+describe('POST /api/extension/upload-srt', () => {
+  it('calls createPodcastFromSrt and returns the shared success envelope', async () => {
     mockCreateExtensionMonitorTask.mockResolvedValueOnce({ id: 'monitor-123' });
-    mockFetchYoutubeSrtViaApify.mockResolvedValue({
-      videoId: 'I9aGC6Ui3eE',
-      title: 'Episode title',
-      source: 'apify_text_with_timestamps',
-      srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
-      fullText: 'hello',
-      entries: 1,
+
+    const response = await POST(
+      buildRequest({
+        fileName: ' Earnings Call.srt ',
+        srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
+        sourceReference: 'https://example.com/episode',
+        isPublic: true,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      data: {
+        podcastId: 'podcast-123',
+        dashboardUrl: 'https://podsum.cc/dashboard/podcast-123',
+        processingQueued: true,
+        queueError: null,
+        monitorTaskId: 'monitor-123',
+        remainingCredits: 9,
+      },
     });
+    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith({
+      id: 'podcast-123',
+      title: 'Transcript Analysis: Earnings_Call',
+      originalFileName: 'Earnings_Call.srt',
+      srtContent: expect.any(Buffer),
+      sourceReference: 'https://example.com/episode',
+      isPublic: true,
+      userId: 'user-123',
+      contentType: 'application/x-subrip',
+    });
+    expect(mockCreatePodcastFromSrt.mock.calls[0][0].srtContent.toString('utf8')).toContain('hello');
+    expect(mockTriggerWorkerProcessing).toHaveBeenCalledWith('upload', 'podcast-123');
+  });
+
+  it('returns queue failure metadata without failing the request and records a warn monitor event', async () => {
+    mockCreateExtensionMonitorTask.mockResolvedValueOnce({ id: 'monitor-123' });
     mockCreatePodcastFromSrt.mockResolvedValueOnce({
       id: 'podcast-123',
-      blobUrl: 'https://podsum.cc/api/files/podcast-123-I9aGC6Ui3eE.srt',
-      objectKey: 'podcast-123-I9aGC6Ui3eE.srt',
-      originalFileName: 'I9aGC6Ui3eE.srt',
+      blobUrl: 'https://podsum.cc/api/files/podcast-123-transcript.srt',
+      objectKey: 'podcast-123-transcript.srt',
+      originalFileName: 'transcript.srt',
       fileSize: '0.04 KB',
       remainingCredits: 9,
       processingQueued: false,
@@ -216,7 +180,8 @@ describe('Extension upload-youtube API title handling', () => {
 
     const response = await POST(
       buildRequest({
-        youtubeUrl: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
+        fileName: 'transcript.srt',
+        srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
       }),
     );
     const data = await response.json();
@@ -230,15 +195,10 @@ describe('Extension upload-youtube API title handling', () => {
         processingQueued: false,
         queueError: 'queue unavailable',
         monitorTaskId: 'monitor-123',
-        fileName: 'I9aGC6Ui3eE.srt',
         remainingCredits: 9,
-        youtubeIngest: {
-          source: 'apify_text_with_timestamps',
-          videoId: 'I9aGC6Ui3eE',
-          entries: 1,
-        },
       },
     });
+    expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
     expect(mockUpdateExtensionMonitorTask).toHaveBeenLastCalledWith(
       'monitor-123',
       expect.objectContaining({
@@ -260,17 +220,9 @@ describe('Extension upload-youtube API title handling', () => {
     );
   });
 
-  it('keeps monitor failure metadata consistent with PodcastUploadError responses', async () => {
+  it('maps PodcastUploadError directly into the API response and monitor failure metadata', async () => {
     const { PodcastUploadError } = require('../../lib/podcastUploadPipeline');
     mockCreateExtensionMonitorTask.mockResolvedValueOnce({ id: 'monitor-123' });
-    mockFetchYoutubeSrtViaApify.mockResolvedValue({
-      videoId: 'I9aGC6Ui3eE',
-      title: 'Untitled',
-      source: 'apify_text_with_timestamps',
-      srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
-      fullText: 'hello',
-      entries: 1,
-    });
     mockCreatePodcastFromSrt.mockRejectedValueOnce(
       new PodcastUploadError(
         'INSUFFICIENT_CREDITS',
@@ -282,7 +234,8 @@ describe('Extension upload-youtube API title handling', () => {
 
     const response = await POST(
       buildRequest({
-        youtubeUrl: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
+        fileName: 'transcript.srt',
+        srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
       }),
     );
     const data = await response.json();
@@ -319,5 +272,51 @@ describe('Extension upload-youtube API title handling', () => {
         },
       }),
     );
+  });
+
+  it('returns 400 when srtContent is missing or blank', async () => {
+    mockCreateExtensionMonitorTask.mockResolvedValueOnce({ id: 'monitor-123' });
+
+    const response = await POST(
+      buildRequest({
+        fileName: 'transcript.srt',
+        srtContent: '   ',
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      success: false,
+      code: 'INVALID_SRT',
+      error: 'srtContent is required.',
+    });
+    expect(mockCreatePodcastFromSrt).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 on auth failure and does not call the shared helper', async () => {
+    mockParseBearerToken.mockReturnValueOnce(null);
+
+    const response = await POST(
+      buildRequest(
+        {
+          fileName: 'transcript.srt',
+          srtContent: '1\n00:00:00,000 --> 00:00:02,000\nhello',
+        },
+        {
+          'content-type': 'application/json',
+        },
+      ),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data).toEqual({
+      success: false,
+      code: 'AUTH_REQUIRED',
+      error: 'Missing Bearer token.',
+    });
+    expect(mockCreatePodcastFromSrt).not.toHaveBeenCalled();
+    expect(mockCreateExtensionMonitorTask).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ export interface Podcast {
   isPublic: boolean;
   userId?: string;
   sourceReference?: string | null;
+  sourcePublishedAt?: string | null;
   tags?: string[];
 }
 
@@ -124,6 +125,17 @@ function trimToNaturalBoundary(input: string, maxChars: number): string {
     return candidate.slice(0, best + 1).trim();
   }
   return candidate.trim();
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  const candidate = error as { code?: unknown; message?: unknown; cause?: { message?: unknown } };
+  const code = typeof candidate?.code === 'string' ? candidate.code : '';
+  const message = [
+    typeof candidate?.message === 'string' ? candidate.message : '',
+    typeof candidate?.cause?.message === 'string' ? candidate.cause.message : '',
+  ].join(' ');
+
+  return code === '23505' || /duplicate key|unique constraint|unique failed|constraint failed/i.test(message);
 }
 
 function extractChineseSummaryBody(summary: string): string {
@@ -377,6 +389,10 @@ async function ensureSchemaUpgrades(): Promise<void> {
       `;
       await sql`
         ALTER TABLE podcasts
+        ADD COLUMN IF NOT EXISTS source_published_at TEXT
+      `;
+      await sql`
+        ALTER TABLE podcasts
         ADD COLUMN IF NOT EXISTS tags_json JSONB DEFAULT '[]'::jsonb
       `;
       await sql`
@@ -472,6 +488,7 @@ export async function initDatabase(): Promise<DbResult> {
         file_size TEXT NOT NULL,
         blob_url TEXT,
         source_reference TEXT,
+        source_published_at TEXT,
         tags_json JSONB DEFAULT '[]'::jsonb,
         is_public BOOLEAN DEFAULT FALSE,
         user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
@@ -604,10 +621,10 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
   const insertPodcast = db
     .prepare(
       `
-      INSERT INTO podcasts
-        (id, title, original_filename, file_size, blob_url, source_reference, is_public, user_id)
+      INSERT OR IGNORE INTO podcasts
+        (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
       SELECT
-        ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE changes() = 1
       RETURNING
         id AS podcast_id,
@@ -621,19 +638,21 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
       podcast.fileSize,
       podcast.blobUrl,
       podcast.sourceReference ?? null,
+      podcast.sourcePublishedAt ?? null,
       podcast.isPublic ? 1 : 0,
       podcast.userId,
       podcast.userId,
     );
 
   const checkUser = db.prepare('SELECT id FROM users WHERE id = ? LIMIT 1').bind(podcast.userId);
+  const checkPodcast = db.prepare('SELECT id FROM podcasts WHERE id = ? LIMIT 1').bind(podcast.id);
 
-  const [chargeResult, insertResult, userResult] = await db.batch<{
+  const [chargeResult, insertResult, userResult, podcastResult] = await db.batch<{
     id?: string;
     credits?: number;
     podcast_id?: string;
     remaining_credits?: number;
-  }>([updateUserCredits, insertPodcast, checkUser]);
+  }>([updateUserCredits, insertPodcast, checkUser, checkPodcast]);
 
   const insertedRow = insertResult?.results?.[0];
   if (insertedRow?.podcast_id) {
@@ -660,6 +679,8 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
     };
   }
 
+  const podcastAlreadyExists = Boolean(podcastResult?.results?.[0]?.id);
+
   if ((chargeResult?.results?.length || 0) > 0) {
     await db
       .prepare(
@@ -675,9 +696,25 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
         console.error('D1 credit refund after failed podcast insert failed:', refundError);
       });
 
+    if (podcastAlreadyExists) {
+      return {
+        success: false,
+        errorCode: 'PODCAST_ALREADY_EXISTS',
+        error: 'Podcast already exists.',
+      };
+    }
+
     return {
       success: false,
       error: 'D1 podcast insert did not return a row after credit deduction.',
+    };
+  }
+
+  if (podcastAlreadyExists) {
+    return {
+      success: false,
+      errorCode: 'PODCAST_ALREADY_EXISTS',
+      error: 'Podcast already exists.',
     };
   }
 
@@ -719,7 +756,7 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
       ),
       inserted AS (
         INSERT INTO podcasts
-          (id, title, original_filename, file_size, blob_url, source_reference, is_public, user_id)
+          (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
         SELECT
           ${podcast.id},
           ${podcast.title},
@@ -727,6 +764,7 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
           ${podcast.fileSize},
           ${podcast.blobUrl},
           ${podcast.sourceReference ?? null},
+          ${podcast.sourcePublishedAt ?? null},
           ${podcast.isPublic},
           ${podcast.userId}
         FROM charged
@@ -760,6 +798,18 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
       };
     }
 
+    const existingPodcast = await sql`
+      SELECT id FROM podcasts WHERE id = ${podcast.id}
+      LIMIT 1
+    `;
+    if (existingPodcast.rows.length > 0) {
+      return {
+        success: false,
+        errorCode: 'PODCAST_ALREADY_EXISTS',
+        error: 'Podcast already exists.',
+      };
+    }
+
     const userCheck = await sql`
       SELECT id FROM users WHERE id = ${podcast.userId}
     `;
@@ -778,6 +828,13 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
       error: 'Insufficient credits.',
     };
   } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      return {
+        success: false,
+        errorCode: 'PODCAST_ALREADY_EXISTS',
+        error: 'Podcast already exists.',
+      };
+    }
     console.error('保存播客并扣除积分失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -789,9 +846,9 @@ export async function savePodcast(podcast: Podcast): Promise<DbResult> {
     await ensureSchemaUpgrades();
     const result = await sql`
       INSERT INTO podcasts 
-        (id, title, original_filename, file_size, blob_url, source_reference, is_public, user_id)
+        (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
       VALUES 
-        (${podcast.id}, ${podcast.title}, ${podcast.originalFileName}, ${podcast.fileSize}, ${podcast.blobUrl}, ${podcast.sourceReference ?? null}, ${podcast.isPublic}, ${podcast.userId || null})
+        (${podcast.id}, ${podcast.title}, ${podcast.originalFileName}, ${podcast.fileSize}, ${podcast.blobUrl}, ${podcast.sourceReference ?? null}, ${podcast.sourcePublishedAt ?? null}, ${podcast.isPublic}, ${podcast.userId || null})
       ON CONFLICT (id) 
       DO UPDATE SET
         title = ${podcast.title}, 
@@ -799,6 +856,7 @@ export async function savePodcast(podcast: Podcast): Promise<DbResult> {
         file_size = ${podcast.fileSize},
         blob_url = ${podcast.blobUrl},
         source_reference = ${podcast.sourceReference ?? null},
+        source_published_at = ${podcast.sourcePublishedAt ?? null},
         is_public = ${podcast.isPublic},
         user_id = ${podcast.userId || null}
       RETURNING id
@@ -1008,6 +1066,7 @@ export async function getPodcast(id: string): Promise<DbResult> {
         id, title, original_filename as "originalFileName", 
         file_size as "fileSize", blob_url as "blobUrl", 
         source_reference as "sourceReference",
+        source_published_at as "sourcePublishedAt",
         tags_json as "tags",
         is_public as "isPublic", user_id as "userId", created_at as "createdAt"
       FROM podcasts 
@@ -1021,6 +1080,33 @@ export async function getPodcast(id: string): Promise<DbResult> {
     return { success: true, data: result.rows[0] };
   } catch (error) {
     console.error('获取播客信息失败:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function updatePodcastStoredFile(
+  id: string,
+  file: { originalFileName: string; fileSize: string; blobUrl: string },
+): Promise<DbResult> {
+  try {
+    await ensureSchemaUpgrades();
+    const result = await sql`
+      UPDATE podcasts
+      SET
+        original_filename = ${file.originalFileName},
+        file_size = ${file.fileSize},
+        blob_url = ${file.blobUrl}
+      WHERE id = ${id}
+      RETURNING id, original_filename as "originalFileName", file_size as "fileSize", blob_url as "blobUrl"
+    `;
+
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Podcast not found' };
+    }
+
+    return { success: true, data: result.rows[0] };
+  } catch (error) {
+    console.error('更新播客文件信息失败:', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -1136,6 +1222,7 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           p.id, p.title, p.original_filename as "originalFileName", 
           p.file_size as "fileSize", p.blob_url as "blobUrl", 
           p.source_reference as "sourceReference",
+          p.source_published_at as "sourcePublishedAt",
           p.tags_json as "tags",
           p.is_public as "isPublic", p.created_at as "createdAt",
           CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
@@ -1158,6 +1245,7 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           p.id, p.title, p.original_filename as "originalFileName", 
           p.file_size as "fileSize", p.blob_url as "blobUrl", 
           p.source_reference as "sourceReference",
+          p.source_published_at as "sourcePublishedAt",
           p.tags_json as "tags",
           p.is_public as "isPublic", p.created_at as "createdAt",
           CASE WHEN ar.podcast_id IS NOT NULL THEN true ELSE false END as "isProcessed",
@@ -1205,6 +1293,7 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
         p.id, p.title, p.original_filename as "originalFileName", 
         p.file_size as "fileSize", p.blob_url as "blobUrl", 
         p.source_reference as "sourceReference",
+        p.source_published_at as "sourcePublishedAt",
         p.tags_json as "tags",
         p.is_public as "isPublic", p.created_at as "createdAt",
         p.user_id as "userId",

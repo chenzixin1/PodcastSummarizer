@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { nanoid } from 'nanoid';
-import { savePodcastWithCreditDeduction } from '../../../lib/db';
-import { enqueueProcessingJob } from '../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../lib/auth';
 import { Blob } from 'buffer';
 import { triggerWorkerProcessing } from '../../../lib/workerTrigger';
 import { fetchYoutubeSrtViaApify, ApifyTranscriptError } from '../../../lib/apifyTranscript';
 import { resolveFilePodcastTitle, resolveYoutubePodcastTitle } from '../../../lib/podcastTitle';
-import { deleteObject, uploadObject } from '../../../lib/objectStorage';
+import { createPodcastFromSrt, PodcastUploadError } from '../../../lib/podcastUploadPipeline';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -54,6 +52,11 @@ export async function POST(request: NextRequest) {
   const sourceReferenceRaw = formData.get('sourceReference');
   const sourceReference =
     typeof sourceReferenceRaw === 'string' && sourceReferenceRaw.trim() ? sourceReferenceRaw.trim() : youtubeUrl || null;
+  const sourcePublishedAtRaw = formData.get('sourcePublishedAt');
+  const sourcePublishedAt =
+    typeof sourcePublishedAtRaw === 'string' && sourcePublishedAtRaw.trim() ? sourcePublishedAtRaw.trim() : null;
+  const channelNameRaw = formData.get('channelName');
+  const channelName = typeof channelNameRaw === 'string' ? channelNameRaw.trim() : '';
 
   let youtubeIngestMeta:
     | {
@@ -144,8 +147,6 @@ export async function POST(request: NextRequest) {
 
   try {
     const id = nanoid();
-    const filename = `${id}-${file.name}`;
-    const fileSize = `${(file.size / 1024).toFixed(2)} KB`;
     const title = youtubeIngestMeta
       ? resolveYoutubePodcastTitle({
           videoTitle: youtubeVideoTitle,
@@ -158,62 +159,30 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
 
-    uploadDebug('[UPLOAD] Start upload:', { id, filename, fileSize, title, isPublic });
+    uploadDebug('[UPLOAD] Start upload:', { id, filename: `${id}-${file.name}`, title, isPublic });
 
-    const object = await uploadObject(filename, file, {
-      contentType: file.type || 'application/x-subrip',
-    });
-    const blobUrl = object.url;
-    uploadDebug('[UPLOAD] File uploaded to object storage.', { provider: object.provider });
-
-    const dbResult = await savePodcastWithCreditDeduction({
+    const result = await createPodcastFromSrt({
       id,
       title,
       originalFileName: file.name,
-      fileSize,
-      blobUrl,
+      srtContent: file,
       sourceReference,
+      sourcePublishedAt,
+      tags: channelName ? [channelName] : undefined,
       isPublic,
       userId,
+      contentType: file.type || 'application/x-subrip',
     });
-    uploadDebug('[UPLOAD] savePodcast result:', { success: dbResult.success, errorCode: dbResult.errorCode });
 
-    if (!dbResult.success) {
-      await deleteObject(blobUrl).catch((deleteError) => {
-        console.error('[UPLOAD] Failed to delete orphaned upload object:', deleteError);
-      });
-      if (dbResult.errorCode === 'INSUFFICIENT_CREDITS') {
-        return NextResponse.json(
-          {
-            success: false,
-            code: 'INSUFFICIENT_CREDITS',
-            error: '积分不足，无法继续转换 SRT。',
-          },
-          { status: 402 },
-        );
-      }
-      console.error('[UPLOAD] Error saving to database:', dbResult.error);
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Failed to save podcast',
-          details: dbResult.error,
-        },
-        { status: 500 },
-      );
-    }
-
-    const queueResult = await enqueueProcessingJob(id);
-    if (!queueResult.success) {
-      console.error('[UPLOAD] enqueueProcessingJob failed:', queueResult.error);
-    } else {
-      uploadDebug('[UPLOAD] Processing job queued:', queueResult.data?.status);
+    if (result.processingQueued) {
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('upload', id);
         if (!triggerResult.success) {
           console.error('[UPLOAD] Failed to trigger worker:', triggerResult.error);
         }
       });
+    } else {
+      console.error('[UPLOAD] enqueueProcessingJob failed:', result.queueError);
     }
 
     return NextResponse.json(
@@ -221,18 +190,31 @@ export async function POST(request: NextRequest) {
         success: true,
         data: {
           id,
-          blobUrl,
+          blobUrl: result.blobUrl,
           fileName: file.name,
-          fileSize,
+          fileSize: result.fileSize,
           userId,
-          remainingCredits: (dbResult.data as { remainingCredits?: number } | undefined)?.remainingCredits ?? null,
-          processingQueued: queueResult.success,
+          remainingCredits: result.remainingCredits,
+          processingQueued: result.processingQueued,
+          queueError: result.queueError,
           youtubeIngest: youtubeIngestMeta,
         },
       },
       { status: 200 },
     );
   } catch (error) {
+    if (error instanceof PodcastUploadError) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: error.code,
+          error: error.message,
+          details: error.details,
+        },
+        { status: error.status },
+      );
+    }
+
     console.error('[UPLOAD] Error uploading file:', error);
     return NextResponse.json(
       {

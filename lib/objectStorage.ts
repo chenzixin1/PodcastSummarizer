@@ -109,6 +109,10 @@ export async function uploadObject(
         contentType: options.contentType || (typeof value === 'object' && 'type' in value ? String(value.type || '') : undefined),
       },
     });
+    const storedObject = await env.PODSUM_BUCKET.get(safeKey);
+    if (!storedObject) {
+      throw new Error(`Object storage write verification failed for key: ${safeKey}`);
+    }
     return {
       key: safeKey,
       provider: 'r2',

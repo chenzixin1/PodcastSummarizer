@@ -6,6 +6,7 @@ import type { SignInResponse } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import AppFrame from '@/components/AppFrame';
+import { normalizeAuthCallbackUrl } from '@/lib/authCallbackUrl';
 
 const AUTH_DEBUG_ENABLED = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true';
 
@@ -14,26 +15,6 @@ function logAuthDebug(message: string, payload?: unknown) {
     return;
   }
   console.log(message, payload ?? '');
-}
-
-function normalizeCallbackUrl(value: string | null, fallback: string) {
-  if (!value) {
-    return fallback;
-  }
-  if (value.startsWith('/') && !value.startsWith('//')) {
-    return value;
-  }
-  if (typeof window !== 'undefined') {
-    try {
-      const parsed = new URL(value);
-      if (parsed.origin === window.location.origin) {
-        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-      }
-    } catch {
-      return fallback;
-    }
-  }
-  return fallback;
 }
 
 function GoogleIcon() {
@@ -70,7 +51,7 @@ export default function SignInForm() {
   const [debugInfo, setDebugInfo] = useState<SignInResponse | { error: string } | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = normalizeCallbackUrl(searchParams.get('callbackUrl'), '/?view=my');
+  const callbackUrl = normalizeAuthCallbackUrl(searchParams.get('callbackUrl'), '/?view=my');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
+import { nanoid } from 'nanoid';
+import { ApifyTranscriptError, fetchYoutubeSrtViaApify } from '../../lib/apifyTranscript';
 import { getAccountCreditOverview } from '../../lib/credits';
 import { getAnalysisResults, getPodcast, getUserPodcasts, verifyPodcastOwnership } from '../../lib/db';
 import {
@@ -8,6 +10,9 @@ import {
   hasMcpScope,
   recordMcpAccessLog,
 } from '../../lib/mcpAccess';
+import { resolveYoutubePodcastTitle } from '../../lib/podcastTitle';
+import { createPodcastFromSrt, PodcastUploadError } from '../../lib/podcastUploadPipeline';
+import { triggerWorkerProcessing } from '../../lib/workerTrigger';
 
 type JsonRpcId = string | number | null;
 
@@ -36,6 +41,7 @@ type PodcastRow = {
   title?: unknown;
   originalFileName?: unknown;
   sourceReference?: unknown;
+  sourcePublishedAt?: unknown;
   tags?: unknown;
   isPublic?: unknown;
   isProcessed?: unknown;
@@ -103,6 +109,23 @@ function numberArg(args: Record<string, unknown>, key: string, fallback: number,
   return Math.max(1, Math.min(max, Math.floor(value)));
 }
 
+function booleanArg(args: Record<string, unknown>, key: string, fallback = false): boolean {
+  const value = args[key];
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n'].includes(normalized)) {
+      return false;
+    }
+  }
+  return fallback;
+}
+
 function textContent(value: unknown) {
   return {
     content: [
@@ -111,6 +134,13 @@ function textContent(value: unknown) {
         text: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
       },
     ],
+  };
+}
+
+function errorToolResult(value: unknown) {
+  return {
+    isError: true,
+    ...textContent(value),
   };
 }
 
@@ -153,6 +183,7 @@ function toolDefinition(
   title: string,
   description: string,
   inputSchema: Record<string, unknown>,
+  annotations?: Partial<McpTool['annotations']>,
 ): McpTool {
   return {
     name,
@@ -164,6 +195,7 @@ function toolDefinition(
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
+      ...annotations,
     },
   };
 }
@@ -241,6 +273,34 @@ function availableTools(context: McpAccessAuthContext): McpTool[] {
     );
   }
 
+  if (hasMcpScope(context, 'podcasts:upload')) {
+    tools.push(
+      toolDefinition(
+        'podsum_submit_youtube_url',
+        'Submit YouTube URL',
+        'Submit a YouTube URL to PodSum, generate an SRT transcript, and queue podcast analysis.',
+        {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: 'YouTube URL or video id to ingest.' },
+            preferredLanguage: { type: 'string', description: 'Optional transcript language code, such as en or zh.' },
+            sourceReference: { type: 'string', description: 'Optional source reference override. Defaults to url.' },
+            channelName: { type: 'string', description: 'Optional YouTube channel or creator name to store as a tag.' },
+            sourcePublishedAt: { type: 'string', description: 'Optional original publish date or ISO timestamp.' },
+            isPublic: { type: 'boolean', default: false },
+          },
+          required: ['url'],
+          additionalProperties: false,
+        },
+        {
+          readOnlyHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      ),
+    );
+  }
+
   return tools;
 }
 
@@ -262,6 +322,7 @@ function podcastListPayload(row: PodcastRow) {
     title: String(row.title || row.originalFileName || ''),
     originalFileName: String(row.originalFileName || ''),
     sourceReference: row.sourceReference || null,
+    sourcePublishedAt: normalizeDate(row.sourcePublishedAt),
     tags: Array.isArray(row.tags) ? row.tags : [],
     isPublic: Boolean(row.isPublic),
     isProcessed: Boolean(row.isProcessed),
@@ -421,6 +482,169 @@ async function handleGetCredits(context: McpAccessAuthContext) {
   });
 }
 
+function sanitizeFileName(input: string): string {
+  const trimmed = input.trim();
+  const safe = trimmed.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^\.+/, '');
+  if (!safe) {
+    return 'transcript.srt';
+  }
+  return safe.toLowerCase().endsWith('.srt') ? safe : `${safe}.srt`;
+}
+
+function getAppBaseUrl(request: NextRequest): string {
+  const configured = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || '').replace(/\/+$/, '');
+  if (configured) {
+    return configured;
+  }
+  return new URL(request.url).origin;
+}
+
+async function handleSubmitYoutubeUrl(
+  context: McpAccessAuthContext,
+  args: Record<string, unknown>,
+  request: NextRequest,
+) {
+  if (!hasMcpScope(context, 'podcasts:upload')) {
+    return forbiddenToolResult('Missing scope: podcasts:upload');
+  }
+
+  const url = stringArg(args, 'url') || stringArg(args, 'youtubeUrl');
+  if (!url) {
+    throw new Error('url is required');
+  }
+
+  const preferredLanguage = stringArg(args, 'preferredLanguage') || undefined;
+  const sourceReference = stringArg(args, 'sourceReference') || url;
+  const channelName = stringArg(args, 'channelName').slice(0, 80);
+  const sourcePublishedAt = normalizeDate(stringArg(args, 'sourcePublishedAt'));
+  const isPublic = booleanArg(args, 'isPublic', false);
+
+  let transcriptResult;
+  try {
+    transcriptResult = await fetchYoutubeSrtViaApify(url, preferredLanguage);
+  } catch (error) {
+    if (error instanceof ApifyTranscriptError) {
+      return errorToolResult({
+        code: error.code,
+        status: error.status,
+        error: error.message,
+        details: error.details || null,
+      });
+    }
+    throw error;
+  }
+
+  const id = nanoid();
+  const originalFileName = sanitizeFileName(`${transcriptResult.videoId}.srt`);
+  const title = resolveYoutubePodcastTitle({
+    videoTitle: transcriptResult.title,
+    videoId: transcriptResult.videoId,
+  });
+  const srtBuffer = Buffer.from(transcriptResult.srtContent, 'utf8');
+
+  let result;
+  try {
+    result = await createPodcastFromSrt({
+      id,
+      title,
+      originalFileName,
+      srtContent: srtBuffer,
+      sourceReference,
+      sourcePublishedAt,
+      tags: channelName ? [channelName] : undefined,
+      isPublic,
+      userId: context.userId,
+      contentType: 'application/x-subrip',
+    });
+  } catch (error) {
+    if (error instanceof PodcastUploadError) {
+      return errorToolResult({
+        code: error.code,
+        status: error.status,
+        error: error.message,
+        details: error.details || null,
+      });
+    }
+    throw error;
+  }
+
+  if (result.processingQueued) {
+    after(async () => {
+      const triggerResult = await triggerWorkerProcessing('upload', id);
+      if (!triggerResult.success) {
+        console.error('[MCP] Failed to trigger worker:', triggerResult.error);
+      }
+    });
+  } else {
+    console.error('[MCP] enqueueProcessingJob failed:', result.queueError);
+  }
+
+  return textContent({
+    podcast: {
+      id,
+      title,
+      originalFileName,
+      fileSize: result.fileSize,
+      sourceReference,
+      sourcePublishedAt,
+      tags: channelName ? [channelName] : [],
+      isPublic,
+      blobUrl: result.blobUrl,
+      dashboardUrl: `${getAppBaseUrl(request)}/dashboard/${id}`,
+    },
+    remainingCredits: result.remainingCredits,
+    processingQueued: result.processingQueued,
+    processingJob: result.processingJob,
+    queueError: result.queueError,
+    youtubeIngest: {
+      source: transcriptResult.source,
+      videoId: transcriptResult.videoId,
+      entries: transcriptResult.entries,
+      preferredLanguage: preferredLanguage || null,
+    },
+  });
+}
+
+function isToolError(result: unknown): boolean {
+  return Boolean(result && typeof result === 'object' && 'isError' in result);
+}
+
+function textPayload(result: unknown): string {
+  const content = (result as { content?: Array<{ text?: unknown }> } | null)?.content;
+  const text = Array.isArray(content) ? content[0]?.text : null;
+  return typeof text === 'string' ? text : '';
+}
+
+function toolResultCode(result: unknown): string | null {
+  if (!isToolError(result)) {
+    return null;
+  }
+  const text = textPayload(result);
+  try {
+    const payload = JSON.parse(text) as { code?: unknown };
+    return typeof payload.code === 'string' ? payload.code : 'tool_error';
+  } catch {
+    return 'tool_forbidden';
+  }
+}
+
+function toolResourceId(name: string, args: Record<string, unknown>, result: unknown): string | null {
+  if (name === 'podsum_submit_youtube_url') {
+    if (!isToolError(result)) {
+      try {
+        const payload = JSON.parse(textPayload(result)) as { podcast?: { id?: unknown } };
+        if (typeof payload.podcast?.id === 'string' && payload.podcast.id) {
+          return payload.podcast.id;
+        }
+      } catch {
+        // Fall back to the submitted URL below.
+      }
+    }
+    return stringArg(args, 'url') || stringArg(args, 'youtubeUrl') || null;
+  }
+  return stringArg(args, 'podcastId') || null;
+}
+
 async function handleToolCall(
   context: McpAccessAuthContext,
   params: Record<string, unknown>,
@@ -441,6 +665,8 @@ async function handleToolCall(
       result = await handleMarkdownExport(context, args);
     } else if (name === 'podsum_get_credits') {
       result = await handleGetCredits(context);
+    } else if (name === 'podsum_submit_youtube_url') {
+      result = await handleSubmitYoutubeUrl(context, args, request);
     } else {
       throw new Error(`Unknown tool: ${name || '(missing)'}`);
     }
@@ -448,9 +674,10 @@ async function handleToolCall(
     await recordMcpAccessLog({
       context,
       tool: name || 'unknown',
-      resourceId: stringArg(args, 'podcastId') || null,
-      ok: !('isError' in result),
-      errorCode: 'isError' in result ? 'tool_forbidden' : null,
+      resourceType: name === 'podsum_submit_youtube_url' ? 'podcast' : null,
+      resourceId: toolResourceId(name, args, result),
+      ok: !isToolError(result),
+      errorCode: toolResultCode(result),
       ip,
       userAgent,
     });
@@ -459,7 +686,8 @@ async function handleToolCall(
     await recordMcpAccessLog({
       context,
       tool: name || 'unknown',
-      resourceId: stringArg(args, 'podcastId') || null,
+      resourceType: name === 'podsum_submit_youtube_url' ? 'podcast' : null,
+      resourceId: stringArg(args, 'podcastId') || stringArg(args, 'url') || stringArg(args, 'youtubeUrl') || null,
       ok: false,
       errorCode: error instanceof Error ? error.message : 'tool_error',
       ip,

@@ -5,21 +5,30 @@
 import { NextRequest } from 'next/server';
 import { POST } from '../../app/api/upload/route';
 
-jest.mock('@vercel/blob', () => ({
-  put: jest.fn(),
-}));
-
 jest.mock('nanoid', () => ({
   nanoid: jest.fn(),
 }));
 
-jest.mock('../../lib/db', () => ({
-  savePodcastWithCreditDeduction: jest.fn(),
-}));
+jest.mock('../../lib/podcastUploadPipeline', () => {
+  class MockPodcastUploadError extends Error {
+    code: string;
+    status: number;
+    details?: string;
 
-jest.mock('../../lib/processingJobs', () => ({
-  enqueueProcessingJob: jest.fn(),
-}));
+    constructor(code: string, status: number, message: string, details?: string) {
+      super(message);
+      this.name = 'PodcastUploadError';
+      this.code = code;
+      this.status = status;
+      this.details = details;
+    }
+  }
+
+  return {
+    createPodcastFromSrt: jest.fn(),
+    PodcastUploadError: MockPodcastUploadError,
+  };
+});
 
 jest.mock('../../lib/workerTrigger', () => ({
   triggerWorkerProcessing: jest.fn(),
@@ -54,10 +63,8 @@ jest.mock('../../lib/apifyTranscript', () => {
   };
 });
 
-const mockPut = jest.fn();
 const mockNanoid = jest.fn();
-const mockSavePodcastWithCreditDeduction = jest.fn();
-const mockEnqueueProcessingJob = jest.fn();
+const mockCreatePodcastFromSrt = jest.fn();
 const mockTriggerWorkerProcessing = jest.fn();
 const mockGetServerSession = jest.fn();
 const mockFetchYoutubeSrtViaApify = jest.fn();
@@ -65,18 +72,24 @@ const mockFetchYoutubeSrtViaApify = jest.fn();
 beforeEach(() => {
   jest.clearAllMocks();
 
-  require('@vercel/blob').put = mockPut;
   require('nanoid').nanoid = mockNanoid;
-  require('../../lib/db').savePodcastWithCreditDeduction = mockSavePodcastWithCreditDeduction;
-  require('../../lib/processingJobs').enqueueProcessingJob = mockEnqueueProcessingJob;
+  require('../../lib/podcastUploadPipeline').createPodcastFromSrt = mockCreatePodcastFromSrt;
   require('../../lib/workerTrigger').triggerWorkerProcessing = mockTriggerWorkerProcessing;
   require('next-auth/next').getServerSession = mockGetServerSession;
   require('../../lib/apifyTranscript').fetchYoutubeSrtViaApify = mockFetchYoutubeSrtViaApify;
 
   mockNanoid.mockReturnValue('mock-id-12345');
-  mockPut.mockResolvedValue({ url: 'https://blob.example.com/mock-id-12345-test.srt' });
-  mockSavePodcastWithCreditDeduction.mockResolvedValue({ success: true, data: { id: 'mock-id-12345', remainingCredits: 9 } });
-  mockEnqueueProcessingJob.mockResolvedValue({ success: true, data: { status: 'queued' } });
+  mockCreatePodcastFromSrt.mockResolvedValue({
+    id: 'mock-id-12345',
+    blobUrl: 'https://podsum.cc/api/files/mock-id-12345-test.srt',
+    objectKey: 'mock-id-12345-test.srt',
+    originalFileName: 'test.srt',
+    fileSize: '0.01 KB',
+    remainingCredits: 9,
+    processingQueued: true,
+    processingJob: { podcastId: 'mock-id-12345', status: 'queued' },
+    queueError: null,
+  });
   mockTriggerWorkerProcessing.mockResolvedValue({ success: true });
   mockGetServerSession.mockResolvedValue({
     user: {
@@ -84,8 +97,6 @@ beforeEach(() => {
       email: 'tester@example.com',
     },
   });
-
-  delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 
 describe('Upload API Tests', () => {
@@ -107,9 +118,39 @@ describe('Upload API Tests', () => {
     expect(data.data.id).toBe('mock-id-12345');
     expect(data.data.youtubeIngest).toBeUndefined();
     expect(mockFetchYoutubeSrtViaApify).not.toHaveBeenCalled();
-    expect(mockSavePodcastWithCreditDeduction).toHaveBeenCalledWith(
+    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith(
       expect.objectContaining({
+        id: 'mock-id-12345',
         title: 'test',
+        originalFileName: 'test.srt',
+        sourcePublishedAt: null,
+        tags: undefined,
+      }),
+    );
+    expect(mockTriggerWorkerProcessing).toHaveBeenCalledWith('upload', 'mock-id-12345');
+  });
+
+  it('should pass trimmed optional metadata through to the upload pipeline', async () => {
+    const file = new File(['test content'], 'test.srt', { type: 'application/x-subrip' });
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('sourcePublishedAt', ' 2026-07-09T10:30:00.000Z ');
+    formData.append('channelName', '  Acquired FM  ');
+
+    const request = new NextRequest('http://localhost:3000/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePublishedAt: '2026-07-09T10:30:00.000Z',
+        tags: ['Acquired FM'],
       }),
     );
   });
@@ -179,10 +220,12 @@ describe('Upload API Tests', () => {
         entries: 1,
       }),
     );
-    expect(mockSavePodcastWithCreditDeduction).toHaveBeenCalledWith(
+    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith(
       expect.objectContaining({
         title: '20x Companies with Claude',
         sourceReference: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
+        sourcePublishedAt: null,
+        tags: undefined,
       }),
     );
   });
@@ -210,7 +253,7 @@ describe('Upload API Tests', () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(mockSavePodcastWithCreditDeduction).toHaveBeenCalledWith(
+    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'I9aGC6Ui3eE',
       }),
@@ -260,12 +303,43 @@ describe('Upload API Tests', () => {
     expect(data.error).toBe('Authentication required');
   });
 
-  it('should reject upload when credits are insufficient', async () => {
-    mockSavePodcastWithCreditDeduction.mockResolvedValueOnce({
-      success: false,
-      errorCode: 'INSUFFICIENT_CREDITS',
-      error: 'Insufficient credits.',
+  it('should return successful upload with explicit queue failure metadata', async () => {
+    mockCreatePodcastFromSrt.mockResolvedValueOnce({
+      id: 'mock-id-12345',
+      blobUrl: 'https://podsum.cc/api/files/mock-id-12345-test.srt',
+      objectKey: 'mock-id-12345-test.srt',
+      originalFileName: 'test.srt',
+      fileSize: '0.01 KB',
+      remainingCredits: 9,
+      processingQueued: false,
+      processingJob: null,
+      queueError: 'D1 insert failed',
     });
+
+    const file = new File(['test content'], 'test.srt', { type: 'application/x-subrip' });
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const request = new NextRequest('http://localhost:3000/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.data.processingQueued).toBe(false);
+    expect(data.data.queueError).toBe('D1 insert failed');
+    expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
+  });
+
+  it('should return typed upload pipeline errors', async () => {
+    const { PodcastUploadError } = require('../../lib/podcastUploadPipeline');
+    mockCreatePodcastFromSrt.mockRejectedValueOnce(
+      new PodcastUploadError('INSUFFICIENT_CREDITS', 402, '积分不足，无法继续转换 SRT。', 'Insufficient credits.'),
+    );
 
     const file = new File(['test content'], 'test.srt', { type: 'application/x-subrip' });
     const formData = new FormData();
@@ -282,5 +356,7 @@ describe('Upload API Tests', () => {
     expect(response.status).toBe(402);
     expect(data.success).toBe(false);
     expect(data.code).toBe('INSUFFICIENT_CREDITS');
+    expect(data.error).toBe('积分不足，无法继续转换 SRT。');
+    expect(data.details).toBe('Insufficient credits.');
   });
 });
