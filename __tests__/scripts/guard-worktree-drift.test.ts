@@ -100,6 +100,23 @@ describe('guard-worktree-drift', () => {
     expect(result.errors.join('\n')).toContain('M open-next.config.ts');
   });
 
+  test.each([
+    ['worker.ts'],
+    ['cloudflare-env.d.ts'],
+    ['types/next-auth.d.ts'],
+  ])('blocks deploy when primary workspace has protected drift in %s', (filePath) => {
+    const result = guard.assertNoDeployDrift({
+      repoRoot: '/repo/.worktrees/branch',
+      primaryRoot: '/repo',
+      statusForRoot: (root) => (root === '/repo' ? ` M ${filePath}\n` : ''),
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join('\n')).toContain('Primary workspace has protected uncommitted changes');
+    expect(result.errors.join('\n')).toContain(filePath);
+  });
+
   test('allows explicit emergency bypass', () => {
     const result = guard.assertNoDeployDrift({
       repoRoot: '/repo/.worktrees/branch',
