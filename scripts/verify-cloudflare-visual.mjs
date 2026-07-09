@@ -18,8 +18,46 @@ const viewports = [
   { name: 'mobile', width: 390, height: 844 },
 ];
 
+const exploreSmokeRoute = '/?view=explore';
+const exploreSmokeCues = [
+  'What is a Forward Deployed Engineer?',
+  'Jensen Huang',
+];
+
 function slug(input) {
   return input === '/' ? 'home' : input.replace(/^\/+/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
+}
+
+function getSmokeResult(route, previewCapture) {
+  if (route !== exploreSmokeRoute) {
+    return {
+      routeSmokeMode: null,
+      previewSmokeChecks: null,
+      passed: null,
+    };
+  }
+
+  const previewText = previewCapture.snapshot.text || '';
+  const previewTitle = previewCapture.snapshot.title || '';
+  const previewHasRuntimeErrors =
+    previewCapture.consoleErrors.length > 0 ||
+    previewCapture.pageErrors.length > 0 ||
+    previewCapture.httpErrors.length > 0;
+  const matchingCue = exploreSmokeCues.find((cue) => previewText.includes(cue)) || null;
+  const previewSmokeChecks = {
+    runtimeErrorsClear: !previewHasRuntimeErrors,
+    containsExplore: previewText.includes('Explore'),
+    containsKnownCue: matchingCue !== null,
+    matchingCue,
+    titleIsNot404: !/404/i.test(previewTitle),
+    textDoesNotContainNotFound: !previewText.includes('This page could not be found'),
+  };
+
+  return {
+    routeSmokeMode: 'explore-preview-smoke',
+    previewSmokeChecks,
+    passed: Object.values(previewSmokeChecks).every((value) => value !== false),
+  };
 }
 
 async function capture(page, baseUrl, route, viewport) {
@@ -233,13 +271,17 @@ async function main() {
           previewCapture.consoleErrors.length > 0 ||
           previewCapture.pageErrors.length > 0 ||
           previewCapture.httpErrors.length > 0;
-        const passed =
+        const smokeResult = getSmokeResult(route, previewCapture);
+        const routeSmokeMode = smokeResult.routeSmokeMode;
+        const previewSmokeChecks = smokeResult.previewSmokeChecks;
+        const defaultPassed =
           textMatches &&
           titleMatches &&
           layoutMatches &&
           comparison.sameDimensions &&
           comparison.mismatchRatio <= maxMismatchRatio &&
           !previewHasRuntimeErrors;
+        const passed = smokeResult.passed ?? defaultPassed;
         const diffPath = path.join(outputDir, `${caseName}-diff.png`);
         if (!passed) {
           await writeDiffImage(prodDecoded, previewDecoded, diffPath);
@@ -261,6 +303,8 @@ async function main() {
           prodHttpErrors: prodCapture.httpErrors,
           previewHttpErrors: previewCapture.httpErrors,
           previewHasRuntimeErrors,
+          routeSmokeMode,
+          previewSmokeChecks,
           prodSnapshot: prodCapture.snapshot,
           previewSnapshot: previewCapture.snapshot,
           ...comparison,
@@ -269,7 +313,7 @@ async function main() {
 
         const marker = passed ? 'PASS' : 'FAIL';
         console.log(
-          `${marker} ${route} ${viewport.name} text=${textMatches} layout=${layoutMatches} runtimeErrors=${previewHasRuntimeErrors} mismatchRatio=${comparison.mismatchRatio.toFixed(6)} mismatchPixels=${comparison.mismatchPixels}/${comparison.totalPixels}`,
+          `${marker} ${route} ${viewport.name} smokeMode=${routeSmokeMode || 'none'} runtimeErrors=${previewHasRuntimeErrors} text=${textMatches} layout=${layoutMatches} mismatchRatio=${comparison.mismatchRatio.toFixed(6)} mismatchPixels=${comparison.mismatchPixels}/${comparison.totalPixels}`,
         );
       }
     }
