@@ -102,6 +102,30 @@ describe('Database Integration Tests', () => {
       expect(insertCall[10]).toBe('user-123');
     });
 
+    test('savePodcastWithCreditDeduction maps duplicate podcast ids to a recoverable error code', async () => {
+      const podcast: Podcast = {
+        id: 'duplicate-123',
+        title: 'Duplicate Podcast',
+        originalFileName: 'duplicate.srt',
+        fileSize: '2.0 KB',
+        blobUrl: 'https://example.com/duplicate.srt',
+        isPublic: false,
+        userId: 'user-123',
+      };
+      const duplicateError = Object.assign(new Error('duplicate key value violates unique constraint "podcasts_pkey"'), {
+        code: '23505',
+      });
+
+      mockSql.mockRejectedValueOnce(duplicateError as never);
+      const result = await savePodcastWithCreditDeduction(podcast);
+
+      expect(result).toEqual({
+        success: false,
+        errorCode: 'PODCAST_ALREADY_EXISTS',
+        error: 'Podcast already exists.',
+      });
+    });
+
     test('getPodcast should use correct column aliases', async () => {
       const mockData = {
         id: 'test-123',
