@@ -191,7 +191,7 @@ describe('Database Integration Tests', () => {
       expect(updateCall[0].join('')).toContain('is_public =');
     });
 
-    test('D1 migrations should add source_published_at for fresh and upgraded schemas', () => {
+    test('D1 migrations keep source_published_at in 0002 upgrade only', () => {
       const initialSchema = fs.readFileSync(
         path.resolve(__dirname, '../../migrations/d1/0001_initial_schema.sql'),
         'utf8',
@@ -201,7 +201,7 @@ describe('Database Integration Tests', () => {
         'utf8',
       );
 
-      expect(initialSchema).toContain('source_published_at TEXT');
+      expect(initialSchema).not.toContain('source_published_at TEXT');
       expect(upgradeSchema).toContain('ALTER TABLE podcasts');
       expect(upgradeSchema).toContain('ADD COLUMN source_published_at TEXT');
     });
