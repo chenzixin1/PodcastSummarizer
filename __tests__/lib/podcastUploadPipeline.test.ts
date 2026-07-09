@@ -133,6 +133,17 @@ describe('podcastUploadPipeline', () => {
     expect(mockDeleteObject).not.toHaveBeenCalled();
   });
 
+  it('returns a recoverable queue exception without deleting the saved podcast row', async () => {
+    mockEnqueueProcessingJob.mockRejectedValueOnce(new Error('D1 unavailable'));
+
+    const result = await createPodcastFromSrt(baseInput);
+
+    expect(result.processingQueued).toBe(false);
+    expect(result.processingJob).toBeNull();
+    expect(result.queueError).toBe('D1 unavailable');
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
   it('classifies storage failures before any podcast row is saved', async () => {
     mockUploadObject.mockRejectedValueOnce(new Error('Object storage write verification failed for key: podcast-123-Yy3JH6dDugc.srt'));
     const promise = createPodcastFromSrt(baseInput);

@@ -113,7 +113,16 @@ export async function createPodcastFromSrt(input: CreatePodcastFromSrtInput): Pr
       throw saveErrorToUploadError(saveResult.errorCode, saveResult.error);
     }
 
-    const queueResult = await enqueueProcessingJob(input.id);
+    let queueResult: Awaited<ReturnType<typeof enqueueProcessingJob>> | null = null;
+    try {
+      queueResult = await enqueueProcessingJob(input.id);
+    } catch (error) {
+      queueResult = {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
     return {
       id: input.id,
       blobUrl,
