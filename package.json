@@ -12,6 +12,7 @@
     "verify:cf-preview": "node scripts/verify-cloudflare-preview.mjs",
     "verify:cf-preview:visual": "node scripts/verify-cloudflare-visual.mjs",
     "verify:cf-production": "node scripts/verify-cloudflare-production.mjs",
+    "audit:podcast-integrity": "node scripts/audit-podcast-ingest-integrity.mjs",
     "baseline:capture": "node scripts/capture-cloudflare-baseline.mjs",
     "audit:data-migration": "node scripts/audit-cloudflare-data-migration.mjs",
     "cutover:prepare": "node scripts/prepare-cloudflare-cutover.mjs",
