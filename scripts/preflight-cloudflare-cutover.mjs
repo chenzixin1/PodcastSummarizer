@@ -7,6 +7,11 @@ const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 const steps = [
   {
+    name: 'guard worktree drift',
+    command: npmCommand,
+    args: ['run', 'guard:worktree-drift'],
+  },
+  {
     name: 'type-check',
     command: npmCommand,
     args: ['run', 'type-check'],
