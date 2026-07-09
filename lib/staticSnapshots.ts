@@ -39,6 +39,11 @@ export interface SnapshotPublishResult {
   error?: string;
 }
 
+function formatSnapshotFailure(message: string, fallback: string): string {
+  const normalized = String(message || '').trim();
+  return normalized || fallback;
+}
+
 function snapshotSegment(input: string): string {
   return String(input || '')
     .trim()
@@ -232,7 +237,15 @@ export async function rebuildPublicListSnapshots(
         return { success: false, published: false, error: result.error || 'Failed to load public podcasts' };
       }
 
-      const data = Array.isArray(result.data) ? result.data : [];
+      if (!Array.isArray(result.data)) {
+        return {
+          success: false,
+          published: false,
+          error: `Malformed public podcasts payload for page ${page}`,
+        };
+      }
+
+      const data = result.data;
       const payload: PublicListSnapshotPayload = {
         snapshotVersion: PUBLIC_LIST_SNAPSHOT_VERSION,
         generatedAt: new Date().toISOString(),
@@ -257,17 +270,29 @@ export async function rebuildPublicListSnapshots(
 export async function refreshStaticSnapshotsForPodcast(podcastId: string): Promise<SnapshotPublishResult> {
   const analysisResult = await publishAnalysisSnapshotForPodcast(podcastId);
   const listResult = await rebuildPublicListSnapshots();
+  const errors: string[] = [];
 
-  if (!analysisResult.success || !listResult.success) {
-    return {
-      success: false,
-      published: Boolean(analysisResult.published || listResult.published),
-      error: analysisResult.error || listResult.error || 'Failed to refresh static snapshots',
-    };
+  if (!analysisResult.success) {
+    errors.push(
+      `analysis snapshot refresh failed: ${formatSnapshotFailure(
+        analysisResult.error || '',
+        'unknown error',
+      )}`,
+    );
+  }
+
+  if (!listResult.success) {
+    errors.push(
+      `public list snapshot refresh failed: ${formatSnapshotFailure(
+        listResult.error || '',
+        'unknown error',
+      )}`,
+    );
   }
 
   return {
     success: true,
     published: Boolean(analysisResult.published || listResult.published),
+    ...(errors.length ? { error: errors.join('; ') } : {}),
   };
 }

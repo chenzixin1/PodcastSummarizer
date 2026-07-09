@@ -8,6 +8,7 @@ import {
   getPublicListSnapshot,
   publicListSnapshotKey,
   publishAnalysisSnapshotForPodcast,
+  refreshStaticSnapshotsForPodcast,
   rebuildPublicListSnapshots,
 } from '../../lib/staticSnapshots';
 import { getAllPodcasts, getAnalysisResults, getPodcast } from '../../lib/db';
@@ -194,6 +195,22 @@ describe('staticSnapshots', () => {
     });
   });
 
+  test('fails closed when public list payload is malformed', async () => {
+    mockGetAllPodcasts.mockResolvedValue({
+      success: true,
+      data: { items: [] } as never,
+    });
+
+    const result = await rebuildPublicListSnapshots({ pageSize: 12, pages: 1 });
+
+    expect(result).toEqual({
+      success: false,
+      published: false,
+      error: 'Malformed public podcasts payload for page 1',
+    });
+    expect(mockUploadObject).not.toHaveBeenCalled();
+  });
+
   test('reads only public list snapshots that match normalized paging', async () => {
     mockGetObjectText.mockResolvedValue(JSON.stringify({
       snapshotVersion: 1,
@@ -210,5 +227,41 @@ describe('staticSnapshots', () => {
       pageSize: 50,
       data: [{ id: 'pod-1', title: 'Published episode' }],
     });
+  });
+
+  test('keeps snapshot refresh best-effort when one cache refresh fails', async () => {
+    mockGetPodcast.mockResolvedValue({
+      success: true,
+      data: {
+        id: 'pod-1',
+        isPublic: true,
+      },
+    });
+    mockGetAnalysisResults.mockResolvedValue({
+      success: true,
+      data: {
+        podcastId: 'pod-1',
+        summaryZh: '中文总结',
+        highlights: '重点内容',
+      },
+    });
+    mockGetAllPodcasts.mockResolvedValue({
+      success: false,
+      error: 'list refresh broke',
+    });
+
+    const result = await refreshStaticSnapshotsForPodcast('pod-1');
+
+    expect(result).toEqual({
+      success: true,
+      published: true,
+      error: 'public list snapshot refresh failed: list refresh broke',
+    });
+    expect(mockUploadObject).toHaveBeenCalledTimes(1);
+    expect(mockUploadObject).toHaveBeenCalledWith(
+      analysisSnapshotKey('pod-1'),
+      expect.any(String),
+      { contentType: 'application/json; charset=utf-8' },
+    );
   });
 });
