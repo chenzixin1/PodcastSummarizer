@@ -136,10 +136,14 @@ export default function UploadPage() {
       }
 
       if (result?.data?.processingQueued === false) {
-        window.sessionStorage.setItem(
-          `podsum-upload-warning-${id}`,
-          result?.data?.queueError || 'Upload saved, but processing was not queued automatically.',
-        );
+        try {
+          window.sessionStorage.setItem(
+            `podsum-upload-warning-${id}`,
+            result?.data?.queueError || 'Upload saved, but processing was not queued automatically.',
+          );
+        } catch (storageError) {
+          console.warn('Failed to persist upload queue warning.', storageError);
+        }
       }
 
       const updatedCredits = parseCredits(result?.data?.remainingCredits);

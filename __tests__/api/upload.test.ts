@@ -130,6 +130,31 @@ describe('Upload API Tests', () => {
     expect(mockTriggerWorkerProcessing).toHaveBeenCalledWith('upload', 'mock-id-12345');
   });
 
+  it('should pass trimmed optional metadata through to the upload pipeline', async () => {
+    const file = new File(['test content'], 'test.srt', { type: 'application/x-subrip' });
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('sourcePublishedAt', ' 2026-07-09T10:30:00.000Z ');
+    formData.append('channelName', '  Acquired FM  ');
+
+    const request = new NextRequest('http://localhost:3000/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePublishedAt: '2026-07-09T10:30:00.000Z',
+        tags: ['Acquired FM'],
+      }),
+    );
+  });
+
   it('should reject invalid file type', async () => {
     const file = new File(['test content'], 'test.txt', { type: 'text/plain' });
     const formData = new FormData();
