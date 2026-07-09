@@ -85,7 +85,7 @@ beforeEach(() => {
     },
   });
 
-  process.env.BLOB_READ_WRITE_TOKEN = 'mock-blob-token';
+  delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 
 describe('Upload API Tests', () => {
