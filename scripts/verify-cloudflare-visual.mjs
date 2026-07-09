@@ -8,7 +8,7 @@ const previewBase = (process.env.CF_PREVIEW_BASE_URL || 'https://cf-preview.pods
 const outputDir = process.env.VISUAL_OUTPUT_DIR || path.join(process.cwd(), 'output', 'playwright', 'cloudflare-preview-visual');
 const maxMismatchRatio = Number(process.env.VISUAL_MAX_MISMATCH_RATIO || '0.03');
 
-const routes = (process.env.VISUAL_ROUTES || '/,/about,/auth/signin,/chrome-extension')
+const routes = (process.env.VISUAL_ROUTES || '/,/?view=explore,/about,/auth/signin,/chrome-extension')
   .split(',')
   .map((route) => route.trim())
   .filter(Boolean);
@@ -23,52 +23,85 @@ function slug(input) {
 }
 
 async function capture(page, baseUrl, route, viewport) {
-  await page.setViewportSize({ width: viewport.width, height: viewport.height });
-  await page.goto(`${baseUrl}${route}`, { waitUntil: 'networkidle', timeout: 30000 });
-  await page.addStyleTag({
-    content: `
-      *, *::before, *::after {
-        animation-duration: 0s !important;
-        animation-delay: 0s !important;
-        transition-duration: 0s !important;
-        transition-delay: 0s !important;
-        caret-color: transparent !important;
-      }
-    `,
-  });
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(250);
-  const snapshot = await page.evaluate(() => {
-    const rectFor = (selector) => {
-      const element = document.querySelector(selector);
-      if (!element) {
-        return null;
-      }
-      const rect = element.getBoundingClientRect();
-      return {
-        x: Math.round(rect.x),
-        y: Math.round(rect.y),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-      };
-    };
+  const consoleErrors = [];
+  const pageErrors = [];
+  const httpErrors = [];
+  const sameOrigin = new URL(baseUrl).origin;
 
-    return {
-      text: document.body.innerText.replace(/\s+/g, ' ').trim(),
-      title: document.title,
-      scrollWidth: document.documentElement.scrollWidth,
-      scrollHeight: document.documentElement.scrollHeight,
-      body: rectFor('body'),
-      header: rectFor('header'),
-      main: rectFor('main'),
-      footer: rectFor('footer'),
-      h1: rectFor('h1'),
-    };
-  });
-  return {
-    screenshot: await page.screenshot({ fullPage: true, animations: 'disabled' }),
-    snapshot,
+  const onConsole = (message) => {
+    if (message.type() === 'error') {
+      consoleErrors.push(message.text());
+    }
   };
+  const onPageError = (error) => {
+    pageErrors.push(error.message);
+  };
+  const onResponse = (response) => {
+    const responseUrl = response.url();
+    if (response.status() >= 400 && responseUrl.startsWith(sameOrigin)) {
+      httpErrors.push(`${response.status()} ${responseUrl}`);
+    }
+  };
+
+  page.on('console', onConsole);
+  page.on('pageerror', onPageError);
+  page.on('response', onResponse);
+
+  try {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto(`${baseUrl}${route}`, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.addStyleTag({
+      content: `
+        *, *::before, *::after {
+          animation-duration: 0s !important;
+          animation-delay: 0s !important;
+          transition-duration: 0s !important;
+          transition-delay: 0s !important;
+          caret-color: transparent !important;
+        }
+      `,
+    });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(250);
+    const snapshot = await page.evaluate(() => {
+      const rectFor = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) {
+          return null;
+        }
+        const rect = element.getBoundingClientRect();
+        return {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      };
+
+      return {
+        text: document.body.innerText.replace(/\s+/g, ' ').trim(),
+        title: document.title,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        body: rectFor('body'),
+        header: rectFor('header'),
+        main: rectFor('main'),
+        footer: rectFor('footer'),
+        h1: rectFor('h1'),
+      };
+    });
+    return {
+      screenshot: await page.screenshot({ fullPage: true, animations: 'disabled' }),
+      snapshot,
+      consoleErrors,
+      pageErrors,
+      httpErrors,
+    };
+  } finally {
+    page.off('console', onConsole);
+    page.off('pageerror', onPageError);
+    page.off('response', onResponse);
+  }
 }
 
 async function decodePng(buffer) {
@@ -196,7 +229,17 @@ async function main() {
           footer: previewCapture.snapshot.footer,
           h1: previewCapture.snapshot.h1,
         });
-        const passed = textMatches && titleMatches && layoutMatches && comparison.sameDimensions && comparison.mismatchRatio <= maxMismatchRatio;
+        const previewHasRuntimeErrors =
+          previewCapture.consoleErrors.length > 0 ||
+          previewCapture.pageErrors.length > 0 ||
+          previewCapture.httpErrors.length > 0;
+        const passed =
+          textMatches &&
+          titleMatches &&
+          layoutMatches &&
+          comparison.sameDimensions &&
+          comparison.mismatchRatio <= maxMismatchRatio &&
+          !previewHasRuntimeErrors;
         const diffPath = path.join(outputDir, `${caseName}-diff.png`);
         if (!passed) {
           await writeDiffImage(prodDecoded, previewDecoded, diffPath);
@@ -211,6 +254,13 @@ async function main() {
           textMatches,
           titleMatches,
           layoutMatches,
+          prodConsoleErrors: prodCapture.consoleErrors,
+          previewConsoleErrors: previewCapture.consoleErrors,
+          prodPageErrors: prodCapture.pageErrors,
+          previewPageErrors: previewCapture.pageErrors,
+          prodHttpErrors: prodCapture.httpErrors,
+          previewHttpErrors: previewCapture.httpErrors,
+          previewHasRuntimeErrors,
           prodSnapshot: prodCapture.snapshot,
           previewSnapshot: previewCapture.snapshot,
           ...comparison,
@@ -219,7 +269,7 @@ async function main() {
 
         const marker = passed ? 'PASS' : 'FAIL';
         console.log(
-          `${marker} ${route} ${viewport.name} text=${textMatches} layout=${layoutMatches} mismatchRatio=${comparison.mismatchRatio.toFixed(6)} mismatchPixels=${comparison.mismatchPixels}/${comparison.totalPixels}`,
+          `${marker} ${route} ${viewport.name} text=${textMatches} layout=${layoutMatches} runtimeErrors=${previewHasRuntimeErrors} mismatchRatio=${comparison.mismatchRatio.toFixed(6)} mismatchPixels=${comparison.mismatchPixels}/${comparison.totalPixels}`,
         );
       }
     }
