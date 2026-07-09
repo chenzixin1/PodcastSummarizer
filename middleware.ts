@@ -10,6 +10,9 @@ export default withAuth(
     
   },
   {
+    pages: {
+      signIn: '/auth/signin',
+    },
     callbacks: {
       authorized: ({ token, req }) => {
         // 对于受保护的路由，需要有效的 token

@@ -25,8 +25,16 @@ const exploreSmokeCues = [
   'Jensen Huang',
 ];
 
+const ignoredConsoleErrorPatterns = [
+  /Permissions policy violation: compute-pressure is not allowed in this document\./i,
+];
+
 function slug(input) {
   return input === '/' ? 'home' : input.replace(/^\/+/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
+}
+
+function shouldIgnoreConsoleError(text) {
+  return ignoredConsoleErrorPatterns.some((pattern) => pattern.test(text));
 }
 
 function getSmokeResult(route, previewCapture) {
@@ -69,7 +77,10 @@ async function capture(page, baseUrl, route, viewport) {
 
   const onConsole = (message) => {
     if (message.type() === 'error') {
-      consoleErrors.push(message.text());
+      const text = message.text();
+      if (!shouldIgnoreConsoleError(text)) {
+        consoleErrors.push(text);
+      }
     }
   };
   const onPageError = (error) => {
@@ -124,6 +135,16 @@ async function capture(page, baseUrl, route, viewport) {
           height: Math.round(rect.height),
         };
       };
+      const rectsFor = (selector) =>
+        Array.from(document.querySelectorAll(selector)).map((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        });
 
       return {
         text: document.body.innerText.replace(/\s+/g, ' ').trim(),
@@ -135,10 +156,16 @@ async function capture(page, baseUrl, route, viewport) {
         main: rectFor('main'),
         footer: rectFor('footer'),
         h1: rectFor('h1'),
+        iframes: rectsFor('iframe'),
       };
     });
     return {
-      screenshot: await page.screenshot({ fullPage: true, animations: 'disabled' }),
+      screenshot: await page.screenshot({
+        fullPage: true,
+        animations: 'disabled',
+        mask: [page.locator('iframe')],
+        maskColor: '#141814',
+      }),
       snapshot,
       consoleErrors,
       pageErrors,
@@ -267,6 +294,7 @@ async function main() {
           main: prodCapture.snapshot.main,
           footer: prodCapture.snapshot.footer,
           h1: prodCapture.snapshot.h1,
+          iframes: prodCapture.snapshot.iframes,
         }) === JSON.stringify({
           scrollWidth: previewCapture.snapshot.scrollWidth,
           scrollHeight: previewCapture.snapshot.scrollHeight,
@@ -275,6 +303,7 @@ async function main() {
           main: previewCapture.snapshot.main,
           footer: previewCapture.snapshot.footer,
           h1: previewCapture.snapshot.h1,
+          iframes: previewCapture.snapshot.iframes,
         });
         const previewHasRuntimeErrors =
           previewCapture.consoleErrors.length > 0 ||
