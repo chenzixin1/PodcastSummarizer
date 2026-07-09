@@ -52,3 +52,22 @@ Files changed
 
 Concerns
 - None
+
+Review follow-up: 2026-07-09
+
+Findings addressed
+- Fixed `app/api/process/route.ts` so `refreshSnapshotsForPodcastMutation(id, 'process analysis completion')` only runs when `saveAnalysisResults(...)` returns `success === true`.
+- Added a DB-failure branch log for returned `{ success: false, error }` results and skipped snapshot refresh in that case.
+- Added focused process-route coverage for both successful-save refresh and failed-save no-refresh completion paths.
+
+Tests run and pass/fail output
+- `npm test -- __tests__/api/process.test.ts --runInBand` -> PASS (6 passed, 6 total)
+- `npm test -- __tests__/lib/staticSnapshotHooks.test.ts __tests__/api/podcast-patch.test.ts __tests__/api/admin-podcasts.test.ts --runInBand` -> PASS (9 passed, 9 total)
+
+Files changed
+- `app/api/process/route.ts`
+- `__tests__/api/process.test.ts`
+- `.superpowers/sdd/task-2-report.md`
+
+Commit SHA
+- Pending commit

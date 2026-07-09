@@ -1,11 +1,5 @@
 /**
  * Process API Route Tests
- * 
- * 测试播客处理API的各种场景：
- * 1. 正常处理流程（流式响应）
- * 2. 错误处理
- * 3. 参数验证
- * 4. 内容解析和处理
  */
 
 /**
@@ -13,12 +7,92 @@
  */
 
 import { NextRequest } from 'next/server';
-import { POST } from '../../app/api/process/route';
 
-// Mock 全局 fetch
-global.fetch = jest.fn();
+class ImmediateReadableStream<T = Uint8Array> {
+  private chunks: T[] = [];
+  private closed = false;
+  private readonly ready: Promise<void>;
 
-// Mock 数据库操作
+  constructor(source: {
+    start?: (controller: { enqueue: (chunk: T) => void; close: () => void }) => void | Promise<void>;
+  }) {
+    const controller = {
+      enqueue: (chunk: T) => {
+        this.chunks.push(chunk);
+      },
+      close: () => {
+        this.closed = true;
+      },
+    };
+
+    this.ready = Promise.resolve(source.start?.(controller)).then(() => {
+      this.closed = true;
+    });
+  }
+
+  getReader() {
+    let index = 0;
+
+    return {
+      read: async () => {
+        await this.ready;
+        if (index < this.chunks.length) {
+          const value = this.chunks[index];
+          index += 1;
+          return { done: false, value };
+        }
+        return { done: this.closed, value: undefined };
+      },
+      releaseLock: () => undefined,
+    };
+  }
+}
+
+(globalThis as typeof globalThis & { ReadableStream: typeof ReadableStream }).ReadableStream =
+  ImmediateReadableStream as unknown as typeof ReadableStream;
+
+jest.mock('../../lib/prompts', () => ({
+  prompts: {
+    summarySystem: 'SUMMARY_SYSTEM',
+    summaryUserFull: () => 'SUMMARY_USER_FULL',
+    summaryUserSegment: () => 'SUMMARY_USER_SEGMENT',
+    summaryUserCombine: () => 'SUMMARY_USER_COMBINE',
+    translateSystem: 'TRANSLATE_SYSTEM',
+    translateUserFull: () => 'TRANSLATE_USER_FULL',
+    translateUserSegment: () => 'TRANSLATE_USER_SEGMENT',
+    highlightSystem: 'HIGHLIGHT_SYSTEM',
+    highlightUserFull: () => 'HIGHLIGHT_USER_FULL',
+    highlightUserSegment: () => 'HIGHLIGHT_USER_SEGMENT',
+    briefSummarySystem: 'BRIEF_SUMMARY_SYSTEM',
+    briefSummaryUser: () => 'BRIEF_SUMMARY_USER',
+  },
+}));
+
+jest.mock('../../lib/modelConfig', () => ({
+  modelConfig: {
+    API_VERSION: 'test',
+    MODEL: 'test-model',
+    MAX_RETRIES: 0,
+    RETRY_DELAY: 0,
+    API_TIMEOUT_MS: 1000,
+    STATUS_HEARTBEAT_MS: 10_000,
+    MAX_CONTENT_LENGTH: 10_000,
+    SUMMARY_CHUNK_LENGTH: 10_000,
+    TRANSLATION_CHUNK_BLOCKS: 50,
+    HIGHLIGHTS_CHUNK_BLOCKS: 50,
+    MAX_TRANSLATION_CHUNKS: 10,
+    MAX_HIGHLIGHTS_CHUNKS: 10,
+    TRANSLATION_CHUNK_CONCURRENCY: 1,
+    HIGHLIGHTS_CHUNK_CONCURRENCY: 1,
+    ENABLE_PARALLEL_TASKS: false,
+    MAX_TOKENS: {
+      summary: 512,
+      translation: 512,
+      highlights: 512,
+    },
+  },
+}));
+
 jest.mock('../../lib/db', () => ({
   saveAnalysisResults: jest.fn(),
   saveAnalysisPartialResults: jest.fn(),
@@ -37,52 +111,192 @@ jest.mock('../../lib/workerAuth', () => ({
   isWorkerAuthorizedBySecret: jest.fn(() => true),
 }));
 
-// 获取mock函数的引用
+jest.mock('../../lib/objectStorage', () => ({
+  getObjectText: jest.fn(),
+}));
+
+jest.mock('../../lib/mindMap', () => ({
+  generateMindMapData: jest.fn(),
+}));
+
+jest.mock('../../lib/bilingualAlignment', () => ({
+  BILINGUAL_ALIGNMENT_VERSION: 2,
+  buildFullTextBilingualPayload: jest.fn(() => ({ type: 'full-text-payload' })),
+  buildSummaryBilingualPayload: jest.fn(() => ({ type: 'summary-payload' })),
+}));
+
+jest.mock('../../lib/bilingualAlignmentLlm', () => ({
+  applyLlmFallbackToFullTextPayload: jest.fn(async (payload) => ({
+    payload,
+    llmMatched: 0,
+  })),
+  applyLlmFallbackToSummaryPayload: jest.fn(async (payload) => ({
+    payload,
+    llmMatched: 0,
+  })),
+}));
+
+jest.mock('../../lib/staticSnapshotHooks', () => ({
+  refreshSnapshotsForPodcastMutation: jest.fn(),
+}));
+
+jest.mock('../../lib/qaContextChunks', () => ({
+  rebuildQaContextChunksForPodcast: jest.fn(),
+}));
+
+import { POST } from '../../app/api/process/route';
+
+global.fetch = jest.fn();
+
 const {
   saveAnalysisResults: mockSaveAnalysisResults,
   saveAnalysisPartialResults: mockSaveAnalysisPartialResults,
   getPodcast: mockGetPodcast,
 } = require('../../lib/db');
+const { getObjectText: mockGetObjectText } = require('../../lib/objectStorage');
+const { generateMindMapData: mockGenerateMindMapData } = require('../../lib/mindMap');
+const {
+  refreshSnapshotsForPodcastMutation: mockRefreshSnapshotsForPodcastMutation,
+} = require('../../lib/staticSnapshotHooks');
+const {
+  rebuildQaContextChunksForPodcast: mockRebuildQaContextChunksForPodcast,
+} = require('../../lib/qaContextChunks');
 
 // Helper function to read stream response
 async function readStreamResponse(response: Response): Promise<string[]> {
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
   const events: string[] = [];
-  
-  if (!reader) return events;
-  
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data.trim()) {
-            events.push(data);
-          }
+  const pushEventsFromText = (text: string) => {
+    for (const line of text.split('\n')) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        if (data.trim()) {
+          events.push(data);
         }
       }
     }
-  } finally {
-    reader.releaseLock();
+  };
+
+  if (response.body && typeof (response.body as ReadableStream<Uint8Array>).getReader === 'function') {
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        pushEventsFromText(decoder.decode(value));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return events;
   }
-  
+
+  if (response.body && Symbol.asyncIterator in Object(response.body)) {
+    const decoder = new TextDecoder();
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array | string>) {
+      if (typeof chunk === 'string') {
+        pushEventsFromText(chunk);
+      } else {
+        pushEventsFromText(decoder.decode(chunk));
+      }
+    }
+    return events;
+  }
+
+  const text = await response.text();
+  pushEventsFromText(text);
   return events;
+}
+
+function createSseResponse(content: string) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+      );
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify({ choices: [{ finish_reason: 'stop' }] })}\n\n`)
+      );
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+
+  return {
+    ok: true,
+    status: 200,
+    body,
+    async text() {
+      return '';
+    },
+  };
+}
+
+function createJsonResponse(content: string) {
+  return {
+    ok: true,
+    status: 200,
+    body: null,
+    async json() {
+      return {
+        choices: [
+          {
+            message: {
+              content,
+            },
+          },
+        ],
+      };
+    },
+    async text() {
+      return JSON.stringify({
+        choices: [
+          {
+            message: {
+              content,
+            },
+          },
+        ],
+      });
+    },
+  };
+}
+
+function buildProcessRequest() {
+  return new NextRequest('http://localhost:3000/api/process', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-process-worker-secret': 'test-worker-secret',
+    },
+    body: JSON.stringify({
+      id: 'test-id',
+      blobUrl: 'https://example.com/test.srt',
+      fileName: 'test.srt',
+    }),
+  });
+}
+
+function getEventByType(events: string[], type: string) {
+  return events
+    .map((event) => JSON.parse(event))
+    .find((event) => event.type === type);
 }
 
 describe('Process API Tests', () => {
   const previousWorkerSecret = process.env.PROCESS_WORKER_SECRET;
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.PROCESS_WORKER_SECRET = 'test-worker-secret';
     mockSaveAnalysisPartialResults.mockResolvedValue({ success: true });
+    mockSaveAnalysisResults.mockResolvedValue({ success: true });
     mockGetPodcast.mockResolvedValue({
       success: true,
       data: {
@@ -92,10 +306,51 @@ describe('Process API Tests', () => {
         userId: 'user-001',
       },
     });
+    mockGetObjectText.mockResolvedValue(`1
+00:00:00,000 --> 00:00:02,000
+Hello world`);
+    mockGenerateMindMapData.mockResolvedValue({
+      success: true,
+      data: { label: 'mind-map' },
+    });
+    mockRefreshSnapshotsForPodcastMutation.mockResolvedValue({
+      success: true,
+      published: true,
+    });
+    mockRebuildQaContextChunksForPodcast.mockResolvedValue({
+      success: true,
+      chunkCount: 1,
+    });
+    (global.fetch as jest.Mock).mockImplementation(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      const systemPrompt = body.messages?.[0]?.content;
+
+      if (body.stream) {
+        if (systemPrompt === 'SUMMARY_SYSTEM') {
+          return createSseResponse('<<<SUMMARY_EN>>>English summary<<<SUMMARY_ZH>>>中文总结');
+        }
+        if (systemPrompt === 'TRANSLATE_SYSTEM') {
+          return createSseResponse('Translated transcript');
+        }
+        if (systemPrompt === 'HIGHLIGHT_SYSTEM') {
+          return createSseResponse('Highlight notes');
+        }
+      }
+
+      if (systemPrompt === 'BRIEF_SUMMARY_SYSTEM') {
+        return createJsonResponse(
+          'This is a sufficiently long brief summary for the podcast listing surface and tests.'
+        );
+      }
+
+      throw new Error(`Unexpected fetch call: ${JSON.stringify(body)}`);
+    });
   });
 
   afterAll(() => {
     process.env.PROCESS_WORKER_SECRET = previousWorkerSecret;
+    consoleErrorSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
   });
 
   it('should return error for missing required fields', async () => {
@@ -135,33 +390,7 @@ describe('Process API Tests', () => {
   });
 
   it('should return stream response with correct headers for valid request', async () => {
-    // Mock successful file fetch
-    const mockSrtContent = `1
-00:00:00,000 --> 00:00:02,000
-Hello world`;
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      text: () => Promise.resolve(mockSrtContent)
-    });
-
-    mockSaveAnalysisResults.mockResolvedValue({
-      success: true
-    });
-
-    const requestData = {
-      id: 'test-id',
-      blobUrl: 'https://example.com/test.srt',
-      fileName: 'test.srt'
-    };
-
-    const request = new NextRequest('http://localhost:3000/api/process', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestData)
-    });
-
-    const response = await POST(request);
+    const response = await POST(buildProcessRequest());
 
     if (response.headers.get('Content-Type') === 'application/json') {
       const payload = await response.json();
@@ -195,4 +424,48 @@ Hello world`;
     expect(response.status).toBe(400);
     expect(data.error).toBe('Invalid request data. Missing required fields.');
   });
-}); 
+
+  it('refreshes snapshots after analysis save succeeds when the stream completes', async () => {
+    const response = await POST(buildProcessRequest());
+    const events = await readStreamResponse(response);
+    const allDoneEvent = getEventByType(events, 'all_done');
+
+    expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+    expect(allDoneEvent).toBeDefined();
+    expect(mockSaveAnalysisResults).toHaveBeenCalledWith(
+      expect.objectContaining({
+        podcastId: 'test-id',
+        summaryZh: '中文总结',
+        summaryEn: 'English summary',
+        translation: 'Translated transcript',
+        highlights: 'Highlight notes',
+      })
+    );
+    expect(mockRefreshSnapshotsForPodcastMutation).toHaveBeenCalledWith(
+      'test-id',
+      'process analysis completion'
+    );
+    expect(mockRebuildQaContextChunksForPodcast).toHaveBeenCalledWith(
+      expect.objectContaining({ podcastId: 'test-id' })
+    );
+  });
+
+  it('does not refresh snapshots when analysis save returns a db failure', async () => {
+    mockSaveAnalysisResults.mockResolvedValue({ success: false, error: 'db down' });
+
+    const response = await POST(buildProcessRequest());
+    const events = await readStreamResponse(response);
+    const allDoneEvent = getEventByType(events, 'all_done');
+
+    expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+    expect(allDoneEvent).toBeDefined();
+    expect(mockSaveAnalysisResults).toHaveBeenCalledWith(
+      expect.objectContaining({ podcastId: 'test-id' })
+    );
+    expect(mockRefreshSnapshotsForPodcastMutation).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('保存分析结果到数据库失败:', 'db down');
+    expect(mockRebuildQaContextChunksForPodcast).toHaveBeenCalledWith(
+      expect.objectContaining({ podcastId: 'test-id' })
+    );
+  });
+});

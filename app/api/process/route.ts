@@ -1384,7 +1384,7 @@ export async function POST(request: NextRequest) {
         // 保存处理结果到数据库
         processDebug(`准备保存分析结果，podcastId: ${id}, 类型: ${typeof id}`);
         try {
-          await saveAnalysisResults({
+          const saveResult = await saveAnalysisResults({
             podcastId: id,
             summary,
             summaryZh,
@@ -1402,8 +1402,12 @@ export async function POST(request: NextRequest) {
             wordCount: textStats.wordCount,
             characterCount: textStats.characterCount,
           });
-          processDebug(`分析结果保存成功，podcastId: ${id}`);
-          await refreshSnapshotsForPodcastMutation(id, 'process analysis completion');
+          if (saveResult.success) {
+            processDebug(`分析结果保存成功，podcastId: ${id}`);
+            await refreshSnapshotsForPodcastMutation(id, 'process analysis completion');
+          } else {
+            console.error('保存分析结果到数据库失败:', saveResult.error);
+          }
         } catch (dbError) {
           console.error('保存分析结果到数据库失败:', dbError);
           // 即使数据库保存失败，我们也继续返回结果给用户
