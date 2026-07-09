@@ -135,6 +135,13 @@ export default function UploadPage() {
         throw new Error('Upload succeeded but podcast id is missing.');
       }
 
+      if (result?.data?.processingQueued === false) {
+        window.sessionStorage.setItem(
+          `podsum-upload-warning-${id}`,
+          result?.data?.queueError || 'Upload saved, but processing was not queued automatically.',
+        );
+      }
+
       const updatedCredits = parseCredits(result?.data?.remainingCredits);
       if (updatedCredits !== null) {
         setRemainingCredits(updatedCredits);
