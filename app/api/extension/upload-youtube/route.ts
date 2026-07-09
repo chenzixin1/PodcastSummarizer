@@ -300,13 +300,35 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    const failure =
+      error instanceof ExtensionAuthError
+        ? {
+            code: error.code,
+            status: error.status,
+            message: error.message,
+            details: null,
+          }
+        : error instanceof PodcastUploadError
+          ? {
+              code: error.code,
+              status: error.status,
+              message: error.message,
+              details: error.details || null,
+            }
+          : {
+              code: 'UPLOAD_YOUTUBE_FAILED',
+              status: 500,
+              message: 'Failed to upload YouTube transcript from extension.',
+              details: error instanceof Error ? error.message : String(error),
+            };
+
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {
         status: 'failed',
         stage: 'failed',
-        lastErrorCode: error instanceof ExtensionAuthError ? error.code : 'UPLOAD_YOUTUBE_FAILED',
-        lastErrorMessage: error instanceof Error ? error.message : String(error),
-        lastHttpStatus: error instanceof ExtensionAuthError ? error.status : 500,
+        lastErrorCode: failure.code,
+        lastErrorMessage: failure.message,
+        lastHttpStatus: failure.status,
       }).catch((monitorError) => {
         console.error('[EXT_MON] failed to update monitor task:', monitorError);
       });
@@ -315,8 +337,14 @@ export async function POST(request: NextRequest) {
         level: 'error',
         stage: 'failed',
         endpoint,
-        httpStatus: error instanceof ExtensionAuthError ? error.status : 500,
-        message: error instanceof Error ? error.message : String(error),
+        httpStatus: failure.status,
+        message: failure.message,
+        responseBody: {
+          success: false,
+          code: failure.code,
+          error: failure.message,
+          details: failure.details,
+        },
         errorStack: error instanceof Error ? error.stack || null : null,
       }).catch((monitorError) => {
         console.error('[EXT_MON] failed to record monitor event:', monitorError);
@@ -338,22 +366,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          code: error.code,
-          error: error.message,
-          details: error.details,
+          code: failure.code,
+          error: failure.message,
+          details: failure.details,
         },
-        { status: error.status },
+        { status: failure.status },
       );
     }
 
     return NextResponse.json(
       {
         success: false,
-        code: 'UPLOAD_YOUTUBE_FAILED',
-        error: 'Failed to upload YouTube transcript from extension.',
-        details: error instanceof Error ? error.message : String(error),
+        code: failure.code,
+        error: failure.message,
+        details: failure.details,
       },
-      { status: 500 },
+      { status: failure.status },
     );
   }
 }

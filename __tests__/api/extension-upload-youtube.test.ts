@@ -260,8 +260,9 @@ describe('Extension upload-youtube API title handling', () => {
     );
   });
 
-  it('maps PodcastUploadError status, code, error, and details', async () => {
+  it('keeps monitor failure metadata consistent with PodcastUploadError responses', async () => {
     const { PodcastUploadError } = require('../../lib/podcastUploadPipeline');
+    mockCreateExtensionMonitorTask.mockResolvedValueOnce({ id: 'monitor-123' });
     mockFetchYoutubeSrtViaApify.mockResolvedValue({
       videoId: 'I9aGC6Ui3eE',
       title: 'Untitled',
@@ -271,7 +272,12 @@ describe('Extension upload-youtube API title handling', () => {
       entries: 1,
     });
     mockCreatePodcastFromSrt.mockRejectedValueOnce(
-      new PodcastUploadError('SAVE_FAILED', 500, 'Failed to save podcast.', 'db timeout'),
+      new PodcastUploadError(
+        'INSUFFICIENT_CREDITS',
+        402,
+        '积分不足，无法继续转换 SRT。',
+        'Insufficient credits.',
+      ),
     );
 
     const response = await POST(
@@ -281,12 +287,37 @@ describe('Extension upload-youtube API title handling', () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(402);
     expect(data).toEqual({
       success: false,
-      code: 'SAVE_FAILED',
-      error: 'Failed to save podcast.',
-      details: 'db timeout',
+      code: 'INSUFFICIENT_CREDITS',
+      error: '积分不足，无法继续转换 SRT。',
+      details: 'Insufficient credits.',
     });
+    expect(mockUpdateExtensionMonitorTask).toHaveBeenLastCalledWith(
+      'monitor-123',
+      expect.objectContaining({
+        status: 'failed',
+        stage: 'failed',
+        lastErrorCode: 'INSUFFICIENT_CREDITS',
+        lastErrorMessage: '积分不足，无法继续转换 SRT。',
+        lastHttpStatus: 402,
+      }),
+    );
+    expect(mockRecordExtensionMonitorEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        taskId: 'monitor-123',
+        level: 'error',
+        stage: 'failed',
+        httpStatus: 402,
+        message: '积分不足，无法继续转换 SRT。',
+        responseBody: {
+          success: false,
+          code: 'INSUFFICIENT_CREDITS',
+          error: '积分不足，无法继续转换 SRT。',
+          details: 'Insufficient credits.',
+        },
+      }),
+    );
   });
 });
