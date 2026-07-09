@@ -287,6 +287,48 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it('preserves response_sent monitor state when a saved podcast was not queued on a later poll', async () => {
+    mockGetExtensionTranscriptionJobForUser.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        status: 'completed',
+        podcastId: 'podcast-123',
+      },
+    });
+    mockFindMonitorTaskByTranscriptionJobId.mockResolvedValueOnce({
+      id: 'monitor-123',
+      status: 'accepted',
+      stage: 'response_sent',
+    });
+
+    const response = await callRoute();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      data: {
+        status: 'completed',
+        podcastId: 'podcast-123',
+        dashboardUrl: 'https://podsum.cc/dashboard/podcast-123',
+        lastError: null,
+        monitorTaskId: 'monitor-123',
+      },
+    });
+    expect(mockUpdateExtensionMonitorTask).toHaveBeenCalledWith(
+      'monitor-123',
+      expect.objectContaining({
+        status: 'accepted',
+        stage: 'response_sent',
+        transcriptionJobId: 'job-123',
+        podcastId: 'podcast-123',
+      }),
+    );
+    expect(mockCreatePodcastFromSrt).not.toHaveBeenCalled();
+    expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
+  });
+
   it('marks the transcription job failed and returns the generic 500 envelope when the shared helper throws', async () => {
     const { PodcastUploadError } = require('../../lib/podcastUploadPipeline');
     mockCreatePodcastFromSrt.mockRejectedValueOnce(

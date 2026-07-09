@@ -156,9 +156,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
 
     if (job.status === 'completed' && job.podcastId) {
       if (monitorTaskId) {
+        const preserveResponseSent = monitorTask?.status === 'accepted' && monitorTask?.stage === 'response_sent';
         await updateExtensionMonitorTask(monitorTaskId, {
-          status: 'queued',
-          stage: 'processing_queued',
+          status: preserveResponseSent ? 'accepted' : 'queued',
+          stage: preserveResponseSent ? 'response_sent' : 'processing_queued',
           transcriptionJobId: job.id,
           podcastId: job.podcastId,
           providerTaskId: job.providerTaskId,
