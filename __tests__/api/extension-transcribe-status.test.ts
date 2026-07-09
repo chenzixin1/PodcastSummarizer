@@ -66,10 +66,13 @@ jest.mock('../../lib/workerTrigger', () => ({
 
 jest.mock('../../lib/objectStorage', () => ({
   deleteObject: jest.fn(),
+  getObjectText: jest.fn(),
+  uploadObject: jest.fn(),
 }));
 
 jest.mock('../../lib/db', () => ({
   getPodcast: jest.fn(),
+  updatePodcastStoredFile: jest.fn(),
 }));
 
 jest.mock('../../lib/processingJobs', () => ({
@@ -111,7 +114,10 @@ const mockQueryVolcanoTask = jest.fn();
 const mockSrtFromVolcanoResult = jest.fn();
 const mockTriggerWorkerProcessing = jest.fn();
 const mockDeleteObject = jest.fn();
+const mockGetObjectText = jest.fn();
+const mockUploadObject = jest.fn();
 const mockGetPodcast = jest.fn();
+const mockUpdatePodcastStoredFile = jest.fn();
 const mockEnqueueProcessingJob = jest.fn();
 const mockGetProcessingJob = jest.fn();
 const mockCreatePodcastFromSrt = jest.fn();
@@ -157,7 +163,10 @@ beforeEach(() => {
   require('../../lib/volcanoTranscription').srtFromVolcanoResult = mockSrtFromVolcanoResult;
   require('../../lib/workerTrigger').triggerWorkerProcessing = mockTriggerWorkerProcessing;
   require('../../lib/objectStorage').deleteObject = mockDeleteObject;
+  require('../../lib/objectStorage').getObjectText = mockGetObjectText;
+  require('../../lib/objectStorage').uploadObject = mockUploadObject;
   require('../../lib/db').getPodcast = mockGetPodcast;
+  require('../../lib/db').updatePodcastStoredFile = mockUpdatePodcastStoredFile;
   require('../../lib/processingJobs').enqueueProcessingJob = mockEnqueueProcessingJob;
   require('../../lib/processingJobs').getProcessingJob = mockGetProcessingJob;
   require('../../lib/podcastUploadPipeline').createPodcastFromSrt = mockCreatePodcastFromSrt;
@@ -202,7 +211,14 @@ beforeEach(() => {
   mockSrtFromVolcanoResult.mockReturnValue('1\n00:00:00,000 --> 00:00:02,000\nhello');
   mockTriggerWorkerProcessing.mockResolvedValue({ success: true });
   mockDeleteObject.mockResolvedValue(undefined);
+  mockGetObjectText.mockResolvedValue('1\n00:00:00,000 --> 00:00:02,000\nhello');
+  mockUploadObject.mockResolvedValue({
+    key: 'extension-srt/reserved-podcast-Episode_1.srt',
+    provider: 'r2',
+    url: 'https://podsum.cc/api/files/extension-srt/reserved-podcast-Episode_1.srt',
+  });
   mockGetPodcast.mockResolvedValue({ success: false, error: 'Podcast not found' });
+  mockUpdatePodcastStoredFile.mockResolvedValue({ success: true, data: { id: 'reserved-podcast' } });
   mockGetProcessingJob.mockResolvedValue({
     success: false,
     data: null,
@@ -383,6 +399,35 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
     expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
   });
 
+  it('requeues a completed Path2 job when its processing job row is missing', async () => {
+    mockGetExtensionTranscriptionJobForUser.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        status: 'completed',
+        podcastId: 'podcast-123',
+      },
+    });
+
+    const response = await callRoute();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data).toEqual({
+      status: 'completed',
+      podcastId: 'podcast-123',
+      dashboardUrl: 'https://podsum.cc/dashboard/podcast-123',
+      lastError: null,
+      monitorTaskId: 'monitor-123',
+      processingQueued: true,
+      queueError: null,
+      remainingCredits: null,
+    });
+    expect(mockGetProcessingJob).toHaveBeenCalledWith('podcast-123');
+    expect(mockEnqueueProcessingJob).toHaveBeenCalledWith('podcast-123');
+    expect(mockTriggerWorkerProcessing).toHaveBeenCalledWith('upload', 'podcast-123');
+  });
+
   it('reuses a reserved podcast id and requeues without charging again when a previous completion saved the podcast row', async () => {
     mockGetExtensionTranscriptionJobForUser.mockResolvedValueOnce({
       success: true,
@@ -428,6 +473,9 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
     });
     expect(mockNanoid).not.toHaveBeenCalled();
     expect(mockCreatePodcastFromSrt).not.toHaveBeenCalled();
+    expect(mockGetObjectText).toHaveBeenCalledWith(
+      'https://podsum.cc/api/files/extension-srt/reserved-podcast-Episode_1.srt',
+    );
     expect(mockGetProcessingJob).toHaveBeenCalledWith('reserved-podcast');
     expect(mockEnqueueProcessingJob).toHaveBeenCalledWith('reserved-podcast');
     expect(mockUpdateExtensionTranscriptionJobCompleted).toHaveBeenCalledWith(
@@ -436,6 +484,97 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
       'reserved-podcast',
     );
     expect(mockTriggerWorkerProcessing).toHaveBeenCalledWith('upload', 'reserved-podcast');
+  });
+
+  it('repairs a saved Path2 podcast row whose R2 object is missing before requeueing', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockGetExtensionTranscriptionJobForUser.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        podcastId: 'reserved-podcast',
+      },
+    });
+    mockReserveExtensionTranscriptionJobPodcastId.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        podcastId: 'reserved-podcast',
+      },
+    });
+    mockGetPodcast.mockResolvedValueOnce({
+      success: true,
+      data: {
+        id: 'reserved-podcast',
+        blobUrl: 'https://podsum.cc/api/files/extension-srt/reserved-podcast-Episode_1.srt',
+        fileSize: null,
+        originalFileName: 'Episode_1.srt',
+      },
+    });
+    mockGetObjectText.mockRejectedValueOnce(new Error('File not found in object storage.'));
+    mockUploadObject.mockResolvedValueOnce({
+      key: 'extension-srt/reserved-podcast-Episode_1.srt',
+      provider: 'r2',
+      url: 'https://podsum.cc/api/files/extension-srt/reserved-podcast-Episode_1.srt',
+    });
+
+    const response = await callRoute();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.podcastId).toBe('reserved-podcast');
+    expect(data.data.processingQueued).toBe(true);
+    expect(mockUploadObject).toHaveBeenCalledWith(
+      'extension-srt/reserved-podcast-Episode_1.srt',
+      expect.any(Buffer),
+      { contentType: 'application/x-subrip' },
+    );
+    expect(mockUpdatePodcastStoredFile).toHaveBeenCalledWith('reserved-podcast', {
+      originalFileName: 'Episode_1.srt',
+      fileSize: '0.04 KB',
+      blobUrl: 'https://podsum.cc/api/files/extension-srt/reserved-podcast-Episode_1.srt',
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[EXTENSION_TRANSCRIBE_STATUS] Existing Path2 podcast file is unreadable; re-uploading SRT:',
+      expect.any(Error),
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('recovers a concurrent duplicate save as an existing Path2 podcast instead of failing the job', async () => {
+    const { PodcastUploadError } = require('../../lib/podcastUploadPipeline');
+    mockGetPodcast
+      .mockResolvedValueOnce({ success: false, error: 'Podcast not found' })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          id: 'podcast-123',
+          blobUrl: 'https://podsum.cc/api/files/extension-srt/podcast-123-Episode_1.srt',
+          fileSize: '0.04 KB',
+          originalFileName: 'Episode_1.srt',
+        },
+      });
+    mockCreatePodcastFromSrt.mockRejectedValueOnce(
+      new PodcastUploadError('PODCAST_ALREADY_EXISTS', 409, 'Podcast already exists.', 'duplicate key'),
+    );
+
+    const response = await callRoute();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data).toEqual({
+      status: 'completed',
+      podcastId: 'podcast-123',
+      dashboardUrl: 'https://podsum.cc/dashboard/podcast-123',
+      lastError: null,
+      monitorTaskId: 'monitor-123',
+      processingQueued: true,
+      queueError: null,
+      remainingCredits: null,
+    });
+    expect(mockUpdateExtensionTranscriptionJobFailed).not.toHaveBeenCalled();
+    expect(mockUpdateExtensionTranscriptionJobCompleted).toHaveBeenCalledWith('job-123', 'user-123', 'podcast-123');
   });
 
   it('does not reset an existing processing job when recovering a saved Path2 podcast', async () => {

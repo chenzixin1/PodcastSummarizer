@@ -322,6 +322,7 @@ function podcastListPayload(row: PodcastRow) {
     title: String(row.title || row.originalFileName || ''),
     originalFileName: String(row.originalFileName || ''),
     sourceReference: row.sourceReference || null,
+    sourcePublishedAt: normalizeDate(row.sourcePublishedAt),
     tags: Array.isArray(row.tags) ? row.tags : [],
     isPublic: Boolean(row.isPublic),
     isProcessed: Boolean(row.isProcessed),

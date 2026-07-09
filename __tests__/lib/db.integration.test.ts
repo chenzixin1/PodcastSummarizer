@@ -58,6 +58,7 @@ describe('Database Integration Tests', () => {
         originalFileName: 'test.srt',
         fileSize: '1.5 KB',
         blobUrl: 'https://example.com/test.srt',
+        sourcePublishedAt: '2026-07-09T00:00:00.000Z',
         isPublic: true,
       };
 
@@ -71,7 +72,8 @@ describe('Database Integration Tests', () => {
       expect(insertCall[4]).toBe('1.5 KB');
       expect(insertCall[5]).toBe('https://example.com/test.srt');
       expect(insertCall[6]).toBeNull();
-      expect(insertCall[7]).toBe(true);
+      expect(insertCall[7]).toBe('2026-07-09T00:00:00.000Z');
+      expect(insertCall[8]).toBe(true);
     });
 
     test('savePodcastWithCreditDeduction should persist sourcePublishedAt in the insert SQL', async () => {
@@ -205,6 +207,26 @@ describe('Database Integration Tests', () => {
       expect(upgradeSchema).toContain('ALTER TABLE podcasts');
       expect(upgradeSchema).toContain('ADD COLUMN source_published_at TEXT');
     });
+
+    test('D1 import and export scripts preserve source_published_at', () => {
+      const exportScript = fs.readFileSync(
+        path.resolve(__dirname, '../../scripts/export-postgres-to-d1-sql.mjs'),
+        'utf8',
+      );
+      const importScript = fs.readFileSync(
+        path.resolve(__dirname, '../../scripts/import-postgres-to-d1.mjs'),
+        'utf8',
+      );
+      const packageJson = JSON.parse(
+        fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+      ) as { scripts: Record<string, string> };
+
+      expect(exportScript).toContain("'source_published_at'");
+      expect(importScript).toContain("'source_published_at'");
+      expect(packageJson.scripts['d1:migrations:apply:prod']).toContain(
+        'wrangler d1 migrations apply PODSUM_DB --remote --config output/cutover/wrangler.production.jsonc',
+      );
+    });
   });
 
   describe('Edge Cases and Data Validation', () => {
@@ -227,7 +249,8 @@ describe('Database Integration Tests', () => {
       expect(insertCall[2]).toBe(`Test's "Special" Characters & Symbols`);
       expect(insertCall[3]).toBe('test file (1).srt');
       expect(insertCall[5]).toBe('https://example.com/test%20file.srt');
-      expect(insertCall[7]).toBe(false);
+      expect(insertCall[7]).toBeNull();
+      expect(insertCall[8]).toBe(false);
     });
 
     test('should handle long content in analysis results', async () => {
@@ -272,7 +295,8 @@ describe('Database Integration Tests', () => {
       expect(insertCall[4]).toBe('');
       expect(insertCall[5]).toBe('');
       expect(insertCall[6]).toBeNull();
-      expect(insertCall[7]).toBe(false);
+      expect(insertCall[7]).toBeNull();
+      expect(insertCall[8]).toBe(false);
     });
 
     test('should handle extreme pagination values', async () => {

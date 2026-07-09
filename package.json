@@ -20,7 +20,7 @@
     "cutover:dry-run": "node scripts/dry-run-cloudflare-cutover.mjs",
     "d1:export-sql": "node scripts/export-postgres-to-d1-sql.mjs",
     "d1:import-postgres": "node scripts/import-postgres-to-d1.mjs",
-    "d1:migrations:apply:prod": "test -n \"$PRODUCTION_D1_DATABASE_ID\" && wrangler d1 migrations apply \"$PRODUCTION_D1_DATABASE_ID\" --remote",
+    "d1:migrations:apply:prod": "npm run cutover:prepare && wrangler d1 migrations apply PODSUM_DB --remote --config output/cutover/wrangler.production.jsonc",
     "d1:apply-r2-manifest": "node scripts/apply-r2-migration-manifest-d1.mjs",
     "r2:apply-manifest": "node scripts/apply-r2-migration-manifest.mjs",
     "r2:rollback-manifest": "node scripts/rollback-r2-migration-manifest.mjs",

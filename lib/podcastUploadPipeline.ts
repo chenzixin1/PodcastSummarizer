@@ -8,6 +8,7 @@ export type PodcastUploadErrorCode =
   | 'UPLOAD_FAILED'
   | 'INSUFFICIENT_CREDITS'
   | 'USER_NOT_FOUND'
+  | 'PODCAST_ALREADY_EXISTS'
   | 'SAVE_FAILED';
 
 export class PodcastUploadError extends Error {
@@ -77,6 +78,9 @@ function saveErrorToUploadError(errorCode: string | undefined, error: string | u
   if (errorCode === 'USER_NOT_FOUND') {
     return new PodcastUploadError('USER_NOT_FOUND', 404, 'User not found.', error);
   }
+  if (errorCode === 'PODCAST_ALREADY_EXISTS') {
+    return new PodcastUploadError('PODCAST_ALREADY_EXISTS', 409, 'Podcast already exists.', error);
+  }
   return new PodcastUploadError('SAVE_FAILED', 500, 'Failed to save podcast.', error);
 }
 
@@ -107,9 +111,11 @@ export async function createPodcastFromSrt(input: CreatePodcastFromSrtInput): Pr
     const saveResult = await savePodcastWithCreditDeduction(savePayload);
 
     if (!saveResult.success) {
-      await deleteObject(blobUrl).catch((deleteError) => {
-        console.error('[UPLOAD_PIPELINE] Failed to delete orphaned object:', deleteError);
-      });
+      if (saveResult.errorCode !== 'PODCAST_ALREADY_EXISTS') {
+        await deleteObject(blobUrl).catch((deleteError) => {
+          console.error('[UPLOAD_PIPELINE] Failed to delete orphaned object:', deleteError);
+        });
+      }
       throw saveErrorToUploadError(saveResult.errorCode, saveResult.error);
     }
 

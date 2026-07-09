@@ -135,17 +135,6 @@ export default function UploadPage() {
         throw new Error('Upload succeeded but podcast id is missing.');
       }
 
-      if (result?.data?.processingQueued === false) {
-        try {
-          window.sessionStorage.setItem(
-            `podsum-upload-warning-${id}`,
-            result?.data?.queueError || 'Upload saved, but processing was not queued automatically.',
-          );
-        } catch (storageError) {
-          console.warn('Failed to persist upload queue warning.', storageError);
-        }
-      }
-
       const updatedCredits = parseCredits(result?.data?.remainingCredits);
       if (updatedCredits !== null) {
         setRemainingCredits(updatedCredits);

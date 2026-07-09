@@ -141,6 +141,21 @@ describe('podcastUploadPipeline', () => {
     expect(mockDeleteObject).toHaveBeenCalledWith('https://podsum.cc/api/files/podcast-123-Yy3JH6dDugc.srt');
   });
 
+  it('does not delete the uploaded object when the podcast row already exists', async () => {
+    mockSavePodcastWithCreditDeduction.mockResolvedValueOnce({
+      success: false,
+      errorCode: 'PODCAST_ALREADY_EXISTS',
+      error: 'Podcast already exists.',
+    });
+
+    await expect(createPodcastFromSrt(baseInput)).rejects.toMatchObject({
+      code: 'PODCAST_ALREADY_EXISTS',
+      status: 409,
+      message: 'Podcast already exists.',
+    });
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
   it('returns a recoverable queue failure without deleting the saved podcast row', async () => {
     mockEnqueueProcessingJob.mockResolvedValueOnce({
       success: false,

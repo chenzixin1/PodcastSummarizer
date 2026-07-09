@@ -42,6 +42,7 @@ const tables = [
       'file_size',
       'blob_url',
       'source_reference',
+      'source_published_at',
       'tags_json',
       'is_public',
       'user_id',
