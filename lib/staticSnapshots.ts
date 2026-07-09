@@ -183,8 +183,14 @@ export async function publishAnalysisSnapshotForPodcast(podcastId: string): Prom
   try {
     const podcastResult = await getPodcast(podcastId);
     if (!podcastResult.success) {
-      await deleteObject(analysisSnapshotKey(podcastId));
-      return { success: true, published: false };
+      return {
+        success: true,
+        published: false,
+        error: formatSnapshotFailure(
+          podcastResult.error || '',
+          `Failed to load podcast ${podcastId} while refreshing analysis snapshot`,
+        ),
+      };
     }
 
     const podcast = asRecord(podcastResult.data);
@@ -194,7 +200,17 @@ export async function publishAnalysisSnapshotForPodcast(podcastId: string): Prom
     }
 
     const analysisResult = await getAnalysisResults(podcastId);
-    const analysis = analysisResult.success ? asRecord(analysisResult.data) : null;
+    if (!analysisResult.success) {
+      return {
+        success: true,
+        published: false,
+        error: formatSnapshotFailure(
+          analysisResult.error || '',
+          `Failed to load analysis for podcast ${podcastId} while refreshing analysis snapshot`,
+        ),
+      };
+    }
+    const analysis = asRecord(analysisResult.data);
     if (!hasCompleteAnalysis(analysis)) {
       await deleteObject(analysisSnapshotKey(podcastId));
       return { success: true, published: false };

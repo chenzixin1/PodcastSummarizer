@@ -3,6 +3,7 @@
  */
 
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 type GuardModule = {
   parseGitStatus: (output: string) => Array<{ status: string; filePath: string }>;
@@ -127,5 +128,21 @@ describe('guard-worktree-drift', () => {
 
     expect(result.ok).toBe(true);
     expect(result.warnings.join('\n')).toContain('ALLOW_DIRTY_DEPLOY=1');
+  });
+
+  test('prints the emergency bypass warning to stdout in CLI mode', () => {
+    const scriptPath = path.join(__dirname, '../../scripts/guard-worktree-drift.mjs');
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: path.join(__dirname, '../..'),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ALLOW_DIRTY_DEPLOY: '1',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('ALLOW_DIRTY_DEPLOY=1');
+    expect(result.stderr).not.toContain('ALLOW_DIRTY_DEPLOY=1');
   });
 });

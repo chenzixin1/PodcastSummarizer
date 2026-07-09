@@ -145,7 +145,7 @@ function main() {
   const result = assertNoDeployDrift({ repoRoot });
 
   for (const warning of result.warnings) {
-    console.warn(`[deploy guard] ${warning}`);
+    console.log(`[deploy guard] ${warning}`);
   }
   if (!result.ok) {
     for (const error of result.errors) {

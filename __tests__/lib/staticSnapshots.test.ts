@@ -108,6 +108,71 @@ describe('staticSnapshots', () => {
     expect(mockUploadObject).not.toHaveBeenCalled();
   });
 
+  test('preserves existing analysis snapshots when podcast refresh fails transiently', async () => {
+    mockGetPodcast.mockResolvedValue({
+      success: false,
+      error: 'db down',
+    });
+
+    const result = await publishAnalysisSnapshotForPodcast('pod-1');
+
+    expect(result).toEqual({
+      success: true,
+      published: false,
+      error: 'db down',
+    });
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(mockUploadObject).not.toHaveBeenCalled();
+  });
+
+  test('preserves existing analysis snapshots when analysis refresh fails transiently', async () => {
+    mockGetPodcast.mockResolvedValue({
+      success: true,
+      data: {
+        id: 'pod-1',
+        isPublic: true,
+      },
+    });
+    mockGetAnalysisResults.mockResolvedValue({
+      success: false,
+      error: 'db down',
+    });
+
+    const result = await publishAnalysisSnapshotForPodcast('pod-1');
+
+    expect(result).toEqual({
+      success: true,
+      published: false,
+      error: 'db down',
+    });
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(mockUploadObject).not.toHaveBeenCalled();
+  });
+
+  test('deletes analysis snapshots when public podcast analysis is incomplete after a successful read', async () => {
+    mockGetPodcast.mockResolvedValue({
+      success: true,
+      data: {
+        id: 'pod-1',
+        isPublic: true,
+      },
+    });
+    mockGetAnalysisResults.mockResolvedValue({
+      success: true,
+      data: {
+        podcastId: 'pod-1',
+        summaryZh: 'Only summary',
+        highlights: '',
+      },
+    });
+
+    const result = await publishAnalysisSnapshotForPodcast('pod-1');
+
+    expect(result).toEqual({ success: true, published: false });
+    expect(mockDeleteObject).toHaveBeenCalledWith(analysisSnapshotKey('pod-1'));
+    expect(mockUploadObject).not.toHaveBeenCalled();
+  });
+
   test('reads only usable public analysis snapshots', async () => {
     mockGetObjectText.mockResolvedValue(JSON.stringify({
       snapshotVersion: 1,
