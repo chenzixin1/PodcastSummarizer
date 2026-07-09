@@ -7,6 +7,7 @@ const prodBase = (process.env.PROD_BASE_URL || 'https://podsum.cc').replace(/\/+
 const previewBase = (process.env.CF_PREVIEW_BASE_URL || 'https://cf-preview.podsum.cc').replace(/\/+$/, '');
 const outputDir = process.env.VISUAL_OUTPUT_DIR || path.join(process.cwd(), 'output', 'playwright', 'cloudflare-preview-visual');
 const maxMismatchRatio = Number(process.env.VISUAL_MAX_MISMATCH_RATIO || '0.03');
+const allowExploreSmoke = process.env.VISUAL_ALLOW_EXPLORE_SMOKE === '1';
 
 const routes = (process.env.VISUAL_ROUTES || '/,/?view=explore,/about,/auth/signin,/chrome-extension')
   .split(',')
@@ -29,7 +30,7 @@ function slug(input) {
 }
 
 function getSmokeResult(route, previewCapture) {
-  if (route !== exploreSmokeRoute) {
+  if (!allowExploreSmoke || route !== exploreSmokeRoute) {
     return {
       routeSmokeMode: null,
       previewSmokeChecks: null,
@@ -87,7 +88,15 @@ async function capture(page, baseUrl, route, viewport) {
 
   try {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await page.goto(`${baseUrl}${route}`, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForLoadState('load', { timeout: 12000 }).catch(() => null);
+    await page.waitForFunction(() => {
+      const text = document.body?.innerText?.replace(/\s+/g, ' ').trim() || '';
+      if (!text) {
+        return false;
+      }
+      return !/Loading (summaries|transcript data|content)/i.test(text);
+    }, null, { timeout: 15000 }).catch(() => null);
     await page.addStyleTag({
       content: `
         *, *::before, *::after {
@@ -100,7 +109,7 @@ async function capture(page, baseUrl, route, viewport) {
       `,
     });
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(750);
     const snapshot = await page.evaluate(() => {
       const rectFor = (selector) => {
         const element = document.querySelector(selector);

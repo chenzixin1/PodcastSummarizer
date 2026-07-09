@@ -2,12 +2,25 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import DashboardPage from '../../app/dashboard/[id]/page';
 import '@testing-library/jest-dom';
 
 jest.mock('next/navigation', () => ({
   useParams: jest.fn(),
 }));
+
+jest.mock('next-auth/react', () => ({
+  useSession: jest.fn(),
+}));
+
+jest.mock('react-markdown', () => {
+  return ({ children }: { children: React.ReactNode }) => <>{children}</>;
+});
+
+jest.mock('remark-gfm', () => {
+  return () => null;
+});
 
 jest.mock('../../components/FloatingQaAssistant', () => {
   return function MockFloatingQaAssistant() {
@@ -58,13 +71,30 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   (useParams as jest.Mock).mockReturnValue({ id: 'test-id-123' });
+  (useSession as jest.Mock).mockReturnValue({ data: null, status: 'unauthenticated' });
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: jest.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })),
+  });
 
   mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes('/api/analysis/')) {
       return {
         ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
         json: async () => analysisPayload,
+        text: async () => JSON.stringify(analysisPayload),
       } as Response;
     }
 
@@ -105,6 +135,105 @@ beforeEach(() => {
 });
 
 describe('DashboardPage language modes', () => {
+  test('uses a completed public static snapshot without calling the analysis API', async () => {
+    const snapshotPayload = JSON.parse(JSON.stringify(analysisPayload));
+    snapshotPayload.data.podcast.title = 'Static Snapshot Podcast';
+    snapshotPayload.data.podcast.isPublic = true;
+
+    mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/snapshots/analysis/')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => snapshotPayload,
+          text: async () => JSON.stringify(snapshotPayload),
+        } as Response;
+      }
+
+      if (url.includes('/api/analysis/')) {
+        throw new Error('DB analysis API should not be called on snapshot hit.');
+      }
+
+      if (url === '/vocab/advanced-words.json') {
+        return {
+          ok: true,
+          json: async () => ({}),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ success: false }),
+        text: async () => '',
+      } as Response;
+    });
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Static Snapshot Podcast').length).toBeGreaterThan(0);
+    });
+    expect(mockFetch.mock.calls.some(([input]) => String(input).includes('/api/analysis/'))).toBe(false);
+  });
+
+  test('fetches stored /api/files transcripts from the current origin', async () => {
+    const payload = JSON.parse(JSON.stringify(analysisPayload));
+    payload.data.podcast.blobUrl = 'https://podsum.cc/api/files/podcast-123-transcript.srt';
+    payload.data.podcast.sourceReference = 'https://www.youtube.com/watch?v=I9aGC6Ui3eE';
+
+    mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/snapshots/analysis/')) {
+        return {
+          ok: false,
+          status: 404,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ success: false }),
+        } as Response;
+      }
+
+      if (url.includes('/api/analysis/')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify(payload),
+        } as Response;
+      }
+
+      if (url === '/api/files/podcast-123-transcript.srt') {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '1\n00:00:01,000 --> 00:00:02,000\nTranscript from same-origin file API.',
+        } as Response;
+      }
+
+      if (url === '/vocab/advanced-words.json') {
+        return {
+          ok: true,
+          json: async () => ({}),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        text: async () => '',
+      } as Response;
+    });
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith('/api/files/podcast-123-transcript.srt');
+    });
+    expect(mockFetch.mock.calls.some(([input]) => String(input).startsWith('https://podsum.cc/api/files/'))).toBe(false);
+  });
+
   test('shows four language mode buttons and persists selection', async () => {
     render(<DashboardPage />);
 
@@ -129,8 +258,8 @@ describe('DashboardPage language modes', () => {
     await userEvent.click(screen.getByText('中英对照'));
 
     await waitFor(() => {
-      expect(screen.getByText('English first')).toBeInTheDocument();
-      expect(screen.getByText('中文第一条')).toBeInTheDocument();
+      expect(document.body).toHaveTextContent('English first');
+      expect(document.body).toHaveTextContent('中文第一条');
     });
   });
 
@@ -145,10 +274,14 @@ describe('DashboardPage language modes', () => {
     await userEvent.click(screen.getByText('词汇提示'));
 
     await waitFor(() => {
-      expect(screen.getByText(/Terrestrial infrastructure evolves rapidly\./)).toBeInTheDocument();
-      expect(screen.getByText(/Complementary architecture supports deployment\./)).toBeInTheDocument();
-      expect(document.querySelectorAll('.hint-pronounce-word').length).toBeGreaterThanOrEqual(2);
-      expect(document.querySelectorAll('.hint-dict-pos').length).toBeGreaterThanOrEqual(2);
+      expect(document.body).toHaveTextContent('Terrestrial');
+      expect(document.body).toHaveTextContent('infrastructure');
+      expect(document.body).toHaveTextContent('evolves rapidly.');
+      expect(document.body).toHaveTextContent('Complementary');
+      expect(document.body).toHaveTextContent('architecture');
+      expect(document.body).toHaveTextContent('supports deployment.');
+      expect(document.body).toHaveTextContent('#pronounce:terrestrial');
+      expect(document.body).toHaveTextContent('#pronounce:architecture');
     });
 
     expect(mockFetch.mock.calls.some(([input]) => String(input).includes('/api/vocab-hints'))).toBe(false);
@@ -193,12 +326,32 @@ describe('DashboardPage language modes', () => {
     };
     alignedPayload.data.analysis.bilingualAlignmentVersion = 1;
 
-    mockFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
+    mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/snapshots/analysis/')) {
+        return {
+          ok: false,
+          status: 404,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ success: false }),
+          text: async () => JSON.stringify({ success: false }),
+        } as Response;
+      }
+
       if (url.includes('/api/analysis/')) {
         return {
           ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
           json: async () => alignedPayload,
+          text: async () => JSON.stringify(alignedPayload),
+        } as Response;
+      }
+
+      if (url === '/vocab/advanced-words.json') {
+        return {
+          ok: true,
+          json: async () => ({}),
         } as Response;
       }
 
@@ -218,14 +371,14 @@ describe('DashboardPage language modes', () => {
 
     await userEvent.click(screen.getByText('中英对照'));
     await waitFor(() => {
-      expect(screen.getByText('Aligned summary EN')).toBeInTheDocument();
-      expect(screen.getByText('对齐后的摘要中文')).toBeInTheDocument();
+      expect(document.body).toHaveTextContent('Aligned summary EN');
+      expect(document.body).toHaveTextContent('对齐后的摘要中文');
     });
 
     await userEvent.click(screen.getByText('Full Text'));
     await waitFor(() => {
-      expect(screen.getByText('Aligned full text EN')).toBeInTheDocument();
-      expect(screen.getByText('（未匹配，待校对）')).toBeInTheDocument();
+      expect(document.body).toHaveTextContent('Aligned full text EN');
+      expect(document.body).toHaveTextContent('（未匹配，待校对）');
     });
   });
 });

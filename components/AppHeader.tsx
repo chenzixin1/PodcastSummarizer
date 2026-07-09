@@ -41,6 +41,15 @@ function UploadIcon() {
   );
 }
 
+function SignInIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+      <path d="M8.5 5H5.5V15H8.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9.5 10H15.5M12.8 6.8L15.8 10L12.8 13.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function MenuIcon({ type }: { type: 'profile' | 'credits' | 'pricing' | 'mcp' | 'extension' | 'explore' | 'about' | 'signout' }) {
   const common = 'currentColor';
   if (type === 'profile') {
@@ -139,13 +148,14 @@ export default function AppHeader({
   showViewTabs = true,
 }: AppHeaderProps) {
   const { data: session, status } = useSession();
+  const isAuthenticated = status === 'authenticated';
   const email = session?.user?.email || '';
-  const initials = (session?.user?.name || email || 'CZ')
+  const initials = (session?.user?.name || email || 'PS')
     .split(/[\s@._-]+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
-    .join('') || 'CZ';
+    .join('') || 'PS';
 
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--border-soft)] bg-[var(--header-bg)] backdrop-blur-xl">
@@ -176,12 +186,23 @@ export default function AppHeader({
         )}
 
         <div className="flex items-center justify-end gap-2">
-            <ThemeModeSwitch themeMode={themeMode} onToggle={onThemeToggle} />
-            <Link href="/upload" className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--btn-primary)] px-3 text-sm font-semibold text-[var(--btn-primary-text)] transition-colors hover:bg-[var(--btn-primary-hover)] sm:px-4">
-              <UploadIcon />
-              Upload
-            </Link>
+          <ThemeModeSwitch themeMode={themeMode} onToggle={onThemeToggle} />
+          <Link
+            href="/upload"
+            className={[
+              'inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors sm:px-4',
+              isAuthenticated
+                ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)]'
+                : 'border border-[var(--border-soft)] bg-[var(--paper-base)] text-[var(--heading)] hover:bg-[var(--paper-muted)]',
+            ].join(' ')}
+          >
+            <UploadIcon />
+            Upload
+          </Link>
 
+          {status === 'loading' ? (
+            <span className="h-10 w-20 rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)]" aria-label="Loading account status" />
+          ) : isAuthenticated ? (
             <div className="group relative">
               <button
                 type="button"
@@ -202,7 +223,7 @@ export default function AppHeader({
                   </span>
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-[var(--heading)]">
-                      {email || (status === 'authenticated' ? 'PodSum user' : 'Guest')}
+                      {email || 'PodSum user'}
                     </div>
                     <div className="text-xs text-[var(--text-muted)]">PodSum</div>
                   </div>
@@ -221,20 +242,27 @@ export default function AppHeader({
                 <MenuRow href="/?view=explore" icon="explore" label="Explore" />
                 <MenuRow href="/about" icon="about" label="About" />
 
-                {status === 'authenticated' && (
-                  <button
-                    type="button"
-                    onClick={() => signOut({ callbackUrl: '/' })}
-                    className="mt-2 flex w-full items-center gap-3 rounded-lg border-t border-[var(--border-soft)] px-2.5 py-2 text-sm font-medium text-[var(--danger)] hover:bg-[#fff5f5]"
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#d8b7b7] bg-[var(--paper-base)]">
-                      <MenuIcon type="signout" />
-                    </span>
-                    <span className="flex-1 text-left">Sign out</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => signOut({ callbackUrl: '/' })}
+                  className="mt-2 flex w-full items-center gap-3 rounded-lg border-t border-[var(--border-soft)] px-2.5 py-2 text-sm font-medium text-[var(--danger)] hover:bg-[#fff5f5]"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#d8b7b7] bg-[var(--paper-base)]">
+                    <MenuIcon type="signout" />
+                  </span>
+                  <span className="flex-1 text-left">Sign out</span>
+                </button>
               </div>
             </div>
+          ) : (
+            <Link
+              href="/auth/signin?callbackUrl=/"
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--btn-primary)] px-4 text-sm font-semibold text-[var(--btn-primary-text)] transition-colors hover:bg-[var(--btn-primary-hover)]"
+            >
+              <SignInIcon />
+              Sign in
+            </Link>
+          )}
         </div>
       </div>
     </header>
