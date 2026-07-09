@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS podcasts (
   file_size TEXT NOT NULL,
   blob_url TEXT,
   source_reference TEXT,
+  source_published_at TEXT,
   tags_json TEXT DEFAULT '[]',
   is_public INTEGER DEFAULT 0,
   user_id TEXT REFERENCES users(id) ON DELETE CASCADE,

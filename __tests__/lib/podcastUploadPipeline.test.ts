@@ -105,6 +105,21 @@ describe('podcastUploadPipeline', () => {
     expect(mockDeleteObject).toHaveBeenCalledWith('https://podsum.cc/api/files/podcast-123-Yy3JH6dDugc.srt');
   });
 
+  it('maps USER_NOT_FOUND save failures to a 404 upload error', async () => {
+    mockSavePodcastWithCreditDeduction.mockResolvedValueOnce({
+      success: false,
+      errorCode: 'USER_NOT_FOUND',
+      error: 'User not found.',
+    });
+
+    await expect(createPodcastFromSrt(baseInput)).rejects.toMatchObject({
+      code: 'USER_NOT_FOUND',
+      status: 404,
+      message: 'User not found.',
+    });
+    expect(mockDeleteObject).toHaveBeenCalledWith('https://podsum.cc/api/files/podcast-123-Yy3JH6dDugc.srt');
+  });
+
   it('returns a recoverable queue failure without deleting the saved podcast row', async () => {
     mockEnqueueProcessingJob.mockResolvedValueOnce({
       success: false,

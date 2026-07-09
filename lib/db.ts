@@ -14,6 +14,7 @@ export interface Podcast {
   isPublic: boolean;
   userId?: string;
   sourceReference?: string | null;
+  sourcePublishedAt?: string | null;
   tags?: string[];
 }
 
@@ -377,6 +378,10 @@ async function ensureSchemaUpgrades(): Promise<void> {
       `;
       await sql`
         ALTER TABLE podcasts
+        ADD COLUMN IF NOT EXISTS source_published_at TEXT
+      `;
+      await sql`
+        ALTER TABLE podcasts
         ADD COLUMN IF NOT EXISTS tags_json JSONB DEFAULT '[]'::jsonb
       `;
       await sql`
@@ -472,6 +477,7 @@ export async function initDatabase(): Promise<DbResult> {
         file_size TEXT NOT NULL,
         blob_url TEXT,
         source_reference TEXT,
+        source_published_at TEXT,
         tags_json JSONB DEFAULT '[]'::jsonb,
         is_public BOOLEAN DEFAULT FALSE,
         user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
@@ -605,9 +611,9 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
     .prepare(
       `
       INSERT INTO podcasts
-        (id, title, original_filename, file_size, blob_url, source_reference, is_public, user_id)
+        (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
       SELECT
-        ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE changes() = 1
       RETURNING
         id AS podcast_id,
@@ -621,6 +627,7 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
       podcast.fileSize,
       podcast.blobUrl,
       podcast.sourceReference ?? null,
+      podcast.sourcePublishedAt ?? null,
       podcast.isPublic ? 1 : 0,
       podcast.userId,
       podcast.userId,
@@ -719,7 +726,7 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
       ),
       inserted AS (
         INSERT INTO podcasts
-          (id, title, original_filename, file_size, blob_url, source_reference, is_public, user_id)
+          (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
         SELECT
           ${podcast.id},
           ${podcast.title},
@@ -727,6 +734,7 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
           ${podcast.fileSize},
           ${podcast.blobUrl},
           ${podcast.sourceReference ?? null},
+          ${podcast.sourcePublishedAt ?? null},
           ${podcast.isPublic},
           ${podcast.userId}
         FROM charged

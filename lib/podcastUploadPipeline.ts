@@ -102,7 +102,7 @@ export async function createPodcastFromSrt(input: CreatePodcastFromSrtInput): Pr
       tags: input.tags,
       isPublic: input.isPublic,
       userId: input.userId,
-    } as Parameters<typeof savePodcastWithCreditDeduction>[0] & { sourcePublishedAt: string | null };
+    };
 
     const saveResult = await savePodcastWithCreditDeduction(savePayload);
 
