@@ -259,6 +259,47 @@ export async function updateExtensionTranscriptionJobFailed(
   }
 }
 
+export async function reserveExtensionTranscriptionJobPodcastId(
+  id: string,
+  userId: string,
+  podcastId: string,
+): Promise<ExtensionTranscriptionJobResult> {
+  try {
+    await ensureExtensionTranscriptionJobsTable();
+    const result = await sql`
+      UPDATE extension_transcription_jobs
+      SET
+        podcast_id = COALESCE(podcast_id, ${podcastId}),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ${id} AND user_id = ${userId}
+      RETURNING
+        id,
+        user_id as "userId",
+        status,
+        provider_task_id as "providerTaskId",
+        podcast_id as "podcastId",
+        audio_blob_url as "audioBlobUrl",
+        source_reference as "sourceReference",
+        original_file_name as "originalFileName",
+        title,
+        video_id as "videoId",
+        is_public as "isPublic",
+        error,
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+    `;
+
+    if (result.rows.length === 0) {
+      return { success: false, data: null, error: 'Extension transcription job not found' };
+    }
+
+    return { success: true, data: mapRowToJob(result.rows[0]) };
+  } catch (error) {
+    console.error('reserveExtensionTranscriptionJobPodcastId failed:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function updateExtensionTranscriptionJobCompleted(
   id: string,
   userId: string,

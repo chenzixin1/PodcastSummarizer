@@ -41,6 +41,7 @@ jest.mock('../../lib/extensionAuth', () => {
 
 jest.mock('../../lib/extensionTranscriptionJobs', () => ({
   getExtensionTranscriptionJobForUser: jest.fn(),
+  reserveExtensionTranscriptionJobPodcastId: jest.fn(),
   touchExtensionTranscriptionJob: jest.fn(),
   updateExtensionTranscriptionJobCompleted: jest.fn(),
   updateExtensionTranscriptionJobFailed: jest.fn(),
@@ -67,6 +68,15 @@ jest.mock('../../lib/objectStorage', () => ({
   deleteObject: jest.fn(),
 }));
 
+jest.mock('../../lib/db', () => ({
+  getPodcast: jest.fn(),
+}));
+
+jest.mock('../../lib/processingJobs', () => ({
+  enqueueProcessingJob: jest.fn(),
+  getProcessingJob: jest.fn(),
+}));
+
 jest.mock('../../lib/podcastUploadPipeline', () => ({
   createPodcastFromSrt: jest.fn(),
   PodcastUploadError: class PodcastUploadError extends Error {
@@ -88,6 +98,7 @@ const mockNanoid = jest.fn();
 const mockParseBearerToken = jest.fn();
 const mockVerifyExtensionAccessToken = jest.fn();
 const mockGetExtensionTranscriptionJobForUser = jest.fn();
+const mockReserveExtensionTranscriptionJobPodcastId = jest.fn();
 const mockTouchExtensionTranscriptionJob = jest.fn();
 const mockUpdateExtensionTranscriptionJobCompleted = jest.fn();
 const mockUpdateExtensionTranscriptionJobFailed = jest.fn();
@@ -100,6 +111,9 @@ const mockQueryVolcanoTask = jest.fn();
 const mockSrtFromVolcanoResult = jest.fn();
 const mockTriggerWorkerProcessing = jest.fn();
 const mockDeleteObject = jest.fn();
+const mockGetPodcast = jest.fn();
+const mockEnqueueProcessingJob = jest.fn();
+const mockGetProcessingJob = jest.fn();
 const mockCreatePodcastFromSrt = jest.fn();
 
 const baseJob = {
@@ -125,6 +139,8 @@ beforeEach(() => {
   require('../../lib/extensionAuth').verifyExtensionAccessToken = mockVerifyExtensionAccessToken;
   require('../../lib/extensionTranscriptionJobs').getExtensionTranscriptionJobForUser =
     mockGetExtensionTranscriptionJobForUser;
+  require('../../lib/extensionTranscriptionJobs').reserveExtensionTranscriptionJobPodcastId =
+    mockReserveExtensionTranscriptionJobPodcastId;
   require('../../lib/extensionTranscriptionJobs').touchExtensionTranscriptionJob =
     mockTouchExtensionTranscriptionJob;
   require('../../lib/extensionTranscriptionJobs').updateExtensionTranscriptionJobCompleted =
@@ -141,6 +157,9 @@ beforeEach(() => {
   require('../../lib/volcanoTranscription').srtFromVolcanoResult = mockSrtFromVolcanoResult;
   require('../../lib/workerTrigger').triggerWorkerProcessing = mockTriggerWorkerProcessing;
   require('../../lib/objectStorage').deleteObject = mockDeleteObject;
+  require('../../lib/db').getPodcast = mockGetPodcast;
+  require('../../lib/processingJobs').enqueueProcessingJob = mockEnqueueProcessingJob;
+  require('../../lib/processingJobs').getProcessingJob = mockGetProcessingJob;
   require('../../lib/podcastUploadPipeline').createPodcastFromSrt = mockCreatePodcastFromSrt;
 
   mockNanoid.mockReturnValue('podcast-123');
@@ -153,8 +172,22 @@ beforeEach(() => {
     success: true,
     data: { ...baseJob },
   });
+  mockReserveExtensionTranscriptionJobPodcastId.mockResolvedValue({
+    success: true,
+    data: {
+      ...baseJob,
+      podcastId: 'podcast-123',
+    },
+  });
   mockTouchExtensionTranscriptionJob.mockResolvedValue(undefined);
-  mockUpdateExtensionTranscriptionJobCompleted.mockResolvedValue(undefined);
+  mockUpdateExtensionTranscriptionJobCompleted.mockResolvedValue({
+    success: true,
+    data: {
+      ...baseJob,
+      status: 'completed',
+      podcastId: 'podcast-123',
+    },
+  });
   mockUpdateExtensionTranscriptionJobFailed.mockResolvedValue(undefined);
   mockCreateExtensionMonitorTask.mockResolvedValue({ id: 'monitor-123' });
   mockFindMonitorTaskByTranscriptionJobId.mockResolvedValue(null);
@@ -169,6 +202,16 @@ beforeEach(() => {
   mockSrtFromVolcanoResult.mockReturnValue('1\n00:00:00,000 --> 00:00:02,000\nhello');
   mockTriggerWorkerProcessing.mockResolvedValue({ success: true });
   mockDeleteObject.mockResolvedValue(undefined);
+  mockGetPodcast.mockResolvedValue({ success: false, error: 'Podcast not found' });
+  mockGetProcessingJob.mockResolvedValue({
+    success: false,
+    data: null,
+    error: 'Processing job not found',
+  });
+  mockEnqueueProcessingJob.mockResolvedValue({
+    success: true,
+    data: { podcastId: 'podcast-123', status: 'queued' },
+  });
   mockCreatePodcastFromSrt.mockResolvedValue({
     id: 'podcast-123',
     blobUrl: 'https://podsum.cc/api/files/extension-srt/podcast-123-Episode_1.srt',
@@ -197,7 +240,7 @@ async function callRoute() {
 }
 
 describe('GET /api/extension/transcribe-status/[jobId]', () => {
-  it('finalizes a completed provider result through createPodcastFromSrt and keeps the response shape unchanged', async () => {
+  it('finalizes a completed provider result through createPodcastFromSrt and returns queue metadata', async () => {
     const response = await callRoute();
     const data = await response.json();
 
@@ -210,8 +253,13 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
         dashboardUrl: 'https://podsum.cc/dashboard/podcast-123',
         lastError: null,
         monitorTaskId: 'monitor-123',
+        processingQueued: true,
+        queueError: null,
+        remainingCredits: 9,
       },
     });
+    expect(mockReserveExtensionTranscriptionJobPodcastId).toHaveBeenCalledWith('job-123', 'user-123', 'podcast-123');
+    expect(mockGetPodcast).toHaveBeenCalledWith('podcast-123');
     expect(mockCreatePodcastFromSrt).toHaveBeenCalledWith({
       id: 'podcast-123',
       title: 'Episode Title',
@@ -255,6 +303,9 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
         dashboardUrl: 'https://podsum.cc/dashboard/podcast-123',
         lastError: null,
         monitorTaskId: 'monitor-123',
+        processingQueued: false,
+        queueError: 'queue unavailable',
+        remainingCredits: 9,
       },
     });
     expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
@@ -314,6 +365,9 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
         dashboardUrl: 'https://podsum.cc/dashboard/podcast-123',
         lastError: null,
         monitorTaskId: 'monitor-123',
+        processingQueued: false,
+        queueError: 'Processing was not queued automatically.',
+        remainingCredits: null,
       },
     });
     expect(mockUpdateExtensionMonitorTask).toHaveBeenCalledWith(
@@ -326,6 +380,100 @@ describe('GET /api/extension/transcribe-status/[jobId]', () => {
       }),
     );
     expect(mockCreatePodcastFromSrt).not.toHaveBeenCalled();
+    expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
+  });
+
+  it('reuses a reserved podcast id and requeues without charging again when a previous completion saved the podcast row', async () => {
+    mockGetExtensionTranscriptionJobForUser.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        podcastId: 'reserved-podcast',
+      },
+    });
+    mockReserveExtensionTranscriptionJobPodcastId.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        podcastId: 'reserved-podcast',
+      },
+    });
+    mockGetPodcast.mockResolvedValueOnce({
+      success: true,
+      data: {
+        id: 'reserved-podcast',
+        blobUrl: 'https://podsum.cc/api/files/extension-srt/reserved-podcast-Episode_1.srt',
+        fileSize: '0.04 KB',
+        originalFileName: 'Episode_1.srt',
+      },
+    });
+    mockEnqueueProcessingJob.mockResolvedValueOnce({
+      success: true,
+      data: { podcastId: 'reserved-podcast', status: 'queued' },
+    });
+
+    const response = await callRoute();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data).toEqual({
+      status: 'completed',
+      podcastId: 'reserved-podcast',
+      dashboardUrl: 'https://podsum.cc/dashboard/reserved-podcast',
+      lastError: null,
+      monitorTaskId: 'monitor-123',
+      processingQueued: true,
+      queueError: null,
+      remainingCredits: null,
+    });
+    expect(mockNanoid).not.toHaveBeenCalled();
+    expect(mockCreatePodcastFromSrt).not.toHaveBeenCalled();
+    expect(mockGetProcessingJob).toHaveBeenCalledWith('reserved-podcast');
+    expect(mockEnqueueProcessingJob).toHaveBeenCalledWith('reserved-podcast');
+    expect(mockUpdateExtensionTranscriptionJobCompleted).toHaveBeenCalledWith(
+      'job-123',
+      'user-123',
+      'reserved-podcast',
+    );
+    expect(mockTriggerWorkerProcessing).toHaveBeenCalledWith('upload', 'reserved-podcast');
+  });
+
+  it('does not reset an existing processing job when recovering a saved Path2 podcast', async () => {
+    mockGetExtensionTranscriptionJobForUser.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        podcastId: 'reserved-podcast',
+      },
+    });
+    mockReserveExtensionTranscriptionJobPodcastId.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...baseJob,
+        podcastId: 'reserved-podcast',
+      },
+    });
+    mockGetPodcast.mockResolvedValueOnce({
+      success: true,
+      data: {
+        id: 'reserved-podcast',
+        blobUrl: 'https://podsum.cc/api/files/extension-srt/reserved-podcast-Episode_1.srt',
+        fileSize: '0.04 KB',
+        originalFileName: 'Episode_1.srt',
+      },
+    });
+    mockGetProcessingJob.mockResolvedValueOnce({
+      success: true,
+      data: { podcastId: 'reserved-podcast', status: 'processing' },
+    });
+
+    const response = await callRoute();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.processingQueued).toBe(true);
+    expect(mockCreatePodcastFromSrt).not.toHaveBeenCalled();
+    expect(mockEnqueueProcessingJob).not.toHaveBeenCalled();
     expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
   });
 
