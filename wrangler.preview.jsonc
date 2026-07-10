@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "podcast-summarizer-preview",
+  "main": "worker.ts",
+  "compatibility_date": "2026-06-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "routes": [],
+  "d1_databases": [
+    {
+      "binding": "PODSUM_DB",
+      "database_name": "podsum-d1-preview",
+      "database_id": "adbd887b-dd92-4180-bdee-0b185c61fefe",
+      "migrations_dir": "migrations/d1"
+    }
+  ],
+  "vars": {
+    "DATABASE_PROVIDER": "d1",
+    "DEPLOYMENT_STAGE": "preview",
+    "ENABLE_CRON": "false",
+    "NEXTAUTH_URL": "https://podcast-summarizer-preview.chenzixin1.workers.dev",
+    "NEXT_PUBLIC_APP_URL": "https://podcast-summarizer-preview.chenzixin1.workers.dev"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "workers_dev": true
+}
