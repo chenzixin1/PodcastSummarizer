@@ -9,6 +9,32 @@
     "binding": "ASSETS"
   },
   "routes": [],
+  "r2_buckets": [
+    {
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "podsum-next-cache-preview"
+    }
+  ],
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "podcast-summarizer-preview"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NEXT_CACHE_DO_QUEUE",
+        "class_name": "DOQueueHandler"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "cache-v1",
+      "new_sqlite_classes": ["DOQueueHandler"]
+    }
+  ],
   "d1_databases": [
     {
       "binding": "PODSUM_DB",

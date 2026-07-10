@@ -4,7 +4,12 @@
 
 import { getAllPodcasts } from '../../lib/db';
 import { getPublicListSnapshot } from '../../lib/staticSnapshots';
+import { unstable_cache } from 'next/cache';
 import type { PodcastApiRow } from '../../components/home/homeModel';
+
+jest.mock('next/cache', () => ({
+  unstable_cache: jest.fn((loader: () => unknown) => loader),
+}));
 
 jest.mock('../../lib/db', () => ({
   getAllPodcasts: jest.fn(),
@@ -18,6 +23,7 @@ import { getHomepagePublicData } from '../../lib/homepagePublicData';
 
 const mockGetAllPodcasts = getAllPodcasts as jest.MockedFunction<typeof getAllPodcasts>;
 const mockGetPublicListSnapshot = getPublicListSnapshot as jest.MockedFunction<typeof getPublicListSnapshot>;
+const mockUnstableCache = unstable_cache as jest.MockedFunction<typeof unstable_cache>;
 
 function podcastRow(id: string, isPublic = true): PodcastApiRow {
   return {
@@ -43,6 +49,14 @@ describe('homepage public data loader', () => {
   beforeEach(() => {
     mockGetAllPodcasts.mockReset();
     mockGetPublicListSnapshot.mockReset();
+  });
+
+  test('uses the persistent public-only cache with a one-minute revalidation window', () => {
+    expect(mockUnstableCache).toHaveBeenCalledWith(
+      expect.any(Function),
+      ['homepage-public-data-v1'],
+      { revalidate: 60 },
+    );
   });
 
   test('returns the first 12 public rows from a snapshot hit', async () => {

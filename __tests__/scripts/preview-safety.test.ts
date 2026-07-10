@@ -183,7 +183,7 @@ describe('preview deployment safety', () => {
     expect(workflow).not.toMatch(/(?:wrangler\s+)?r2(?:\s+|:)(?:object|bucket|apply|rollback)/i);
   });
 
-  test('preview Wrangler config is isolated from production routes, cron, and R2', () => {
+  test('preview Wrangler config is isolated from production routes, cron, and cache resources', () => {
     const source = readProjectFile('wrangler.preview.jsonc');
     const config = parseJsonOrNull(source);
 
@@ -208,10 +208,80 @@ describe('preview deployment safety', () => {
       },
     ]);
     expect(config).not.toHaveProperty('triggers');
-    expect(config).not.toHaveProperty('r2_buckets');
+    expect(config?.r2_buckets).toEqual([
+      {
+        binding: 'NEXT_INC_CACHE_R2_BUCKET',
+        bucket_name: 'podsum-next-cache-preview',
+      },
+    ]);
+    expect(config?.services).toEqual([
+      {
+        binding: 'WORKER_SELF_REFERENCE',
+        service: 'podcast-summarizer-preview',
+      },
+    ]);
+    expect(config?.durable_objects).toEqual({
+      bindings: [
+        {
+          name: 'NEXT_CACHE_DO_QUEUE',
+          class_name: 'DOQueueHandler',
+        },
+      ],
+    });
+    expect(config?.migrations).toEqual([
+      {
+        tag: 'cache-v1',
+        new_sqlite_classes: ['DOQueueHandler'],
+      },
+    ]);
     expect(source).not.toContain('podsum-uploads');
+    expect(source).not.toContain('podsum-next-cache-production');
     expect(source).not.toContain('5d0b65e0-d556-4aa4-953f-4d680d11c34a');
     expect(source).not.toMatch(/podsum\.cc|custom_domain/i);
+  });
+
+  test('production and Preview use separate OpenNext cache resources', () => {
+    const production = parseJsonOrNull(readProjectFile('wrangler.jsonc'));
+    const openNextConfig = readProjectFile('open-next.config.ts');
+    const worker = readProjectFile('worker.ts');
+
+    expect(production?.r2_buckets).toEqual(expect.arrayContaining([
+      {
+        binding: 'PODSUM_BUCKET',
+        bucket_name: 'podsum-uploads',
+      },
+      {
+        binding: 'NEXT_INC_CACHE_R2_BUCKET',
+        bucket_name: 'podsum-next-cache-production',
+      },
+    ]));
+    expect(production?.services).toEqual([
+      {
+        binding: 'WORKER_SELF_REFERENCE',
+        service: 'podcast-summarizer',
+      },
+    ]);
+    expect(production?.durable_objects).toEqual({
+      bindings: [
+        {
+          name: 'NEXT_CACHE_DO_QUEUE',
+          class_name: 'DOQueueHandler',
+        },
+      ],
+    });
+    expect(production?.migrations).toEqual([
+      {
+        tag: 'cache-v1',
+        new_sqlite_classes: ['DOQueueHandler'],
+      },
+    ]);
+
+    expect(openNextConfig).toContain('r2-incremental-cache');
+    expect(openNextConfig).toContain('regional-cache');
+    expect(openNextConfig).toContain('mode: \'long-lived\'');
+    expect(openNextConfig).toContain('do-queue');
+    expect(openNextConfig).toContain('queue: doQueue');
+    expect(worker).toContain("export { DOQueueHandler } from './.open-next/worker.js'");
   });
 
   test('package scripts expose explicit preview deployment and performance commands', () => {
