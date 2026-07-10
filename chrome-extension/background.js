@@ -167,6 +167,12 @@ function buildTraceId(videoId = '') {
   return `ext-${Date.now()}-${seed}${suffix}`;
 }
 
+function buildNonce() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function summarizeError(error) {
   if (error instanceof TaskError) {
     return {
@@ -535,6 +541,71 @@ async function loginToPodsum(email, password) {
   return auth;
 }
 
+function parseGoogleAuthRedirect(finalUrl, expectedNonce) {
+  if (!finalUrl) {
+    throw new TaskError('GOOGLE_LOGIN_CANCELLED', 'Google 登录未完成。');
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(finalUrl);
+  } catch {
+    throw new TaskError('GOOGLE_LOGIN_INVALID_REDIRECT', 'Google 登录返回地址无效。');
+  }
+
+  const hash = parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash;
+  const search = parsed.search.startsWith('?') ? parsed.search.slice(1) : parsed.search;
+  const params = new URLSearchParams(hash || search);
+  const error = params.get('error');
+  if (error) {
+    throw new TaskError(params.get('code') || 'GOOGLE_LOGIN_FAILED', error);
+  }
+
+  const nonce = params.get('nonce') || '';
+  if (!nonce || nonce !== expectedNonce) {
+    throw new TaskError('GOOGLE_LOGIN_NONCE_MISMATCH', 'Google 登录校验失败，请重试。');
+  }
+
+  const accessToken = params.get('accessToken') || '';
+  if (!accessToken) {
+    throw new TaskError('GOOGLE_LOGIN_MISSING_TOKEN', 'PodSum 未返回登录令牌。');
+  }
+
+  const expiresIn = Number(params.get('expiresIn') || 0);
+  const email = params.get('email') || '';
+  const userId = params.get('userId') || '';
+  const name = params.get('name') || email;
+
+  return {
+    accessToken,
+    expiresAt: Date.now() + Math.max(expiresIn, 60) * 1000,
+    userId,
+    email,
+    name,
+  };
+}
+
+async function loginToPodsumWithGoogle() {
+  if (!chrome.identity?.launchWebAuthFlow || !chrome.identity?.getRedirectURL) {
+    throw new TaskError('GOOGLE_LOGIN_UNAVAILABLE', '当前浏览器不支持扩展 Google 登录。');
+  }
+
+  const settings = await getSettings();
+  const nonce = buildNonce();
+  const redirectUri = chrome.identity.getRedirectURL('podsum-google');
+  const url = new URL('/api/extension/auth/google/start', settings.baseUrl);
+  url.searchParams.set('redirectUri', redirectUri);
+  url.searchParams.set('nonce', nonce);
+
+  const finalUrl = await chrome.identity.launchWebAuthFlow({
+    url: url.toString(),
+    interactive: true,
+  });
+  const auth = parseGoogleAuthRedirect(finalUrl, nonce);
+  await saveAuth(auth);
+  return auth;
+}
+
 async function uploadYoutubeUrlToPodsum(task) {
   const auth = await requireAuth();
   const settings = await getSettings();
@@ -850,6 +921,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         throw new TaskError('INVALID_CREDENTIALS', '请输入邮箱和密码。');
       }
       await loginToPodsum(email, password);
+      return getPopupState();
+    }, sendResponse);
+    return true;
+  }
+
+  if (type === 'PODSUM_GOOGLE_LOGIN') {
+    handleMessage(async () => {
+      await loginToPodsumWithGoogle();
       return getPopupState();
     }, sendResponse);
     return true;

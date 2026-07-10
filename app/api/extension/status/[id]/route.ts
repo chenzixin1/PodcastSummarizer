@@ -10,7 +10,7 @@ import {
   updateExtensionMonitorTask,
 } from '../../../../../lib/extensionMonitor';
 import { getAnalysisResults, getPodcast } from '../../../../../lib/db';
-import { getProcessingJob } from '../../../../../lib/processingJobs';
+import { getProcessingJob, getProcessingJobLeaseSeconds } from '../../../../../lib/processingJobs';
 import { triggerWorkerProcessing } from '../../../../../lib/workerTrigger';
 
 export const runtime = 'nodejs';
@@ -101,7 +101,7 @@ function shouldKickWorker(processingJob: ProcessingJobData | null): boolean {
     return staleMs > 8000;
   }
 
-  return staleMs > 120000;
+  return staleMs > getProcessingJobLeaseSeconds() * 1000;
 }
 
 function getAppBaseUrl(request: NextRequest): string {

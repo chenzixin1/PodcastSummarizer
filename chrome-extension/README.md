@@ -1,11 +1,10 @@
 # PodSum Chrome Extension
 
 ## 功能
-- 登录 PodSum 账号（邮箱 + 密码）
+- 使用 PodSum Google 登录授权扩展，邮箱密码登录作为兜底
 - 在 YouTube 页面点击“添加当前视频”
-- 路径 1：抓取页面字幕 -> 本地下载 `.srt` -> 上传 PodSum
-- 路径 2：页面无字幕时可手动启动，浏览器下载音频 -> 上传 PodSum -> 火山转写 -> 网站分析
-- 最近任务列表（最多 5 条）+ 状态灯（S / D / U / P）
+- 服务端抓取字幕 -> 上传 PodSum -> 网站分析
+- 最近任务列表（最多 5 条）
 - 两次通知：上传成功、分析完成
 
 ## 开发测试
@@ -25,6 +24,5 @@
 - 本地开发可改为 `http://localhost:3000`
 
 ## 说明
-- Path1 失败后，任务会进入 `awaiting_path2_confirm`，可在任务行内点击“启动 Path2”
-- Path2 下载策略为双栈：先 `youtubejs`，失败自动回退 `local_decsig`
-- Path2 时长限制默认 180 分钟，转写轮询超时默认 60 分钟
+- Google 登录通过 Chrome `identity.launchWebAuthFlow` 打开 PodSum 登录页。只有配置在 `CHROME_EXTENSION_IDS` 白名单中的扩展构建可以接收 PodSum 访问令牌。
+- 邮箱密码登录仍保留给本地调试或 Google OAuth 不可用时使用。

@@ -4,6 +4,8 @@ import {
   claimNextProcessingJob,
   completeProcessingJob,
   failProcessingJob,
+  getProcessingJobLeaseSeconds,
+  getProcessingWorkerConcurrency,
   updateProcessingJobProgress,
 } from '../../../../lib/processingJobs';
 import {
@@ -66,14 +68,51 @@ function parseStreamEvent(payload: string): ProcessStreamEvent | null {
   }
 }
 
+function getHeartbeatIntervalMs(): number {
+  const leaseMs = getProcessingJobLeaseSeconds() * 1000;
+  return Math.max(15_000, Math.min(60_000, Math.floor(leaseMs / 3)));
+}
+
+function startProcessingJobHeartbeat(podcastId: string, workerId: string): () => void {
+  let stopped = false;
+  let inFlight = false;
+
+  const beat = async () => {
+    if (stopped || inFlight) {
+      return;
+    }
+    inFlight = true;
+    try {
+      // Empty progress payload intentionally refreshes updated_at as the worker lease heartbeat.
+      await updateProcessingJobProgress(podcastId, {}, workerId);
+    } catch (error) {
+      console.warn('Processing job heartbeat failed:', error);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  const timer = setInterval(() => {
+    void beat();
+  }, getHeartbeatIntervalMs());
+
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     if (!isAuthorized(request)) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const workerId = `worker-${Date.now().toString(36)}`;
-    const claimed = await claimNextProcessingJob(workerId);
+    const workerId = `worker-${crypto.randomUUID()}`;
+    const claimed = await claimNextProcessingJob(workerId, {
+      leaseSeconds: getProcessingJobLeaseSeconds(),
+      maxActiveWorkers: getProcessingWorkerConcurrency(),
+    });
     if (!claimed.success) {
       return NextResponse.json({ success: false, error: claimed.error || 'Failed to claim job' }, { status: 500 });
     }
@@ -85,13 +124,13 @@ export async function POST(request: NextRequest) {
     const job = claimed.data;
     const podcastResult = await getPodcast(job.podcastId);
     if (!podcastResult.success) {
-      await failProcessingJob(job.podcastId, podcastResult.error || 'Podcast not found');
+      await failProcessingJob(job.podcastId, podcastResult.error || 'Podcast not found', workerId);
       return NextResponse.json({ success: false, error: 'Podcast not found for claimed job' }, { status: 404 });
     }
 
     const podcast = podcastResult.data as PodcastJobPayload;
     if (!podcast?.blobUrl) {
-      await failProcessingJob(job.podcastId, 'Missing blob url');
+      await failProcessingJob(job.podcastId, 'Missing blob url', workerId);
       return NextResponse.json({ success: false, error: 'Missing blob url' }, { status: 400 });
     }
 
@@ -100,12 +139,14 @@ export async function POST(request: NextRequest) {
       progressCurrent: 0,
       progressTotal: 0,
       statusMessage: 'Worker started processing',
-    });
+    }, workerId);
 
+    const stopHeartbeat = startProcessingJobHeartbeat(job.podcastId, workerId);
+    try {
     const processSecret =
       getPreferredWorkerSecretForInternalCalls() || (process.env.NODE_ENV !== 'production' ? 'dev-worker' : '');
     if (!processSecret) {
-      await failProcessingJob(job.podcastId, 'Worker secret is not configured');
+      await failProcessingJob(job.podcastId, 'Worker secret is not configured', workerId);
       return NextResponse.json({ success: false, error: 'Missing worker secret' }, { status: 500 });
     }
 
@@ -126,13 +167,13 @@ export async function POST(request: NextRequest) {
     if (!response.ok) {
       const text = await response.text();
       const message = text || `Process API failed with status ${response.status}`;
-      await failProcessingJob(job.podcastId, message);
+      await failProcessingJob(job.podcastId, message, workerId);
       return NextResponse.json({ success: false, error: message }, { status: 500 });
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      await failProcessingJob(job.podcastId, 'Process API stream reader not available');
+      await failProcessingJob(job.podcastId, 'Process API stream reader not available', workerId);
       return NextResponse.json({ success: false, error: 'No stream reader from process API' }, { status: 500 });
     }
 
@@ -188,7 +229,7 @@ export async function POST(request: NextRequest) {
                 ? eventData.task
                 : undefined,
             statusMessage: typeof eventData.message === 'string' ? eventData.message : undefined,
-          });
+          }, workerId);
           continue;
         }
 
@@ -201,7 +242,7 @@ export async function POST(request: NextRequest) {
             progressCurrent: completed,
             progressTotal: safeProgressNumber(eventData.totalChunks),
             statusMessage: 'Processing summary chunks',
-          });
+          }, workerId);
           continue;
         }
 
@@ -214,7 +255,7 @@ export async function POST(request: NextRequest) {
             progressCurrent: completed,
             progressTotal: safeProgressNumber(eventData.totalChunks),
             statusMessage: 'Processing translation chunks',
-          });
+          }, workerId);
           continue;
         }
 
@@ -227,47 +268,47 @@ export async function POST(request: NextRequest) {
             progressCurrent: completed,
             progressTotal: safeProgressNumber(eventData.totalChunks),
             statusMessage: 'Processing highlight chunks',
-          });
+          }, workerId);
           continue;
         }
 
         if (eventData.type === 'summary_final_result') {
           await updateProcessingJobProgress(job.podcastId, {
             statusMessage: 'Summary completed',
-          });
+          }, workerId);
           continue;
         }
 
         if (eventData.type === 'translation_final_result') {
           await updateProcessingJobProgress(job.podcastId, {
             statusMessage: 'Translation completed',
-          });
+          }, workerId);
           continue;
         }
 
         if (eventData.type === 'highlight_final_result') {
           await updateProcessingJobProgress(job.podcastId, {
             statusMessage: 'Highlights completed',
-          });
+          }, workerId);
           continue;
         }
 
         if (eventData.type === 'error') {
           const message = typeof eventData.message === 'string' ? eventData.message : 'Unknown processing error';
-          await failProcessingJob(job.podcastId, message);
+          await failProcessingJob(job.podcastId, message, workerId);
           return NextResponse.json({ success: false, error: message }, { status: 500 });
         }
 
         if (eventData.type === 'all_done') {
           finished = true;
-          await completeProcessingJob(job.podcastId);
+          await completeProcessingJob(job.podcastId, workerId);
           break;
         }
       }
     }
 
     if (!finished) {
-      await failProcessingJob(job.podcastId, 'Process stream closed before completion');
+      await failProcessingJob(job.podcastId, 'Process stream closed before completion', workerId);
       return NextResponse.json({ success: false, error: 'Processing did not complete' }, { status: 500 });
     }
 
@@ -278,6 +319,9 @@ export async function POST(request: NextRequest) {
         message: 'Job completed'
       }
     });
+    } finally {
+      stopHeartbeat();
+    }
   } catch (error) {
     console.error('Worker process failed:', error);
     return NextResponse.json(

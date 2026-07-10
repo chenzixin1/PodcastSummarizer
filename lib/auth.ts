@@ -3,10 +3,9 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import GoogleProvider from 'next-auth/providers/google'
 import bcrypt from 'bcryptjs'
 import { sql } from './sql'
-import { nanoid } from 'nanoid'
 import type { Account, NextAuthOptions, Profile, Session, User } from 'next-auth'
 import type { JWT } from 'next-auth/jwt'
-import { ensureUserCreditsSchema, getInitialSrtCreditsForEmail } from './db'
+import { ensureGoogleAuthUser } from './googleAuthUser'
 
 const resolvedNextAuthSecret = (() => {
   const secret = (process.env.NEXTAUTH_SECRET || '').trim();
@@ -96,24 +95,11 @@ export const authOptions: NextAuthOptions = {
             return false;
           }
 
-          // 检查用户是否已存在
-          const existingUser = await sql`
-            SELECT id FROM users WHERE email = ${userEmail}
-          `
-          
-          if (existingUser.rows.length === 0) {
-            // 创建新用户
-            const userId = nanoid()
-            const initialCredits = getInitialSrtCreditsForEmail(userEmail)
-            await ensureUserCreditsSchema()
-            await sql`
-              INSERT INTO users (id, email, name, password_hash, credits, created_at)
-              VALUES (${userId}, ${userEmail}, ${user.name || userEmail}, '', ${initialCredits}, NOW())
-            `
-            user.id = userId
-          } else {
-            user.id = String(existingUser.rows[0].id)
-          }
+          const appUser = await ensureGoogleAuthUser({
+            email: userEmail,
+            name: user.name,
+          });
+          user.id = appUser.id
         } catch (error) {
           console.error('Google sign in error:', error)
           return false

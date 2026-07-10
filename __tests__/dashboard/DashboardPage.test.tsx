@@ -263,6 +263,52 @@ describe('DashboardPage language modes', () => {
     });
   });
 
+  test('splits marker-delimited bilingual content stored in the Chinese summary field', async () => {
+    const payloadWithCombinedZhField = JSON.parse(JSON.stringify(analysisPayload));
+    payloadWithCombinedZhField.data.analysis.summaryZh = `<<<SUMMARY_EN>>>
+# English Summary
+## Key Takeaways
+- English combined fallback
+
+<<<SUMMARY_ZH>>>
+# 中文总结
+## 核心观点
+- 中文拆分结果`;
+    payloadWithCombinedZhField.data.analysis.summaryEn = '';
+
+    mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/analysis/')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => payloadWithCombinedZhField,
+          text: async () => JSON.stringify(payloadWithCombinedZhField),
+        } as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ success: false }),
+        text: async () => '',
+      } as Response;
+    });
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(document.body).toHaveTextContent('中文拆分结果');
+      expect(document.body).not.toHaveTextContent('<<<SUMMARY_EN>>>');
+      expect(document.body).not.toHaveTextContent('English combined fallback');
+    });
+
+    await userEvent.click(screen.getByText('English'));
+    await waitFor(() => {
+      expect(document.body).toHaveTextContent('English combined fallback');
+    });
+  });
+
   test('renders hint mode with interactive dictionary links on english full text', async () => {
     render(<DashboardPage />);
 

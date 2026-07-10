@@ -37,6 +37,8 @@
     "test:clear": "jest --clearCache",
     "test:requests": "ts-node scripts/test-requests.ts",
     "youtube:fetch": "node scripts/utils/youtube-fetch.mjs",
+    "youtube:bestpartners:sync": "node scripts/sync-youtube-channel-transcripts.mjs",
+    "youtube:bestpartners:submit": "python3 scripts/submit-bestpartners-urls.py",
     "summary:bilingual:rebuild": "node scripts/rebuild-bilingual-summary.mjs",
     "summary:en:rebuild": "node scripts/rebuild-summary-en.mjs",
     "fulltext:en:rebuild": "node scripts/rebuild-full-text-en.mjs",

@@ -33,6 +33,40 @@ export interface ProcessingQueueHealth {
   checkedAt: string;
 }
 
+export interface ClaimProcessingJobOptions {
+  maxActiveWorkers?: number;
+  leaseSeconds?: number;
+}
+
+const DEFAULT_PROCESSING_WORKER_CONCURRENCY = 1;
+const DEFAULT_PROCESSING_JOB_LEASE_SECONDS = 5 * 60;
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function getProcessingWorkerConcurrency(): number {
+  return parsePositiveInteger(process.env.PROCESS_WORKER_CONCURRENCY, DEFAULT_PROCESSING_WORKER_CONCURRENCY);
+}
+
+export function getProcessingJobLeaseSeconds(): number {
+  return parsePositiveInteger(process.env.PROCESSING_JOB_LEASE_SECONDS, DEFAULT_PROCESSING_JOB_LEASE_SECONDS);
+}
+
+function normalizeClaimOptions(options?: ClaimProcessingJobOptions): Required<ClaimProcessingJobOptions> {
+  return {
+    maxActiveWorkers:
+      typeof options?.maxActiveWorkers === 'number' && Number.isFinite(options.maxActiveWorkers) && options.maxActiveWorkers > 0
+        ? Math.floor(options.maxActiveWorkers)
+        : getProcessingWorkerConcurrency(),
+    leaseSeconds:
+      typeof options?.leaseSeconds === 'number' && Number.isFinite(options.leaseSeconds) && options.leaseSeconds > 0
+        ? Math.floor(options.leaseSeconds)
+        : getProcessingJobLeaseSeconds(),
+  };
+}
+
 const mapRowToProcessingJob = (row: Record<string, unknown>): ProcessingJob => ({
   podcastId: String(row.podcastId ?? ''),
   status: String(row.status ?? 'queued') as ProcessingJobStatus,
@@ -179,9 +213,13 @@ export async function getProcessingJob(podcastId: string): Promise<ProcessingJob
   }
 }
 
-export async function claimNextProcessingJob(workerId: string): Promise<ProcessingJobResult> {
+export async function claimNextProcessingJob(
+  workerId: string,
+  options?: ClaimProcessingJobOptions,
+): Promise<ProcessingJobResult> {
   try {
     await ensureProcessingJobsTable();
+    const { leaseSeconds, maxActiveWorkers } = normalizeClaimOptions(options);
     if (isD1DatabaseProvider()) {
       const result = await sql`
         UPDATE processing_jobs
@@ -197,12 +235,18 @@ export async function claimNextProcessingJob(workerId: string): Promise<Processi
           SELECT podcast_id
           FROM processing_jobs
           WHERE status = 'queued'
-             OR (status = 'processing' AND updated_at < datetime('now', '-2 minutes'))
+             OR (status = 'processing' AND updated_at < datetime('now', '-' || ${leaseSeconds} || ' seconds'))
           ORDER BY
             CASE WHEN status = 'queued' THEN 0 ELSE 1 END,
             updated_at ASC
           LIMIT 1
         )
+        AND (
+          SELECT COUNT(*)
+          FROM processing_jobs
+          WHERE status = 'processing'
+            AND updated_at >= datetime('now', '-' || ${leaseSeconds} || ' seconds')
+        ) < ${maxActiveWorkers}
         RETURNING
           podcast_id as "podcastId",
           status,
@@ -227,11 +271,17 @@ export async function claimNextProcessingJob(workerId: string): Promise<Processi
     }
 
     const result = await sql`
-      WITH next_job AS (
+      WITH active_count AS (
+        SELECT COUNT(*)::INT as count
+        FROM processing_jobs
+        WHERE status = 'processing'
+          AND updated_at >= NOW() - (${leaseSeconds} * INTERVAL '1 second')
+      ),
+      next_job AS (
         SELECT podcast_id
         FROM processing_jobs
         WHERE status = 'queued'
-           OR (status = 'processing' AND updated_at < NOW() - INTERVAL '2 minutes')
+           OR (status = 'processing' AND updated_at < NOW() - (${leaseSeconds} * INTERVAL '1 second'))
         ORDER BY
           CASE WHEN status = 'queued' THEN 0 ELSE 1 END,
           updated_at ASC
@@ -247,8 +297,9 @@ export async function claimNextProcessingJob(workerId: string): Promise<Processi
         status_message = 'Worker picked up the job',
         started_at = COALESCE(j.started_at, CURRENT_TIMESTAMP),
         updated_at = CURRENT_TIMESTAMP
-      FROM next_job
+      FROM next_job, active_count
       WHERE j.podcast_id = next_job.podcast_id
+        AND active_count.count < ${maxActiveWorkers}
       RETURNING
         j.podcast_id as "podcastId",
         j.status,
@@ -283,7 +334,8 @@ export async function updateProcessingJobProgress(
     progressCurrent?: number;
     progressTotal?: number;
     statusMessage?: string | null;
-  }
+  },
+  workerId?: string,
 ): Promise<ProcessingJobResult> {
   try {
     await ensureProcessingJobsTable();
@@ -297,6 +349,7 @@ export async function updateProcessingJobProgress(
         updated_at = CURRENT_TIMESTAMP
       WHERE podcast_id = ${podcastId}
         AND status != 'cancelled'
+        AND (${workerId || ''} = '' OR worker_id = ${workerId || ''})
       RETURNING
         podcast_id as "podcastId",
         status,
@@ -324,7 +377,7 @@ export async function updateProcessingJobProgress(
   }
 }
 
-export async function completeProcessingJob(podcastId: string): Promise<ProcessingJobResult> {
+export async function completeProcessingJob(podcastId: string, workerId?: string): Promise<ProcessingJobResult> {
   try {
     await ensureProcessingJobsTable();
     const result = await sql`
@@ -338,6 +391,7 @@ export async function completeProcessingJob(podcastId: string): Promise<Processi
         updated_at = CURRENT_TIMESTAMP
       WHERE podcast_id = ${podcastId}
         AND status != 'cancelled'
+        AND (${workerId || ''} = '' OR worker_id = ${workerId || ''})
       RETURNING
         podcast_id as "podcastId",
         status,
@@ -365,7 +419,11 @@ export async function completeProcessingJob(podcastId: string): Promise<Processi
   }
 }
 
-export async function failProcessingJob(podcastId: string, message: string): Promise<ProcessingJobResult> {
+export async function failProcessingJob(
+  podcastId: string,
+  message: string,
+  workerId?: string,
+): Promise<ProcessingJobResult> {
   try {
     await ensureProcessingJobsTable();
     const result = await sql`
@@ -378,6 +436,7 @@ export async function failProcessingJob(podcastId: string, message: string): Pro
         updated_at = CURRENT_TIMESTAMP
       WHERE podcast_id = ${podcastId}
         AND status != 'cancelled'
+        AND (${workerId || ''} = '' OR worker_id = ${workerId || ''})
       RETURNING
         podcast_id as "podcastId",
         status,
@@ -456,6 +515,7 @@ export async function getProcessingQueueHealth(): Promise<{
 }> {
   try {
     await ensureProcessingJobsTable();
+    const leaseSeconds = getProcessingJobLeaseSeconds();
     const [countsResult, oldestResult, staleResult, workersResult] = await Promise.all([
       sql`
         SELECT status, COUNT(*) as count
@@ -471,14 +531,14 @@ export async function getProcessingQueueHealth(): Promise<{
         SELECT COUNT(*) as count
         FROM processing_jobs
         WHERE status = 'processing'
-          AND updated_at < NOW() - INTERVAL '2 minutes'
+          AND updated_at < NOW() - (${leaseSeconds} * INTERVAL '1 second')
       `,
       sql`
         SELECT COUNT(DISTINCT worker_id) as count
         FROM processing_jobs
         WHERE status = 'processing'
           AND worker_id IS NOT NULL
-          AND updated_at >= NOW() - INTERVAL '2 minutes'
+          AND updated_at >= NOW() - (${leaseSeconds} * INTERVAL '1 second')
       `,
     ]);
 

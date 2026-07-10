@@ -110,6 +110,7 @@ function translatePostgresToSqlite(input: string): string {
     .replace(/\bGREATEST\s*\(/gi, 'MAX(')
     .replace(/\bILIKE\b/gi, 'LIKE')
     .replace(/NOW\(\)\s*-\s*INTERVAL\s*'2 minutes'/gi, "datetime('now', '-2 minutes')")
+    .replace(/NOW\(\)\s*-\s*\(\?\s*\*\s*INTERVAL\s*'1 second'\)/gi, "datetime('now', '-' || ? || ' seconds')")
     .replace(/NOW\(\)\s*-\s*\(\?\s*\*\s*INTERVAL\s*'1 day'\)/gi, "datetime('now', '-' || ? || ' days')")
     .replace(/\bNOW\(\)/gi, 'CURRENT_TIMESTAMP');
 }

@@ -10,7 +10,11 @@
   },
   "routes": [
     {
-      "pattern": "cf-preview.podsum.cc",
+      "pattern": "podsum.cc",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.podsum.cc",
       "custom_domain": true
     }
   ],
@@ -23,24 +27,30 @@
   "d1_databases": [
     {
       "binding": "PODSUM_DB",
-      "database_name": "podsum-d1-preview",
-      "database_id": "adbd887b-dd92-4180-bdee-0b185c61fefe",
+      "database_name": "podsum-d1-production",
+      "database_id": "5d0b65e0-d556-4aa4-953f-4d680d11c34a",
       "migrations_dir": "migrations/d1"
     }
   ],
   "vars": {
     "STORAGE_PROVIDER": "r2",
     "DATABASE_PROVIDER": "d1",
-    "DEPLOYMENT_STAGE": "preview",
-    "ENABLE_CRON": "false",
+    "DEPLOYMENT_STAGE": "production",
+    "ENABLE_CRON": "true",
+    "PROCESS_WORKER_CONCURRENCY": "1",
+    "PROCESSING_JOB_LEASE_SECONDS": "300",
+    "CHROME_EXTENSION_IDS": "bgohgakmnepefbcccanofomnhodflnab",
     "OPENROUTER_MODEL": "openai/gpt-4o-mini",
     "OPENROUTER_MINDMAP_MODEL": "openai/gpt-4o-mini",
     "ADMIN_EMAILS": "chenzixin1@gmail.com",
-    "NEXTAUTH_URL": "https://cf-preview.podsum.cc",
-    "NEXT_PUBLIC_APP_URL": "https://cf-preview.podsum.cc"
+    "NEXTAUTH_URL": "https://podsum.cc",
+    "NEXT_PUBLIC_APP_URL": "https://podsum.cc"
+  },
+  "triggers": {
+    "crons": ["* * * * *", "0 4 * * *"]
   },
   "observability": {
     "enabled": true
   },
-  "workers_dev": true
+  "workers_dev": false
 }

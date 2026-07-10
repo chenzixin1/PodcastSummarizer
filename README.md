@@ -167,6 +167,7 @@ Runtime switches:
 - `EXTENSION_MONITOR_ENABLED`: default `false`. Must be `true` to enable monitor APIs/UI and ingestion.
 - `EXTENSION_MONITOR_CAPTURE_RAW`: default `false`. Set `true` to persist raw request/response payloads.
 - `EXTENSION_MONITOR_RETENTION_DAYS`: default `3`. Automatic cleanup window for monitor tasks/events.
+- `CHROME_EXTENSION_IDS`: comma-separated Chrome extension IDs allowed to receive Google-login extension tokens.
 
 Notes:
 

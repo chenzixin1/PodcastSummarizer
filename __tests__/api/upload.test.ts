@@ -201,6 +201,8 @@ describe('Upload API Tests', () => {
 
     const formData = new FormData();
     formData.append('youtubeUrl', 'https://www.youtube.com/watch?v=I9aGC6Ui3eE');
+    formData.append('channelName', 'Lex Fridman');
+    formData.append('sourcePublishedAt', '2026-06-08');
 
     const request = new NextRequest('http://localhost:3000/api/upload', {
       method: 'POST',
@@ -224,8 +226,8 @@ describe('Upload API Tests', () => {
       expect.objectContaining({
         title: '20x Companies with Claude',
         sourceReference: 'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
-        sourcePublishedAt: null,
-        tags: undefined,
+        sourcePublishedAt: '2026-06-08',
+        tags: ['Lex Fridman'],
       }),
     );
   });

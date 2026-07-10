@@ -211,6 +211,31 @@ const extractLegacyBilingualSummary = (summaryRaw: string): { zh: string; en: st
   };
 };
 
+
+const resolveDashboardSummaries = (analysis: { summary?: string | null; summaryZh?: string | null; summaryEn?: string | null }): { summaryZh: string; summaryEn: string } => {
+  const legacyFromCombined = extractLegacyBilingualSummary(analysis.summary || '');
+  const splitFromZhField = extractLegacyBilingualSummary(analysis.summaryZh || '');
+  const splitFromEnField = extractLegacyBilingualSummary(analysis.summaryEn || '');
+
+  const summaryZh =
+    splitFromZhField.zh ||
+    legacyFromCombined.zh ||
+    analysis.summaryZh ||
+    analysis.summary ||
+    'Summary not available.';
+  const summaryEn =
+    splitFromEnField.en ||
+    splitFromZhField.en ||
+    analysis.summaryEn ||
+    legacyFromCombined.en ||
+    'English summary not available.';
+
+  return {
+    summaryZh: normalizeMarkdownOutput(summaryZh),
+    summaryEn: normalizeMarkdownOutput(summaryEn),
+  };
+};
+
 const EMPHASIS_EXCLUDED_KEYWORDS = new Set([
   'youtube',
   'transcript',
@@ -1448,7 +1473,7 @@ export default function DashboardPage() {
           if (isProcessed && analysis && podcast) {
             // 数据库中有完整的分析结果
             dashboardDebugLog('[DEBUG] 从数据库加载完整分析结果');
-            const legacySummary = extractLegacyBilingualSummary(analysis.summary || '');
+            const resolvedSummaries = resolveDashboardSummaries(analysis);
             const normalizedFullTextBilingualJson = normalizeFullTextBilingualPayload(analysis.fullTextBilingualJson);
             const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis.summaryBilingualJson);
             const loadedData: ProcessedData = {
@@ -1456,12 +1481,8 @@ export default function DashboardPage() {
               originalFileName: podcast.originalFileName || 'Transcript',
               originalFileSize: podcast.fileSize || '-',
               blobUrl: podcast.blobUrl ?? null,
-              summaryZh: normalizeMarkdownOutput(
-                analysis.summaryZh || legacySummary.zh || analysis.summary || 'Summary not available.'
-              ),
-              summaryEn: normalizeMarkdownOutput(
-                analysis.summaryEn || legacySummary.en || 'English summary not available.'
-              ),
+              summaryZh: resolvedSummaries.summaryZh,
+              summaryEn: resolvedSummaries.summaryEn,
               translation: normalizeMarkdownOutput(
                 enforceLineBreaks(analysis.translation || 'Translation not available.')
               ),
@@ -1510,7 +1531,7 @@ export default function DashboardPage() {
             // 数据库中有播客信息但没有分析结果，需要处理
             dashboardDebugLog('[DEBUG] 数据库中有播客信息但无分析结果，开始处理');
             setData(prev => {
-              const legacySummary = extractLegacyBilingualSummary(analysis?.summary || '');
+              const resolvedSummaries = analysis ? resolveDashboardSummaries(analysis) : null;
               const normalizedFullTextBilingualJson = normalizeFullTextBilingualPayload(analysis?.fullTextBilingualJson);
               const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis?.summaryBilingualJson);
               return ({
@@ -1518,11 +1539,11 @@ export default function DashboardPage() {
               originalFileName: podcast.originalFileName || 'Transcript',
               originalFileSize: podcast.fileSize || '-',
               blobUrl: podcast.blobUrl ?? prev?.blobUrl ?? null,
-              summaryZh: analysis?.summaryZh || analysis?.summary
-                ? normalizeMarkdownOutput(analysis?.summaryZh || legacySummary.zh || analysis?.summary || '')
+              summaryZh: resolvedSummaries
+                ? resolvedSummaries.summaryZh
                 : prev?.summaryZh || '',
-              summaryEn: analysis?.summaryEn || analysis?.summary
-                ? normalizeMarkdownOutput(analysis?.summaryEn || legacySummary.en || '')
+              summaryEn: resolvedSummaries
+                ? resolvedSummaries.summaryEn
                 : prev?.summaryEn || '',
               translation: analysis?.translation
                 ? normalizeMarkdownOutput(

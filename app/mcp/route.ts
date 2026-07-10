@@ -2,7 +2,12 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { ApifyTranscriptError, fetchYoutubeSrtViaApify } from '../../lib/apifyTranscript';
 import { getAccountCreditOverview } from '../../lib/credits';
-import { getAnalysisResults, getPodcast, getUserPodcasts, verifyPodcastOwnership } from '../../lib/db';
+import {
+  getAnalysisResults,
+  getPodcast,
+  getUserPodcasts,
+  verifyPodcastOwnership,
+} from '../../lib/db';
 import {
   McpAccessAuthContext,
   McpScope,
@@ -285,8 +290,8 @@ function availableTools(context: McpAccessAuthContext): McpTool[] {
             url: { type: 'string', description: 'YouTube URL or video id to ingest.' },
             preferredLanguage: { type: 'string', description: 'Optional transcript language code, such as en or zh.' },
             sourceReference: { type: 'string', description: 'Optional source reference override. Defaults to url.' },
-            channelName: { type: 'string', description: 'Optional YouTube channel or creator name to store as a tag.' },
-            sourcePublishedAt: { type: 'string', description: 'Optional original publish date or ISO timestamp.' },
+            channelName: { type: 'string', description: 'Optional YouTube channel or creator name to store as a topic tag, such as 最佳拍档 or Lex Fridman.' },
+            sourcePublishedAt: { type: 'string', description: 'Optional original YouTube publish date/time, such as 2026-06-08 or an ISO timestamp.' },
             isPublic: { type: 'boolean', default: false },
           },
           required: ['url'],
@@ -541,7 +546,6 @@ async function handleSubmitYoutubeUrl(
     videoId: transcriptResult.videoId,
   });
   const srtBuffer = Buffer.from(transcriptResult.srtContent, 'utf8');
-
   let result;
   try {
     result = await createPodcastFromSrt({
@@ -644,7 +648,6 @@ function toolResourceId(name: string, args: Record<string, unknown>, result: unk
   }
   return stringArg(args, 'podcastId') || null;
 }
-
 async function handleToolCall(
   context: McpAccessAuthContext,
   params: Record<string, unknown>,
