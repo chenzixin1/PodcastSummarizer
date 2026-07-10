@@ -37,6 +37,7 @@ describe('guard-worktree-drift', () => {
     expect(guard.isProtectedPath('components/AppHeader.tsx')).toBe(true);
     expect(guard.isProtectedPath('lib/staticSnapshots.ts')).toBe(true);
     expect(guard.isProtectedPath('wrangler.jsonc')).toBe(true);
+    expect(guard.isProtectedPath('wrangler.preview.jsonc')).toBe(true);
     expect(guard.isProtectedPath('worker.ts')).toBe(true);
     expect(guard.isProtectedPath('open-next.config.ts')).toBe(true);
     expect(guard.isProtectedPath('cloudflare-env.d.ts')).toBe(true);
@@ -105,6 +106,7 @@ describe('guard-worktree-drift', () => {
     ['worker.ts'],
     ['cloudflare-env.d.ts'],
     ['types/next-auth.d.ts'],
+    ['wrangler.preview.jsonc'],
   ])('blocks deploy when primary workspace has protected drift in %s', (filePath) => {
     const result = guard.assertNoDeployDrift({
       repoRoot: '/repo/.worktrees/branch',

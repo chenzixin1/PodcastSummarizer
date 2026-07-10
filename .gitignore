@@ -10,9 +10,10 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
+# generated test and performance output
 /coverage
 /output
+/.lighthouseci/
 
 # next.js
 /.next/

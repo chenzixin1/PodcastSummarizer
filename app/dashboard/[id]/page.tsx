@@ -13,8 +13,8 @@ import { logDebug, logError, logUserAction, logPerformance, getBrowserInfo, getC
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
 import AppHeader from '../../../components/AppHeader';
+import LiteYouTubeEmbed from '../../../components/LiteYouTubeEmbed';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
-import { extractPodcastTags } from '../../../lib/podcastTags';
 import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
 import {
   annotateEnglishWithHints,
@@ -52,12 +52,10 @@ interface ProcessedData {
   title: string;
   originalFileName: string;
   originalFileSize: string;
-  blobUrl?: string | null;
   summaryZh: string;
   summaryEn: string;
   translation: string;
   fullTextHighlights: string;
-  fullTextOriginal: string;
   fullTextBilingualJson?: FullTextBilingualPayload | null;
   summaryBilingualJson?: SummaryBilingualPayload | null;
   bilingualAlignmentVersion?: number | null;
@@ -234,206 +232,6 @@ const resolveDashboardSummaries = (analysis: { summary?: string | null; summaryZ
     summaryZh: normalizeMarkdownOutput(summaryZh),
     summaryEn: normalizeMarkdownOutput(summaryEn),
   };
-};
-
-const EMPHASIS_EXCLUDED_KEYWORDS = new Set([
-  'youtube',
-  'transcript',
-  'summary',
-  'podsum',
-  'full',
-  'text',
-  'translated',
-  'analysis',
-]);
-
-interface ParsedSrtLine {
-  timestamp: string;
-  text: string;
-}
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const normalizeSrtTime = (raw: string): string | null => {
-  const matched = raw.trim().match(/^(\d{2}):(\d{2}):(\d{2})(?:[.,]\d{1,3})?$/);
-  if (!matched) {
-    return null;
-  }
-  return `${matched[1]}:${matched[2]}:${matched[3]}`;
-};
-
-const parseSrtForDisplay = (srtContent: string): ParsedSrtLine[] => {
-  const normalized = srtContent.replace(/\r\n/g, '\n').replace(/^\uFEFF/, '').trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const blocks = normalized.split(/\n\s*\n+/g);
-  const lines: ParsedSrtLine[] = [];
-  for (const block of blocks) {
-    const blockLines = block
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (blockLines.length === 0) {
-      continue;
-    }
-
-    let cursor = 0;
-    if (/^\d+$/.test(blockLines[0])) {
-      cursor = 1;
-    }
-
-    const timeLine = blockLines[cursor];
-    if (!timeLine || !timeLine.includes('-->')) {
-      continue;
-    }
-
-    const [startRaw] = timeLine.split('-->').map((part) => part.trim());
-    const startTime = normalizeSrtTime(startRaw);
-    if (!startTime) {
-      continue;
-    }
-
-    const text = blockLines
-      .slice(cursor + 1)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!text) {
-      continue;
-    }
-
-    lines.push({
-      timestamp: startTime,
-      text,
-    });
-  }
-
-  return lines;
-};
-
-const extractBoldKeywords = (markdown: string): string[] => {
-  const matched = Array.from(markdown.matchAll(/\*\*([^*]+)\*\*/g))
-    .map((item) => item[1]?.trim() || '')
-    .filter(Boolean);
-
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const keyword of matched) {
-    const normalized = keyword.replace(/\s+/g, ' ').trim();
-    if (!normalized || normalized.length < 2 || normalized.length > 32) {
-      continue;
-    }
-    if (TIMESTAMP_ONLY_PATTERN.test(normalized)) {
-      continue;
-    }
-    const lower = normalized.toLowerCase();
-    if (seen.has(lower) || EMPHASIS_EXCLUDED_KEYWORDS.has(lower)) {
-      continue;
-    }
-    seen.add(lower);
-    result.push(normalized);
-    if (result.length >= 16) {
-      break;
-    }
-  }
-  return result;
-};
-
-const buildOriginalTextKeywords = (input: {
-  title: string;
-  sourceReference?: string | null;
-  srtContent: string;
-  translatedHighlights: string;
-}): string[] => {
-  const merged = [
-    ...extractBoldKeywords(input.translatedHighlights),
-    ...extractPodcastTags({
-      title: input.title,
-      sourceReference: input.sourceReference ?? null,
-      summary: input.srtContent,
-    }),
-  ];
-
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const rawKeyword of merged) {
-    const keyword = rawKeyword.replace(/^#+/, '').replace(/\s+/g, ' ').trim();
-    if (!keyword || keyword.length < 2 || keyword.length > 32) {
-      continue;
-    }
-    if (/^\d+$/.test(keyword)) {
-      continue;
-    }
-    if (/^[^A-Za-z0-9\u4E00-\u9FFF]+$/.test(keyword)) {
-      continue;
-    }
-    const lower = keyword.toLowerCase();
-    if (seen.has(lower) || EMPHASIS_EXCLUDED_KEYWORDS.has(lower)) {
-      continue;
-    }
-    seen.add(lower);
-    result.push(keyword);
-    if (result.length >= 16) {
-      break;
-    }
-  }
-  return result;
-};
-
-const emphasizeLineKeywords = (line: string, keywords: string[]): string => {
-  if (!line.trim()) {
-    return line;
-  }
-
-  let output = line;
-  let emphasizedCount = 0;
-  for (const keyword of keywords) {
-    if (emphasizedCount >= 2) {
-      break;
-    }
-
-    if (!keyword || output.includes(`**${keyword}**`)) {
-      continue;
-    }
-
-    if (/[A-Za-z]/.test(keyword)) {
-      const regex = new RegExp(`\\b(${escapeRegExp(keyword)})\\b`, 'i');
-      if (regex.test(output)) {
-        output = output.replace(regex, '**$1**');
-        emphasizedCount += 1;
-      }
-      continue;
-    }
-
-    const index = output.indexOf(keyword);
-    if (index >= 0) {
-      output = `${output.slice(0, index)}**${keyword}**${output.slice(index + keyword.length)}`;
-      emphasizedCount += 1;
-    }
-  }
-  return output;
-};
-
-const formatOriginalSrtAsMarkdown = (input: {
-  title: string;
-  sourceReference?: string | null;
-  srtContent: string;
-  translatedHighlights: string;
-}): string => {
-  const lines = parseSrtForDisplay(input.srtContent);
-  if (lines.length === 0) {
-    return normalizeMarkdownOutput(input.srtContent);
-  }
-
-  const keywords = buildOriginalTextKeywords(input);
-  return lines
-    .map(({ timestamp, text }) => {
-      const emphasizedText = emphasizeLineKeywords(text, keywords);
-      return `**[${timestamp}]** ${emphasizedText}`;
-    })
-    .join('\n\n');
 };
 
 const MindMapCanvas = dynamic(() => import('../../../components/MindMapCanvas'), {
@@ -705,22 +503,6 @@ const getSourceHost = (value: string): string => {
   }
 };
 
-const resolveTranscriptFetchUrl = (blobUrl: string): string => {
-  if (typeof window === 'undefined') {
-    return blobUrl;
-  }
-
-  try {
-    const parsed = new URL(blobUrl, window.location.href);
-    if (parsed.pathname.startsWith('/api/files/')) {
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    }
-    return parsed.href;
-  } catch {
-    return blobUrl;
-  }
-};
-
 const formatMetricValue = (value: number | null | undefined) => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return '-';
@@ -820,7 +602,6 @@ export default function DashboardPage() {
   const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasResolvedInitialFetchRef = useRef(false);
   const lastLoadedIdRef = useRef<string | null>(null);
-  const transcriptCacheRef = useRef<Map<string, string>>(new Map());
   const pronunciationControllerRef = useRef<PronunciationController | null>(null);
 
   // Debug state
@@ -1480,7 +1261,6 @@ export default function DashboardPage() {
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName || 'Transcript',
               originalFileSize: podcast.fileSize || '-',
-              blobUrl: podcast.blobUrl ?? null,
               summaryZh: resolvedSummaries.summaryZh,
               summaryEn: resolvedSummaries.summaryEn,
               translation: normalizeMarkdownOutput(
@@ -1489,7 +1269,6 @@ export default function DashboardPage() {
               fullTextHighlights: normalizeMarkdownOutput(
                 enforceLineBreaks(analysis.highlights || 'Highlights not available.')
               ),
-              fullTextOriginal: '',
               fullTextBilingualJson: normalizedFullTextBilingualJson,
               summaryBilingualJson: normalizedSummaryBilingualJson,
               bilingualAlignmentVersion: analysis.bilingualAlignmentVersion ?? null,
@@ -1538,7 +1317,6 @@ export default function DashboardPage() {
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName || 'Transcript',
               originalFileSize: podcast.fileSize || '-',
-              blobUrl: podcast.blobUrl ?? prev?.blobUrl ?? null,
               summaryZh: resolvedSummaries
                 ? resolvedSummaries.summaryZh
                 : prev?.summaryZh || '',
@@ -1555,10 +1333,6 @@ export default function DashboardPage() {
                     enforceLineBreaks(analysis.highlights)
                   )
                 : prev?.fullTextHighlights || '',
-              fullTextOriginal:
-                (podcast.blobUrl ?? null) === (prev?.blobUrl ?? null)
-                  ? prev?.fullTextOriginal || ''
-                  : '',
               fullTextBilingualJson:
                 normalizedFullTextBilingualJson ?? prev?.fullTextBilingualJson ?? null,
               summaryBilingualJson:
@@ -1686,7 +1460,6 @@ export default function DashboardPage() {
   const currentSourceReference = (data?.sourceReference || '').trim();
   const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
   const youtubeVideoId = getYouTubeVideoId(currentSourceReference);
-  const youtubeEmbedUrl = youtubeVideoId ? `https://www.youtube-nocookie.com/embed/${youtubeVideoId}` : null;
   const sourceHost = getSourceHost(currentSourceReference);
 
   const toggleVisibility = async () => {
@@ -1724,66 +1497,6 @@ export default function DashboardPage() {
       setIsSavingVisibility(false);
     }
   };
-
-  useEffect(() => {
-    const blobUrl = data?.blobUrl;
-    if (!blobUrl) {
-      return;
-    }
-
-    const transcriptFetchUrl = resolveTranscriptFetchUrl(blobUrl);
-    let cancelled = false;
-    const applyOriginalMarkdown = (rawSrt: string) => {
-      const formatted = formatOriginalSrtAsMarkdown({
-        title: data?.title || '',
-        sourceReference: data?.sourceReference ?? null,
-        srtContent: rawSrt,
-        translatedHighlights: data?.fullTextHighlights || '',
-      });
-      if (cancelled) {
-        return;
-      }
-      setData(prev => {
-        if (!prev || prev.blobUrl !== blobUrl) {
-          return prev;
-        }
-        if (prev.fullTextOriginal === formatted) {
-          return prev;
-        }
-        return {
-          ...prev,
-          fullTextOriginal: formatted,
-        };
-      });
-    };
-
-    const cachedTranscript = transcriptCacheRef.current.get(transcriptFetchUrl);
-    if (typeof cachedTranscript === 'string') {
-      applyOriginalMarkdown(cachedTranscript);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const fetchTranscript = async () => {
-      try {
-        const response = await fetch(transcriptFetchUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch transcript (${response.status})`);
-        }
-        const rawSrt = (await response.text()).replace(/^\uFEFF/, '');
-        transcriptCacheRef.current.set(transcriptFetchUrl, rawSrt);
-        applyOriginalMarkdown(rawSrt);
-      } catch (transcriptError) {
-        console.error('[DEBUG] Failed to prepare original full text:', transcriptError);
-      }
-    };
-
-    void fetchTranscript();
-    return () => {
-      cancelled = true;
-    };
-  }, [data?.blobUrl, data?.title, data?.sourceReference, data?.fullTextHighlights]);
 
   const getSingleLanguageForMindMap = useCallback((): 'zh' | 'en' => {
     return contentLanguage === 'en' ? 'en' : 'zh';
@@ -2062,14 +1775,10 @@ export default function DashboardPage() {
             <section className="dashboard-panel overflow-hidden rounded-2xl">
               <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="border-b border-[var(--border-soft)] bg-[var(--paper-subtle)] lg:border-b-0 lg:border-r">
-                  {youtubeEmbedUrl ? (
-                    <iframe
-                      src={youtubeEmbedUrl}
+                  {youtubeVideoId ? (
+                    <LiteYouTubeEmbed
+                      videoId={youtubeVideoId}
                       title={`Original video for ${data.title}`}
-                      className="aspect-video h-full min-h-[220px] w-full bg-[#141814] sm:min-h-[320px] lg:min-h-[520px]"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      referrerPolicy="strict-origin-when-cross-origin"
-                      allowFullScreen
                     />
                   ) : (
                     <div className="flex aspect-video min-h-[220px] w-full flex-col justify-between p-5 sm:min-h-[320px] lg:min-h-[520px]">

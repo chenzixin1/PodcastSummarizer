@@ -15,7 +15,9 @@ jest.mock('next-auth/react', () => ({
 }));
 
 jest.mock('react-markdown', () => {
-  return ({ children }: { children: React.ReactNode }) => <>{children}</>;
+  return function MockReactMarkdown({ children }: { children: React.ReactNode }) {
+    return <>{children}</>;
+  };
 });
 
 jest.mock('remark-gfm', () => {
@@ -179,10 +181,9 @@ describe('DashboardPage language modes', () => {
     expect(mockFetch.mock.calls.some(([input]) => String(input).includes('/api/analysis/'))).toBe(false);
   });
 
-  test('fetches stored /api/files transcripts from the current origin', async () => {
+  test('does not fetch the source transcript while loading completed analysis', async () => {
     const payload = JSON.parse(JSON.stringify(analysisPayload));
-    payload.data.podcast.blobUrl = 'https://podsum.cc/api/files/podcast-123-transcript.srt';
-    payload.data.podcast.sourceReference = 'https://www.youtube.com/watch?v=I9aGC6Ui3eE';
+    payload.data.podcast.blobUrl = '/api/files/test.srt';
 
     mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -204,7 +205,7 @@ describe('DashboardPage language modes', () => {
         } as Response;
       }
 
-      if (url === '/api/files/podcast-123-transcript.srt') {
+      if (url === '/api/files/test.srt') {
         return {
           ok: true,
           status: 200,
@@ -229,9 +230,59 @@ describe('DashboardPage language modes', () => {
     render(<DashboardPage />);
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith('/api/files/podcast-123-transcript.srt');
+      expect(screen.getByText('Summary')).toBeInTheDocument();
     });
-    expect(mockFetch.mock.calls.some(([input]) => String(input).startsWith('https://podsum.cc/api/files/'))).toBe(false);
+    expect(mockFetch.mock.calls.some(([input]) => String(input) === '/api/files/test.srt')).toBe(false);
+  });
+
+  test('defers the YouTube iframe until the video placeholder is activated', async () => {
+    const user = userEvent.setup();
+    const payload = JSON.parse(JSON.stringify(analysisPayload));
+    payload.data.podcast.sourceReference = 'https://www.youtube.com/watch?v=I9aGC6Ui3eE';
+
+    mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/analysis/')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => payload,
+          text: async () => JSON.stringify(payload),
+        } as Response;
+      }
+
+      if (url === '/vocab/advanced-words.json') {
+        return {
+          ok: true,
+          json: async () => ({}),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ success: false }),
+        text: async () => JSON.stringify({ success: false }),
+      } as Response;
+    });
+
+    render(<DashboardPage />);
+
+    const playButton = await screen.findByRole('button', {
+      name: 'Play Original video for Demo Podcast',
+    });
+    expect(document.querySelectorAll('iframe')).toHaveLength(0);
+
+    await user.click(playButton);
+
+    const iframe = screen.getByTitle('Original video for Demo Podcast');
+    expect(document.querySelectorAll('iframe')).toHaveLength(1);
+    expect(iframe).toHaveAttribute(
+      'src',
+      'https://www.youtube-nocookie.com/embed/I9aGC6Ui3eE?autoplay=1'
+    );
   });
 
   test('shows four language mode buttons and persists selection', async () => {

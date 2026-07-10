@@ -18,6 +18,7 @@ export const PROTECTED_FILES = new Set([
   'yarn.lock',
   'pnpm-lock.yaml',
   'wrangler.jsonc',
+  'wrangler.preview.jsonc',
   'open-next.config.ts',
   'next.config.ts',
   'next.config.js',

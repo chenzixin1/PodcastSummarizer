@@ -2,9 +2,24 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import {
+  createStickyMainFrameOriginGuard,
+  resolveDistinctHttpOrigins,
+  runOriginGuardedOperation,
+} from './performance/url-safety.mjs';
 
-const prodBase = (process.env.PROD_BASE_URL || 'https://podsum.cc').replace(/\/+$/, '');
-const previewBase = (process.env.CF_PREVIEW_BASE_URL || 'https://cf-preview.podsum.cc').replace(/\/+$/, '');
+let prodBase;
+let previewBase;
+try {
+  ({ productionOrigin: prodBase, previewOrigin: previewBase } = resolveDistinctHttpOrigins({
+    productionUrl: process.env.PROD_BASE_URL || 'https://podsum.cc',
+    previewUrl: process.env.CF_PREVIEW_BASE_URL,
+    previewLabel: 'CF_PREVIEW_BASE_URL',
+  }));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 const outputDir = process.env.VISUAL_OUTPUT_DIR || path.join(process.cwd(), 'output', 'playwright', 'cloudflare-preview-visual');
 const maxMismatchRatio = Number(process.env.VISUAL_MAX_MISMATCH_RATIO || '0.03');
 const allowExploreSmoke = process.env.VISUAL_ALLOW_EXPLORE_SMOKE === '1';
@@ -96,10 +111,13 @@ async function capture(page, baseUrl, route, viewport) {
   page.on('console', onConsole);
   page.on('pageerror', onPageError);
   page.on('response', onResponse);
+  const navigationLabel = `${baseUrl}${route} navigation`;
+  const originGuard = createStickyMainFrameOriginGuard(page, baseUrl, navigationLabel);
 
   try {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    originGuard.assertSafe();
     await page.waitForLoadState('load', { timeout: 12000 }).catch(() => null);
     await page.waitForFunction(() => {
       const text = document.body?.innerText?.replace(/\s+/g, ' ').trim() || '';
@@ -121,22 +139,15 @@ async function capture(page, baseUrl, route, viewport) {
     });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(750);
-    const snapshot = await page.evaluate(() => {
-      const rectFor = (selector) => {
-        const element = document.querySelector(selector);
-        if (!element) {
-          return null;
-        }
-        const rect = element.getBoundingClientRect();
-        return {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-        };
-      };
-      const rectsFor = (selector) =>
-        Array.from(document.querySelectorAll(selector)).map((element) => {
+    originGuard.assertSafe();
+    const snapshot = await runOriginGuardedOperation(
+      originGuard,
+      () => page.evaluate(() => {
+        const rectFor = (selector) => {
+          const element = document.querySelector(selector);
+          if (!element) {
+            return null;
+          }
           const rect = element.getBoundingClientRect();
           return {
             x: Math.round(rect.x),
@@ -144,29 +155,48 @@ async function capture(page, baseUrl, route, viewport) {
             width: Math.round(rect.width),
             height: Math.round(rect.height),
           };
-        });
+        };
+        const rectsFor = (selector) =>
+          Array.from(document.querySelectorAll(selector)).map((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              x: Math.round(rect.x),
+              y: Math.round(rect.y),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          });
 
-      return {
-        text: document.body.innerText.replace(/\s+/g, ' ').trim(),
-        title: document.title,
-        scrollWidth: document.documentElement.scrollWidth,
-        scrollHeight: document.documentElement.scrollHeight,
-        body: rectFor('body'),
-        header: rectFor('header'),
-        main: rectFor('main'),
-        footer: rectFor('footer'),
-        h1: rectFor('h1'),
-        iframes: rectsFor('iframe'),
-      };
-    });
-    return {
-      screenshot: await page.screenshot({
+        return {
+          text: document.body.innerText.replace(/\s+/g, ' ').trim(),
+          title: document.title,
+          scrollWidth: document.documentElement.scrollWidth,
+          scrollHeight: document.documentElement.scrollHeight,
+          body: rectFor('body'),
+          header: rectFor('header'),
+          main: rectFor('main'),
+          footer: rectFor('footer'),
+          h1: rectFor('h1'),
+          iframes: rectsFor('iframe'),
+        };
+      }),
+      `${navigationLabel} snapshot evaluation`,
+    );
+    const screenshot = await runOriginGuardedOperation(
+      originGuard,
+      () => page.screenshot({
         fullPage: true,
         animations: 'disabled',
         mask: [page.locator('iframe')],
         maskColor: '#141814',
       }),
+      `${navigationLabel} screenshot capture`,
+    );
+    const finalUrl = originGuard.assertSafe();
+    return {
+      screenshot,
       snapshot,
+      finalUrl,
       consoleErrors,
       pageErrors,
       httpErrors,
@@ -175,6 +205,7 @@ async function capture(page, baseUrl, route, viewport) {
     page.off('console', onConsole);
     page.off('pageerror', onPageError);
     page.off('response', onResponse);
+    originGuard.cleanup();
   }
 }
 
@@ -330,6 +361,8 @@ async function main() {
           passed,
           prodPath,
           previewPath,
+          prodFinalUrl: prodCapture.finalUrl,
+          previewFinalUrl: previewCapture.finalUrl,
           diffPath: passed ? null : diffPath,
           textMatches,
           titleMatches,

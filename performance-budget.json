@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "routes": {
+    "/": {
+      "javascriptBrotliBytes": 122880,
+      "cssBrotliBytes": 20480
+    }
+  },
+  "homepage": {
+    "requests": 24,
+    "transferBytes": 256000,
+    "scriptBytes": 163840,
+    "styleBytes": 20480,
+    "fontBytes": 36864,
+    "imageBytes": 20480,
+    "fcpMs": 1800,
+    "lcpMs": 2500,
+    "tbtMs": 200,
+    "cls": 0.1
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "data": [
+    {
+      "id": "fixture-public-performance-001",
+      "title": "Synthetic Public Performance Sample",
+      "originalFileName": "synthetic-public-performance-sample.srt",
+      "briefSummary": "Synthetic public content for repeatable homepage performance checks.",
+      "fileSize": "24 KB",
+      "sourceReference": "https://example.com/podcasts/synthetic-public-performance-sample",
+      "sourcePublishedAt": "2026-07-01T00:00:00.000Z",
+      "createdAt": "2026-07-01T00:00:00.000Z",
+      "processedAt": "2026-07-01T00:01:00.000Z",
+      "isProcessed": true,
+      "isPublic": true,
+      "wordCount": 2400,
+      "durationSec": 900,
+      "tags": ["synthetic", "performance"]
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 12,
+    "total": 1,
+    "totalPages": 1
+  }
+}

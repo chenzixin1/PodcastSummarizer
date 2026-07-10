@@ -128,9 +128,19 @@ function NavTab({ href, active, children }: { href: string; active: boolean; chi
   );
 }
 
-function MenuRow({ href, icon, label }: { href: string; icon: Parameters<typeof MenuIcon>[0]['type']; label: string }) {
+function MenuRow({
+  href,
+  icon,
+  label,
+  prefetch,
+}: {
+  href: string;
+  icon: Parameters<typeof MenuIcon>[0]['type'];
+  label: string;
+  prefetch?: false;
+}) {
   return (
-    <Link href={href} className="group flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-[var(--text-main)] hover:bg-[var(--paper-muted)]">
+    <Link href={href} prefetch={prefetch} className="group flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-[var(--text-main)] hover:bg-[var(--paper-muted)]">
       <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] text-[var(--heading)]">
         <MenuIcon type={icon} />
       </span>
@@ -163,7 +173,14 @@ export default function AppHeader({
         <div className="flex min-w-0 items-center justify-between gap-3">
           <nav className="app-breadcrumb-nav min-w-0">
             <Link href="/" className="app-breadcrumb-link">
-              <Image src="/podcast-summarizer-icon.png" alt="PodSum logo" width={36} height={36} className="app-breadcrumb-logo" />
+              <Image
+                src="/podcast-summarizer-icon-96-v1.png"
+                alt="PodSum logo"
+                width={36}
+                height={36}
+                unoptimized
+                className="app-breadcrumb-logo"
+              />
               <span>PodSum.cc</span>
             </Link>
             {currentLabel && (
@@ -189,6 +206,7 @@ export default function AppHeader({
           <ThemeModeSwitch themeMode={themeMode} onToggle={onThemeToggle} />
           <Link
             href="/upload"
+            prefetch={false}
             className={[
               'inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors sm:px-4',
               isAuthenticated
@@ -230,17 +248,17 @@ export default function AppHeader({
                 </div>
 
                 <div className="mt-2 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">Account</div>
-                <MenuRow href="/account" icon="profile" label="Profile" />
-                <MenuRow href="/account/credits" icon="credits" label="Credits" />
-                <MenuRow href="/pricing" icon="pricing" label="Pricing" />
+                <MenuRow href="/account" icon="profile" label="Profile" prefetch={false} />
+                <MenuRow href="/account/credits" icon="credits" label="Credits" prefetch={false} />
+                <MenuRow href="/pricing" icon="pricing" label="Pricing" prefetch={false} />
 
                 <div className="mt-2 border-t border-[var(--border-soft)] px-2 py-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">Integrations</div>
-                <MenuRow href="/account/mcp" icon="mcp" label="MCP" />
-                <MenuRow href="/chrome-extension" icon="extension" label="Extension" />
+                <MenuRow href="/account/mcp" icon="mcp" label="MCP" prefetch={false} />
+                <MenuRow href="/chrome-extension" icon="extension" label="Extension" prefetch={false} />
 
                 <div className="mt-2 border-t border-[var(--border-soft)] px-2 py-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">Discover</div>
                 <MenuRow href="/?view=explore" icon="explore" label="Explore" />
-                <MenuRow href="/about" icon="about" label="About" />
+                <MenuRow href="/about" icon="about" label="About" prefetch={false} />
 
                 <button
                   type="button"
@@ -257,6 +275,7 @@ export default function AppHeader({
           ) : (
             <Link
               href="/auth/signin?callbackUrl=/"
+              prefetch={false}
               className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--btn-primary)] px-4 text-sm font-semibold text-[var(--btn-primary-text)] transition-colors hover:bg-[var(--btn-primary-hover)]"
             >
               <SignInIcon />
