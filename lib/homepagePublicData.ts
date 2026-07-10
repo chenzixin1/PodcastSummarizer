@@ -1,4 +1,5 @@
 import 'server-only';
+import { unstable_cache } from 'next/cache';
 import type { PodcastApiRow } from '../components/home/homeModel';
 import { getAllPodcasts } from './db';
 import { getPublicListSnapshot } from './staticSnapshots';
@@ -65,10 +66,12 @@ function normalizePublicRows(value: unknown): PodcastApiRow[] {
   return rows;
 }
 
-export async function getHomepagePublicData(): Promise<{
+type HomepagePublicData = {
   rows: PodcastApiRow[];
   generatedAt: string | null;
-}> {
+};
+
+async function loadHomepagePublicData(): Promise<HomepagePublicData> {
   try {
     const snapshot = await getPublicListSnapshot(1, HOMEPAGE_PAGE_SIZE);
     if (snapshot) {
@@ -94,4 +97,19 @@ export async function getHomepagePublicData(): Promise<{
   }
 
   return { rows: [], generatedAt: null };
+}
+
+let homepagePublicDataLoader = loadHomepagePublicData;
+try {
+  homepagePublicDataLoader = unstable_cache(
+    loadHomepagePublicData,
+    ['homepage-public-data-v1'],
+    { revalidate: 60 },
+  );
+} catch {
+  // Non-Next test/runtime environments can use the public-only loader directly.
+}
+
+export async function getHomepagePublicData(): Promise<HomepagePublicData> {
+  return homepagePublicDataLoader();
 }

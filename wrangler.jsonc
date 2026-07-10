@@ -22,6 +22,30 @@
     {
       "binding": "PODSUM_BUCKET",
       "bucket_name": "podsum-uploads"
+    },
+    {
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "podsum-next-cache-production"
+    }
+  ],
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "podcast-summarizer"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NEXT_CACHE_DO_QUEUE",
+        "class_name": "DOQueueHandler"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "cache-v1",
+      "new_sqlite_classes": ["DOQueueHandler"]
     }
   ],
   "d1_databases": [
