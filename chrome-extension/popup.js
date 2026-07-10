@@ -8,6 +8,7 @@ const loginFormEl = document.getElementById('loginForm');
 const emailInputEl = document.getElementById('emailInput');
 const passwordInputEl = document.getElementById('passwordInput');
 const loginButtonEl = document.getElementById('loginButton');
+const googleLoginButtonEl = document.getElementById('googleLoginButton');
 const addCurrentButtonEl = document.getElementById('addCurrentButton');
 const isPublicToggleEl = document.getElementById('isPublicToggle');
 const tasksListEl = document.getElementById('tasksList');
@@ -60,7 +61,7 @@ function normalizeDashboardUrl(value) {
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
       return parsed.toString();
     }
-  } catch (_error) {
+  } catch {
     return '';
   }
 
@@ -256,6 +257,24 @@ async function onLoginSubmit(event) {
   }
 }
 
+async function onGoogleLogin() {
+  clearError();
+
+  googleLoginButtonEl.disabled = true;
+  googleLoginButtonEl.textContent = '正在打开 Google...';
+
+  try {
+    await sendMessage({ type: 'PODSUM_GOOGLE_LOGIN' });
+    showInfo('登录成功');
+    await refreshState();
+  } catch (error) {
+    showError(error instanceof Error ? error.message : String(error));
+  } finally {
+    googleLoginButtonEl.disabled = false;
+    googleLoginButtonEl.innerHTML = '<span class="googleMark" aria-hidden="true">G</span>使用 Google 登录';
+  }
+}
+
 async function onAddCurrent() {
   clearError();
   addCurrentButtonEl.disabled = true;
@@ -382,6 +401,7 @@ function onStorageChange(changes, areaName) {
 function init() {
   renderVersionHint();
   loginFormEl.addEventListener('submit', onLoginSubmit);
+  googleLoginButtonEl.addEventListener('click', onGoogleLogin);
   addCurrentButtonEl.addEventListener('click', onAddCurrent);
   isPublicToggleEl.addEventListener('change', onTogglePublic);
   logoutButtonEl.addEventListener('click', onLogout);

@@ -6,7 +6,7 @@ export default function ChromeExtensionPage() {
         <section className="dashboard-panel rounded-2xl p-5 sm:p-6 lg:p-8 max-w-4xl mx-auto">
           <h1 className="text-2xl sm:text-3xl font-bold text-[var(--heading)] mb-3">PodSum Chrome Extension</h1>
           <p className="text-[var(--text-secondary)] leading-7 mb-6">
-            下载压缩包后，按照下方步骤在 Chrome 中启用开发者模式并安装扩展。
+            下载压缩包后，按照下方步骤在 Chrome 中启用开发者模式并安装扩展。已授权的扩展构建可使用 Google 登录，其他开发者模式安装可使用邮箱登录。
           </p>
 
           <div className="rounded-2xl border border-[var(--border-soft)] bg-[var(--paper-base)] p-5 sm:p-6 mb-6">
@@ -31,7 +31,7 @@ export default function ChromeExtensionPage() {
               <li>在扩展管理页面右上角，打开“开发者模式（Developer mode）”。</li>
               <li>点击左上角“加载已解压的扩展程序（Load unpacked）”。</li>
               <li>选择你刚才解压后的扩展目录（目录里应直接能看到 <code>manifest.json</code>）。</li>
-              <li>安装完成后，建议把扩展固定到工具栏，方便在 YouTube 页面快速使用。</li>
+              <li>安装完成后，建议把扩展固定到工具栏，并在扩展弹窗中点击“使用 Google 登录”。</li>
             </ol>
           </div>
         </section>

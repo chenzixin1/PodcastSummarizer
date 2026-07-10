@@ -28,6 +28,44 @@ export interface User {
   createdAt: string;
 }
 
+function normalizeInitialTag(value: string): string {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^#+/, '')
+    .replace(/[.,;:!?/\\|()[\]{}'"`]+$/g, '')
+    .trim();
+}
+
+function buildInitialPodcastTags(podcast: Podcast): string[] {
+  const tags: string[] = [];
+  const seen = new Set<string>();
+  const push = (tag: string) => {
+    const normalized = normalizeInitialTag(tag);
+    if (!normalized || normalized.toLowerCase() === 'youtube') {
+      return;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    tags.push(normalized);
+  };
+
+  for (const tag of podcast.tags || []) {
+    push(tag);
+  }
+  for (const tag of extractPodcastTags({
+    title: podcast.title,
+    sourceReference: podcast.sourceReference,
+    fallbackName: podcast.originalFileName,
+  })) {
+    push(tag);
+  }
+
+  return tags.slice(0, 10);
+}
+
 // 分析结果类型
 export interface AnalysisResult {
   podcastId: string;
@@ -605,6 +643,7 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
   if (!db) {
     return { success: false, error: 'D1 database binding is unavailable.' };
   }
+  const tagsJson = JSON.stringify(buildInitialPodcastTags(podcast));
 
   const updateUserCredits = db
     .prepare(
@@ -622,9 +661,9 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
     .prepare(
       `
       INSERT OR IGNORE INTO podcasts
-        (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
+        (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id, tags_json)
       SELECT
-        ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE changes() = 1
       RETURNING
         id AS podcast_id,
@@ -641,6 +680,7 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
       podcast.sourcePublishedAt ?? null,
       podcast.isPublic ? 1 : 0,
       podcast.userId,
+      tagsJson,
       podcast.userId,
     );
 
@@ -737,6 +777,7 @@ async function savePodcastWithD1CreditDeduction(podcast: Podcast): Promise<DbRes
 export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<DbResult> {
   try {
     await ensureSchemaUpgrades();
+    const tagsJson = JSON.stringify(buildInitialPodcastTags(podcast));
 
     if (!podcast.userId) {
       return { success: false, errorCode: 'USER_REQUIRED', error: 'userId is required for credit deduction.' };
@@ -756,7 +797,7 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
       ),
       inserted AS (
         INSERT INTO podcasts
-          (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
+          (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id, tags_json)
         SELECT
           ${podcast.id},
           ${podcast.title},
@@ -766,7 +807,8 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
           ${podcast.sourceReference ?? null},
           ${podcast.sourcePublishedAt ?? null},
           ${podcast.isPublic},
-          ${podcast.userId}
+          ${podcast.userId},
+          ${tagsJson}::jsonb
         FROM charged
         RETURNING id
       )
@@ -844,11 +886,12 @@ export async function savePodcastWithCreditDeduction(podcast: Podcast): Promise<
 export async function savePodcast(podcast: Podcast): Promise<DbResult> {
   try {
     await ensureSchemaUpgrades();
+    const tagsJson = JSON.stringify(buildInitialPodcastTags(podcast));
     const result = await sql`
       INSERT INTO podcasts 
-        (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id)
+        (id, title, original_filename, file_size, blob_url, source_reference, source_published_at, is_public, user_id, tags_json)
       VALUES 
-        (${podcast.id}, ${podcast.title}, ${podcast.originalFileName}, ${podcast.fileSize}, ${podcast.blobUrl}, ${podcast.sourceReference ?? null}, ${podcast.sourcePublishedAt ?? null}, ${podcast.isPublic}, ${podcast.userId || null})
+        (${podcast.id}, ${podcast.title}, ${podcast.originalFileName}, ${podcast.fileSize}, ${podcast.blobUrl}, ${podcast.sourceReference ?? null}, ${podcast.sourcePublishedAt ?? null}, ${podcast.isPublic}, ${podcast.userId || null}, ${tagsJson}::jsonb)
       ON CONFLICT (id) 
       DO UPDATE SET
         title = ${podcast.title}, 
@@ -858,7 +901,8 @@ export async function savePodcast(podcast: Podcast): Promise<DbResult> {
         source_reference = ${podcast.sourceReference ?? null},
         source_published_at = ${podcast.sourcePublishedAt ?? null},
         is_public = ${podcast.isPublic},
-        user_id = ${podcast.userId || null}
+        user_id = ${podcast.userId || null},
+        tags_json = ${tagsJson}::jsonb
       RETURNING id
     `;
     
@@ -1236,7 +1280,7 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           END as "durationSec"
         FROM podcasts p
         LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
-        ORDER BY p.created_at DESC 
+        ORDER BY COALESCE(p.source_published_at, p.created_at) DESC, p.created_at DESC
         LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
       `;
     } else {
@@ -1260,7 +1304,7 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
         FROM podcasts p
         LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
         WHERE p.is_public = true
-        ORDER BY p.created_at DESC 
+        ORDER BY COALESCE(p.source_published_at, p.created_at) DESC, p.created_at DESC
         LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
       `;
     }
@@ -1309,7 +1353,7 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
       FROM podcasts p
       LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
       WHERE p.user_id = ${userId}
-      ORDER BY p.created_at DESC 
+      ORDER BY COALESCE(p.source_published_at, p.created_at) DESC, p.created_at DESC
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
     `;
     

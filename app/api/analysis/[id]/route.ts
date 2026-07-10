@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { getAnalysisResults, getPodcast, verifyPodcastOwnership } from '../../../../lib/db';
-import { getProcessingJob } from '../../../../lib/processingJobs';
+import { getProcessingJob, getProcessingJobLeaseSeconds } from '../../../../lib/processingJobs';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
@@ -99,7 +99,7 @@ function shouldKickWorker(processingJob: ProcessingJobData | null): boolean {
   if (isQueued) {
     return staleMs > 8000;
   }
-  return staleMs > 120000;
+  return staleMs > getProcessingJobLeaseSeconds() * 1000;
 }
 
 export async function GET(

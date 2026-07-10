@@ -31,7 +31,7 @@ const scopeLabels: Record<string, string> = {
   'exports:markdown': 'Export Markdown',
   'account:credits:read': 'Read credits',
   'qa:ask': 'Podcast Q&A',
-  'podcasts:upload': 'Upload SRT',
+  'podcasts:upload': 'Submit URL',
   'podcasts:write_metadata': 'Edit metadata',
   'jobs:enqueue': 'Retry processing',
 };
@@ -205,14 +205,19 @@ Recommended Obsidian scopes:
 Optional read-only scope:
 - account:credits:read
 
+Optional write scope:
+- podcasts:upload
+
 Available tools:
 - podsum_list_podcasts: input { "limit": 10, "query": "" }
 - podsum_get_podcast: input { "podcastId": "<podcast_id>" }
 - podsum_export_markdown: input { "podcastId": "<podcast_id>", "language": "auto" }
 - podsum_get_credits: input {}
+- podsum_submit_youtube_url: input { "url": "https://www.youtube.com/watch?v=...", "preferredLanguage": "en", "isPublic": false }
 
 Safety rules:
-- Treat this as a read-oriented Obsidian integration.
+- Use read-only scopes unless the agent needs to submit YouTube URLs.
+- Treat podsum_submit_youtube_url as a write action that consumes credits and queues analysis.
 - Prefer podsum_export_markdown when writing podcast notes into Obsidian.
 - Never expose the bearer token in a note, prompt, screenshot, or shared log.
 - If authentication fails, ask the user to create a new token from ${typeof window === 'undefined' ? 'https://podsum.cc/account/mcp' : window.location.origin + '/account/mcp'}.`;

@@ -21,7 +21,21 @@
       <section id="infoBox" class="info hidden"></section>
 
       <section id="loginView" class="panel">
-        <form id="loginForm" class="stack">
+        <div class="stack">
+          <button id="googleLoginButton" type="button" class="googleButton">
+            <span class="googleMark" aria-hidden="true">G</span>
+            使用 Google 登录
+          </button>
+
+          <div class="loginDivider">
+            <span></span>
+            <small>邮箱登录</small>
+            <span></span>
+          </div>
+
+        </div>
+
+        <form id="loginForm" class="stack legacyLoginForm">
           <label>
             邮箱
             <input id="emailInput" type="email" autocomplete="username" required />

@@ -151,7 +151,7 @@ describe('Database Integration Tests', () => {
       mockSql.mockResolvedValue({ rows: [] } as never);
       await getAllPodcasts(3, 15, false);
 
-      const listCall = findSqlCall('ORDER BY p.created_at DESC');
+      const listCall = findSqlCall('ORDER BY COALESCE(p.source_published_at, p.created_at) DESC');
       expect(listCall[1]).toBe(15);
       expect(listCall[2]).toBe(30);
     });
@@ -327,7 +327,7 @@ describe('Database Integration Tests', () => {
       mockSql.mockResolvedValue({ rows: [] } as never);
       await getAllPodcasts(999999, 1000, false);
 
-      const listCall = findSqlCall('ORDER BY p.created_at DESC');
+      const listCall = findSqlCall('ORDER BY COALESCE(p.source_published_at, p.created_at) DESC');
       expect(listCall[1]).toBe(1000);
       expect(listCall[2]).toBe(999998000);
     });
@@ -336,7 +336,7 @@ describe('Database Integration Tests', () => {
       mockSql.mockResolvedValue({ rows: [] } as never);
 
       await getAllPodcasts(0, 10, false);
-      let listCall = findSqlCall('ORDER BY p.created_at DESC');
+      let listCall = findSqlCall('ORDER BY COALESCE(p.source_published_at, p.created_at) DESC');
       expect(listCall[1]).toBe(10);
       expect(listCall[2]).toBe(-10);
 
@@ -344,7 +344,7 @@ describe('Database Integration Tests', () => {
       mockSql.mockResolvedValue({ rows: [] } as never);
 
       await getAllPodcasts(-1, 5, false);
-      listCall = findSqlCall('ORDER BY p.created_at DESC');
+      listCall = findSqlCall('ORDER BY COALESCE(p.source_published_at, p.created_at) DESC');
       expect(listCall[1]).toBe(5);
       expect(listCall[2]).toBe(-10);
     });

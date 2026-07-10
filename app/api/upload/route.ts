@@ -52,11 +52,13 @@ export async function POST(request: NextRequest) {
   const sourceReferenceRaw = formData.get('sourceReference');
   const sourceReference =
     typeof sourceReferenceRaw === 'string' && sourceReferenceRaw.trim() ? sourceReferenceRaw.trim() : youtubeUrl || null;
+  const channelNameRaw = formData.get('channelName');
+  const channelName = typeof channelNameRaw === 'string' ? channelNameRaw.trim().slice(0, 80) : '';
   const sourcePublishedAtRaw = formData.get('sourcePublishedAt');
   const sourcePublishedAt =
-    typeof sourcePublishedAtRaw === 'string' && sourcePublishedAtRaw.trim() ? sourcePublishedAtRaw.trim() : null;
-  const channelNameRaw = formData.get('channelName');
-  const channelName = typeof channelNameRaw === 'string' ? channelNameRaw.trim() : '';
+    typeof sourcePublishedAtRaw === 'string' && sourcePublishedAtRaw.trim()
+      ? sourcePublishedAtRaw.trim().slice(0, 40)
+      : null;
 
   let youtubeIngestMeta:
     | {

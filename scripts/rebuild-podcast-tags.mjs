@@ -8,16 +8,22 @@ if (!process.env.POSTGRES_URL) {
 }
 
 const EN_STOPWORDS = new Set([
-  'the', 'and', 'for', 'with', 'from', 'that', 'this', 'into', 'about', 'over',
+  'the', 'and', 'for', 'with', 'from', 'in', 'of', 'to', 'that', 'this', 'into', 'about', 'over',
   'your', 'you', 'are', 'was', 'were', 'will', 'how', 'what', 'why', 'when',
   'they', 'them', 'their', 'our', 'ours', 'its', 'can', 'new', 'all', 'not',
+  'is', 'on', 'as', 'an', 'at', 'be', 'by', 'or', 'if', 'but', 'than', 'then', 'still',
   'podcast', 'summary', 'video', 'talk', 'episode', 'analysis', 'transcript',
+  'public', 'private', 'full', 'text', 'part', 'chapter', 'youtube',
+  'interview', 'discussion', 'conversation', 'actually',
 ]);
+
+const BLOCKED_TAGS = new Set(['youtube', 'andrej']);
 
 const ZH_STOPWORDS = new Set([
   '我们', '你们', '他们', '这个', '那个', '一些', '一个', '一种', '这样', '那么',
   '然后', '因为', '所以', '就是', '可以', '需要', '时候', '问题', '内容', '总结',
   '视频', '播客', '字幕', '重点', '分析', '翻译',
+  '亿美元', '美元', '负责人', '例如', '下一步', '时间',
 ]);
 
 function cleanWhitespace(value) {
@@ -28,6 +34,13 @@ function normalizeTag(value) {
   return cleanWhitespace(value)
     .replace(/^#+/, '')
     .replace(/[.,;:!?/\\|()[\]{}'"`]+$/g, '');
+}
+
+function isUsefulTag(tag) {
+  const normalized = normalizeTag(tag);
+  if (!normalized) return false;
+  const lower = normalized.toLowerCase();
+  return !lower.startsWith('youtube-') && !BLOCKED_TAGS.has(lower) && !EN_STOPWORDS.has(lower) && !ZH_STOPWORDS.has(normalized);
 }
 
 function stripMarkdown(input) {
@@ -47,7 +60,7 @@ function extractTags({ title, fallbackName, summary, sourceReference }) {
 
   const upsert = (tag, points) => {
     const normalized = normalizeTag(tag);
-    if (!normalized) return;
+    if (!isUsefulTag(normalized)) return;
     const key = normalized.toLowerCase();
     score.set(key, (score.get(key) || 0) + points);
     if (!display.has(key)) {
@@ -56,7 +69,6 @@ function extractTags({ title, fallbackName, summary, sourceReference }) {
   };
 
   const source = cleanWhitespace(sourceReference).toLowerCase();
-  if (source.includes('youtube.com') || source.includes('youtu.be')) upsert('YouTube', 8);
   if (source.includes('bilibili.com')) upsert('Bilibili', 8);
   if (source.includes('x.com') || source.includes('twitter.com')) upsert('X', 8);
 
@@ -65,11 +77,30 @@ function extractTags({ title, fallbackName, summary, sourceReference }) {
 
   const collect = (text, point) => {
     const enMatches = text.match(/[A-Za-z][A-Za-z0-9+.-]{1,28}/g) || [];
+    const runs = [];
+    let currentRun = [];
     for (const word of enMatches) {
       const token = normalizeTag(word);
       const lower = token.toLowerCase();
-      if (token.length < 2 || EN_STOPWORDS.has(lower) || /^\d+$/.test(token)) continue;
+      if (token.length < 2 || EN_STOPWORDS.has(lower) || /^\d+$/.test(token)) {
+        if (currentRun.length > 0) {
+          runs.push(currentRun);
+          currentRun = [];
+        }
+        continue;
+      }
+      currentRun.push(token);
       upsert(token, point);
+    }
+    if (currentRun.length > 0) {
+      runs.push(currentRun);
+    }
+    for (const run of runs) {
+      for (let size = Math.min(3, run.length); size >= 2; size -= 1) {
+        for (let index = 0; index <= run.length - size; index += 1) {
+          upsert(run.slice(index, index + size).join(' '), point + size + 1);
+        }
+      }
     }
     const zhMatches = text.match(/[\u4e00-\u9fff]{2,10}/g) || [];
     for (const phrase of zhMatches) {
@@ -91,7 +122,7 @@ function extractTags({ title, fallbackName, summary, sourceReference }) {
   const seen = new Set();
   for (const tag of tags) {
     const cleaned = normalizeTag(tag);
-    if (!cleaned) continue;
+    if (!isUsefulTag(cleaned)) continue;
     const key = cleaned.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

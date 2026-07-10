@@ -13,11 +13,11 @@ const customJestConfig = {
     '<rootDir>/node_modules/',
     '<rootDir>/.next/',
     '<rootDir>/__tests__/utils/requestTracker.ts',
-    '<rootDir>/__tests__/dashboard/DashboardPage.test.tsx',
   ],
   moduleNameMapper: {
     // 处理模块别名
     '^@/(.*)$': '<rootDir>/$1',
+    '^@opennextjs/cloudflare$': '<rootDir>/__mocks__/opennextjs-cloudflare.js',
     // Mock nanoid to avoid ES module issues
     '^nanoid$': '<rootDir>/__mocks__/nanoid.js',
   },
@@ -33,4 +33,4 @@ const customJestConfig = {
 };
 
 // createJestConfig会将Next.js的配置和自定义配置合并
-module.exports = createJestConfig(customJestConfig); 
+module.exports = createJestConfig(customJestConfig);

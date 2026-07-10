@@ -1,17 +1,22 @@
 const MAX_TAGS = 10;
 
 const EN_STOPWORDS = new Set([
-  'the', 'and', 'for', 'with', 'from', 'that', 'this', 'into', 'about', 'over',
+  'the', 'and', 'for', 'with', 'from', 'in', 'of', 'to', 'that', 'this', 'into', 'about', 'over',
   'your', 'you', 'are', 'was', 'were', 'will', 'how', 'what', 'why', 'when',
   'they', 'them', 'their', 'our', 'ours', 'its', 'can', 'new', 'all', 'not',
+  'is', 'on', 'as', 'an', 'at', 'be', 'by', 'or', 'if', 'but', 'than', 'then', 'still',
   'podcast', 'summary', 'video', 'talk', 'episode', 'analysis', 'transcript',
-  'public', 'private', 'full', 'text', 'part', 'chapter',
+  'public', 'private', 'full', 'text', 'part', 'chapter', 'youtube',
+  'interview', 'discussion', 'conversation', 'actually',
 ]);
+
+const BLOCKED_TAGS = new Set(['youtube', 'andrej']);
 
 const ZH_STOPWORDS = new Set([
   '我们', '你们', '他们', '这个', '那个', '一些', '一个', '一种', '这样', '那么',
   '然后', '因为', '所以', '就是', '可以', '需要', '时候', '问题', '内容', '总结',
   '视频', '播客', '字幕', '重点', '分析', '翻译',
+  '亿美元', '美元', '负责人', '例如', '下一步', '时间',
 ]);
 
 function cleanWhitespace(value: string): string {
@@ -25,29 +30,71 @@ function normalizeTag(value: string): string {
 
 function upsertScore(target: Map<string, number>, tag: string, score: number): void {
   const normalized = normalizeTag(tag);
-  if (!normalized) {
+  if (!isUsefulTag(normalized)) {
     return;
   }
   const key = normalized.toLowerCase();
   target.set(key, (target.get(key) || 0) + score);
 }
 
-function collectEnglishTokens(
+function isUsefulTag(tag: string): boolean {
+  const normalized = normalizeTag(tag);
+  if (!normalized) {
+    return false;
+  }
+  const lower = normalized.toLowerCase();
+  if (
+    lower.startsWith('youtube-') ||
+    BLOCKED_TAGS.has(lower) ||
+    EN_STOPWORDS.has(lower) ||
+    ZH_STOPWORDS.has(normalized)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function collectEnglishTerms(
   target: Map<string, number>,
   text: string,
   score: number,
   displayMap?: Map<string, string>,
 ): void {
   const matches = text.match(/[A-Za-z][A-Za-z0-9+.-]{1,28}/g) || [];
+  const runs: string[][] = [];
+  let currentRun: string[] = [];
+
   for (const item of matches) {
     const token = normalizeTag(item);
     const lower = token.toLowerCase();
     if (token.length < 2 || EN_STOPWORDS.has(lower) || /^\d+$/.test(token)) {
+      if (currentRun.length > 0) {
+        runs.push(currentRun);
+        currentRun = [];
+      }
       continue;
     }
+    currentRun.push(token);
     upsertScore(target, token, score);
     if (displayMap && !displayMap.has(lower)) {
       displayMap.set(lower, token);
+    }
+  }
+
+  if (currentRun.length > 0) {
+    runs.push(currentRun);
+  }
+
+  for (const run of runs) {
+    for (let size = Math.min(3, run.length); size >= 2; size -= 1) {
+      for (let index = 0; index <= run.length - size; index += 1) {
+        const phrase = run.slice(index, index + size).join(' ');
+        upsertScore(target, phrase, score + size + 1);
+        const key = phrase.toLowerCase();
+        if (displayMap && !displayMap.has(key)) {
+          displayMap.set(key, phrase);
+        }
+      }
     }
   }
 }
@@ -75,9 +122,6 @@ function collectChinesePhrases(
 function detectSourceTag(sourceReference?: string | null): string[] {
   const source = String(sourceReference || '').toLowerCase();
   const tags: string[] = [];
-  if (source.includes('youtube.com') || source.includes('youtu.be')) {
-    tags.push('YouTube');
-  }
   if (source.includes('bilibili.com')) {
     tags.push('Bilibili');
   }
@@ -111,7 +155,7 @@ export function extractPodcastTags(input: {
   const displayMap = new Map<string, string>();
   const remember = (tag: string) => {
     const normalized = normalizeTag(tag);
-    if (!normalized) return;
+    if (!isUsefulTag(normalized)) return;
     const key = normalized.toLowerCase();
     if (!displayMap.has(key)) {
       displayMap.set(key, normalized);
@@ -124,12 +168,12 @@ export function extractPodcastTags(input: {
   }
 
   if (title) {
-    collectEnglishTokens(scoreMap, title, 5, displayMap);
+    collectEnglishTerms(scoreMap, title, 5, displayMap);
     collectChinesePhrases(scoreMap, title, 5, displayMap);
   }
 
   if (summary) {
-    collectEnglishTokens(scoreMap, summary, 1, displayMap);
+    collectEnglishTerms(scoreMap, summary, 1, displayMap);
     collectChinesePhrases(scoreMap, summary, 1, displayMap);
   }
 
@@ -171,7 +215,7 @@ export function normalizeDbTags(raw: unknown): string[] {
   const seen = new Set<string>();
   for (const value of source) {
     const tag = normalizeTag(String(value || ''));
-    if (!tag) continue;
+    if (!isUsefulTag(tag)) continue;
     const key = tag.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

@@ -99,6 +99,14 @@ jest.mock('../../lib/db', () => ({
   getPodcast: jest.fn(),
 }));
 
+jest.mock('../../lib/staticSnapshots', () => ({
+  refreshStaticSnapshotsForPodcast: jest.fn(),
+}));
+
+jest.mock('../../lib/qaContextChunks', () => ({
+  rebuildQaContextChunksForPodcast: jest.fn(() => Promise.resolve({ success: true, chunkCount: 0 })),
+}));
+
 jest.mock('next-auth/next', () => ({
   getServerSession: jest.fn(),
 }));
