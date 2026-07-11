@@ -1,6 +1,7 @@
 import {
   buildInfographicPrompt,
   INFOGRAPHIC_PROMPT_TEMPLATE,
+  INFOGRAPHIC_PROMPT_VERSION,
 } from '../../lib/infographicPrompt';
 
 describe('infographic prompt', () => {
@@ -47,6 +48,10 @@ ARTICLE FACTS — 只可使用以下事实：
     expect(prompt).toContain('部署后持续学习。');
     expect(prompt).toContain('下一代训练范式是什么？');
     expect(prompt).not.toContain('https://youtu.be/');
+  });
+
+  test('exports the version Task 3 uses to identify this prompt contract', () => {
+    expect(INFOGRAPHIC_PROMPT_VERSION).toBe('podsum-infographic-v1');
   });
 
   test('caps article facts, omits empty headings, and never invents facts', () => {

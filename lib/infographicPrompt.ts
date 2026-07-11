@@ -6,6 +6,8 @@ export interface InfographicPromptInput {
   actionItems?: string | null;
 }
 
+export const INFOGRAPHIC_PROMPT_VERSION = 'podsum-infographic-v1';
+
 export const INFOGRAPHIC_PROMPT_TEMPLATE = `为 PodSum 文章《{{TITLE_ZH}}》（{{ORIGINAL_TITLE}}）创作一张竖版中文信息图。
 
 你是一位专门为视觉学习者设计高效信息图的艺术总监。目标是在 60 秒内让读者理解文章核心逻辑。信息图必须准确、清晰、信息密度高但不拥挤。每一段文字、图标、箭头和视觉隐喻都必须承担明确的学习功能，不添加纯装饰元素。概念清晰优先于装饰，术语准确，层级与间距清楚，关键思想同时用视觉和文字强化。

@@ -33,20 +33,30 @@ export class InfographicGenerationError extends Error {
   }
 }
 
-interface OpenRouterImageResponse {
-  data?: Array<{ b64_json?: unknown; media_type?: unknown }>;
-  usage?: { cost?: unknown };
-}
-
 function errorForHttpStatus(status: number): InfographicGenerationError {
+  if (status === 408) {
+    return new InfographicGenerationError('upstream_timeout', true, 'Image provider request timed out');
+  }
+  if (status === 425) {
+    return new InfographicGenerationError('upstream_unavailable', true, 'Image provider is temporarily unavailable');
+  }
   if (status === 429) {
     return new InfographicGenerationError('upstream_rate_limited', true, 'Image provider rate limit reached');
   }
   if (status >= 500) {
     return new InfographicGenerationError('upstream_unavailable', true, 'Image provider is unavailable');
   }
-  if (status >= 400) {
+  if (status === 401 || status === 403) {
+    return new InfographicGenerationError('configuration_error', false, 'Image provider authentication failed');
+  }
+  if (status === 400) {
+    return new InfographicGenerationError('invalid_request', false, 'Image provider rejected the request');
+  }
+  if (status === 422) {
     return new InfographicGenerationError('policy_violation', false, 'Image provider rejected the request');
+  }
+  if (status >= 400 && status < 500) {
+    return new InfographicGenerationError('provider_error', false, 'Image provider rejected the request');
   }
   return new InfographicGenerationError('provider_error', true, 'Image provider request failed');
 }
@@ -71,25 +81,57 @@ function decodedBase64Size(value: string): number {
   return (value.length / 4) * 3 - padding;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function readPngDimensions(bytes: Uint8Array): { width: number; height: number } | null {
-  if (bytes.length < 24 || ![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((byte, index) => bytes[index] === byte)) {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.length < 45 || !signature.every((byte, index) => bytes[index] === byte)) {
     return null;
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return { width: view.getUint32(16), height: view.getUint32(20) };
+  let offset = 8;
+  let dimensions: { width: number; height: number } | null = null;
+
+  while (offset + 12 <= bytes.length) {
+    const chunkLength = view.getUint32(offset);
+    const chunkEnd = offset + 12 + chunkLength;
+    if (chunkEnd > bytes.length) return null;
+    const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+
+    if (offset === 8) {
+      if (chunkLength !== 13 || type !== 'IHDR') return null;
+      const width = view.getUint32(offset + 8);
+      const height = view.getUint32(offset + 12);
+      if (width <= 0 || height <= 0) return null;
+      dimensions = { width, height };
+    }
+
+    if (type === 'IEND') {
+      return chunkLength === 0 && chunkEnd === bytes.length ? dimensions : null;
+    }
+    offset = chunkEnd;
+  }
+  return null;
 }
 
 function readJpegDimensions(bytes: Uint8Array): { width: number; height: number } | null {
-  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) return null;
   const startOfFrameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
   let offset = 2;
+  let dimensions: { width: number; height: number } | null = null;
 
-  while (offset + 8 < bytes.length) {
+  while (offset < bytes.length) {
     if (bytes[offset] !== 0xff) return null;
-    while (bytes[offset] === 0xff) offset += 1;
+    while (bytes[offset] === 0xff) {
+      offset += 1;
+      if (offset >= bytes.length) return null;
+    }
     const marker = bytes[offset];
     offset += 1;
-    if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (marker === 0xd9) return offset === bytes.length ? dimensions : null;
+    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) continue;
     if (offset + 2 > bytes.length) return null;
     const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
     if (segmentLength < 2 || offset + segmentLength > bytes.length) return null;
@@ -97,7 +139,11 @@ function readJpegDimensions(bytes: Uint8Array): { width: number; height: number 
       if (segmentLength < 8) return null;
       const height = (bytes[offset + 3] << 8) | bytes[offset + 4];
       const width = (bytes[offset + 5] << 8) | bytes[offset + 6];
-      return { width, height };
+      if (width <= 0 || height <= 0) return null;
+      dimensions = { width, height };
+    }
+    if (marker === 0xda) {
+      return dimensions;
     }
     offset += segmentLength;
   }
@@ -150,15 +196,18 @@ export async function generateInfographicRaster(
 
     if (!response.ok) throw errorForHttpStatus(response.status);
 
-    let payload: OpenRouterImageResponse;
+    let payload: unknown;
     try {
-      payload = await response.json() as OpenRouterImageResponse;
+      payload = await response.json();
     } catch {
       throw new InfographicGenerationError('invalid_response', false, 'Image provider returned invalid JSON');
     }
 
-    const image = payload.data?.[0];
-    if (!image || typeof image.b64_json !== 'string' || typeof image.media_type !== 'string') {
+    if (!isRecord(payload) || !Array.isArray(payload.data)) {
+      throw new InfographicGenerationError('invalid_response', false, 'Image provider returned an invalid image payload');
+    }
+    const image = payload.data[0];
+    if (!isRecord(image) || typeof image.b64_json !== 'string' || typeof image.media_type !== 'string') {
       throw new InfographicGenerationError('invalid_response', false, 'Image provider returned an incomplete image payload');
     }
     if (!SUPPORTED_MEDIA_TYPES.has(image.media_type)) {
@@ -172,7 +221,7 @@ export async function generateInfographicRaster(
 
     const mediaType = image.media_type as GeneratedRaster['mediaType'];
     const dimensions = readRasterDimensions(bytes, mediaType);
-    const cost = payload.usage?.cost;
+    const cost = isRecord(payload.usage) ? payload.usage.cost : null;
     return {
       base64: image.b64_json,
       mediaType,

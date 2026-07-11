@@ -18,18 +18,23 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 function makePng(width = 400, height = 600): Uint8Array {
-  const bytes = new Uint8Array(24);
+  const bytes = new Uint8Array(45);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  new DataView(bytes.buffer).setUint32(8, 13);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
   new DataView(bytes.buffer).setUint32(16, width);
   new DataView(bytes.buffer).setUint32(20, height);
+  bytes.set([0x08, 0x02, 0x00, 0x00, 0x00], 24);
+  bytes.set([0x49, 0x45, 0x4e, 0x44], 37);
   return bytes;
 }
 
 function makeJpeg(width = 200, height = 100): Uint8Array {
   return new Uint8Array([
-    0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08,
+    0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08,
     height >> 8, height & 0xff, width >> 8, width & 0xff,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xd9,
+    0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00,
+    0xff, 0xd9,
   ]);
 }
 
@@ -75,9 +80,14 @@ describe('infographic image client', () => {
 
   test.each([
     ['timeout', Object.assign(new Error('aborted'), { name: 'AbortError' }), 'upstream_timeout', true],
+    ['408', { ok: false, status: 408, statusText: 'Request Timeout' } as Response, 'upstream_timeout', true],
+    ['425', { ok: false, status: 425, statusText: 'Too Early' } as Response, 'upstream_unavailable', true],
     ['429', { ok: false, status: 429, statusText: 'Too Many Requests' } as Response, 'upstream_rate_limited', true],
     ['5xx', { ok: false, status: 503, statusText: 'Unavailable' } as Response, 'upstream_unavailable', true],
-    ['content policy 4xx', { ok: false, status: 400, statusText: 'Content policy' } as Response, 'policy_violation', false],
+    ['401', { ok: false, status: 401, statusText: 'Unauthorized' } as Response, 'configuration_error', false],
+    ['403', { ok: false, status: 403, statusText: 'Forbidden' } as Response, 'configuration_error', false],
+    ['400', { ok: false, status: 400, statusText: 'Bad Request' } as Response, 'invalid_request', false],
+    ['422', { ok: false, status: 422, statusText: 'Unprocessable Entity' } as Response, 'policy_violation', false],
   ])('classifies %s safely', async (_name, outcome, code, transient) => {
     jest.spyOn(global, 'fetch').mockImplementation(async () => {
       if (outcome instanceof Error) throw outcome;
@@ -98,6 +108,16 @@ describe('infographic image client', () => {
     await expect(generateInfographicRaster('private prompt', options)).rejects.toMatchObject({ code, transient: false });
   });
 
+  test.each([null, 'not an object', 42, [], { data: {} }])('rejects a non-object or non-array success payload', async payload => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: async () => payload,
+    } as Response);
+
+    await expect(generateInfographicRaster('grounded prompt')).rejects.toMatchObject({
+      code: 'invalid_response', transient: false,
+    });
+  });
+
   test('does not expose base64 payloads in errors', async () => {
     const payload = 'a'.repeat(100);
     jest.spyOn(global, 'fetch').mockResolvedValue({
@@ -114,9 +134,19 @@ describe('infographic image client', () => {
 });
 
 describe('infographic raster and Polaroid SVG', () => {
-  test('reads PNG and JPEG raster dimensions', () => {
+  test('reads structurally complete PNG and JPEG raster dimensions', () => {
     expect(readRasterDimensions(makePng(400, 600), 'image/png')).toEqual({ width: 400, height: 600 });
     expect(readRasterDimensions(makeJpeg(200, 100), 'image/jpeg')).toEqual({ width: 200, height: 100 });
+  });
+
+  test.each([
+    ['truncated PNG', makePng().slice(0, 28), 'image/png'],
+    ['PNG without terminal IEND', makePng().slice(0, -12), 'image/png'],
+    ['PNG with forged IHDR type', (() => { const bytes = makePng(); bytes.set([0x66, 0x61, 0x6b, 0x65], 12); return bytes; })(), 'image/png'],
+    ['JPEG without terminal EOI', makeJpeg().slice(0, -2), 'image/jpeg'],
+    ['JPEG with zero SOF width', makeJpeg(0, 100), 'image/jpeg'],
+  ] as const)('rejects %s', (_name, bytes, mediaType) => {
+    expect(() => readRasterDimensions(bytes, mediaType)).toThrow(InfographicGenerationError);
   });
 
   test('normalizes YouTube sources and removes timestamps', () => {
