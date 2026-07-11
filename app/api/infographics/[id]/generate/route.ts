@@ -49,7 +49,7 @@ export async function POST(
     const enqueueResult = await enqueueInfographicJob(id);
     if (!enqueueResult.success || !enqueueResult.data) {
       return NextResponse.json(
-        { success: false, error: enqueueResult.error || 'Failed to enqueue infographic' },
+        { success: false, error: 'Failed to enqueue infographic' },
         { status: 500 },
       );
     }
@@ -62,7 +62,7 @@ export async function POST(
   } catch (error) {
     console.error('Failed to generate infographic:', error);
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Unknown error' },
+      { success: false, error: 'Failed to enqueue infographic' },
       { status: 500 },
     );
   }

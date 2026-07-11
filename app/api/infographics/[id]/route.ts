@@ -16,7 +16,7 @@ export async function GET(
     const jobResult = await getInfographicJob(id);
     if (!jobResult.success && jobResult.error !== 'Infographic job not found') {
       return NextResponse.json(
-        { success: false, error: jobResult.error || 'Failed to get infographic status' },
+        { success: false, error: 'Failed to get infographic status' },
         { status: 500 },
       );
     }
@@ -27,7 +27,7 @@ export async function GET(
   } catch (error) {
     console.error('Failed to get infographic status:', error);
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Unknown error' },
+      { success: false, error: 'Failed to get infographic status' },
       { status: 500 },
     );
   }

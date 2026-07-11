@@ -29,7 +29,7 @@ export async function POST(
     const retryResult = await retryInfographicJob(id);
     if (!retryResult.success || !retryResult.data) {
       return NextResponse.json(
-        { success: false, error: retryResult.error || 'Infographic cannot be retried' },
+        { success: false, error: 'Infographic cannot be retried' },
         { status: 409 },
       );
     }
@@ -42,7 +42,7 @@ export async function POST(
   } catch (error) {
     console.error('Failed to retry infographic:', error);
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Unknown error' },
+      { success: false, error: 'Infographic cannot be retried' },
       { status: 500 },
     );
   }

@@ -98,7 +98,7 @@ describe('infographic API routes', () => {
     mockGetInfographicJob.mockResolvedValue({ success: false, data: null, error: 'Database unavailable' });
     const response = await GET(request(), context);
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ success: false, error: 'Database unavailable' });
+    expect(await response.json()).toEqual({ success: false, error: 'Failed to get infographic status' });
   });
 
   it('requires authentication for a private podcast and denies a non-owner', async () => {
@@ -146,6 +146,19 @@ describe('infographic API routes', () => {
     response = await generate(request(), context);
     expect(response.status).toBe(409);
     expect(mockEnqueueInfographicJob).not.toHaveBeenCalled();
+  });
+
+  it('does not expose queue errors from generate or retry commands', async () => {
+    mockGetServerSession.mockResolvedValue({ user: { id: 'owner-1' } });
+    mockEnqueueInfographicJob.mockResolvedValue({ success: false, error: 'OPENROUTER_API_KEY=secret' });
+    let response = await generate(request(), context);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ success: false, error: 'Failed to enqueue infographic' });
+
+    mockRetryInfographicJob.mockResolvedValue({ success: false, error: 'postgres://admin:secret@db' });
+    response = await retry(request(), context);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ success: false, error: 'Infographic cannot be retried' });
   });
 
   it('keeps repeated generate idempotent by returning the existing job', async () => {

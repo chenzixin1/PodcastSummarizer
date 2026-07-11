@@ -4,7 +4,7 @@ import { authOptions } from './auth';
 
 export type InfographicAccessResult =
   | { ok: true; podcast: Podcast; canEdit: boolean }
-  | { ok: false; status: 400 | 401 | 403 | 404; error: string };
+  | { ok: false; status: 400 | 401 | 403 | 404 | 500; error: string };
 
 /** Resolve the same public/private policy used by the analysis endpoint. */
 export async function resolveInfographicAccess(id: string): Promise<InfographicAccessResult> {
@@ -13,7 +13,14 @@ export async function resolveInfographicAccess(id: string): Promise<InfographicA
   }
 
   const podcastResult = await getPodcast(id);
-  if (!podcastResult.success || !podcastResult.data) {
+  if (!podcastResult.success) {
+    if (podcastResult.error !== 'Podcast not found') {
+      return { ok: false, status: 500, error: 'Failed to load podcast' };
+    }
+    return { ok: false, status: 404, error: 'Podcast not found' };
+  }
+
+  if (!podcastResult.data) {
     return { ok: false, status: 404, error: 'Podcast not found' };
   }
 
