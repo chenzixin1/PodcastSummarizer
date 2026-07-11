@@ -350,17 +350,18 @@ Logs must not include API keys, full base64 images, raw transcript bodies, or th
 
 - public/private visibility;
 - owner/editor can generate a historical completed analysis;
-- public viewers and non-owners cannot generate;
+- public viewers and users without edit permission cannot generate;
 - repeated generate requests return the existing job without duplicate rows;
 - generate rejects articles whose analysis is incomplete;
-- owner-only retry;
+- owner/editor retry;
 - completed response returns the artifact URL;
 - public response redacts cost and internal errors.
 
 ### Dashboard Tests
 
 - fourth tab renders without shifting navigation;
-- each of the four states renders correctly;
+- each of the five states renders correctly;
+- a successful historical generate command transitions `Unavailable` to `Pending` without a page reload;
 - polling stops on completion/failure and when hidden;
 - viewer controls remain stable on desktop and mobile;
 - PNG download uses the framed SVG and falls back safely.
