@@ -172,11 +172,11 @@ const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const backupPath = path.join(outputDir, `pre-backfill-${stamp}.json`);
 fs.writeFileSync(backupPath, JSON.stringify(liveRows.map((row) => ({ id: row.id, tags: row.tags_json })), null, 2));
 
-runWrangler(['d1', 'migrations', 'apply', binding, '--remote', '--config', config, '--yes'], { inherit: true });
+runWrangler(['d1', 'migrations', 'apply', binding, '--remote', '--config', config], { inherit: true });
 const sqlPath = path.join(outputDir, `apply-${stamp}.sql`);
 fs.writeFileSync(sqlPath, buildApplySql(liveRows, definitionById));
 try {
-  runWrangler(['d1', 'execute', binding, '--remote', '--config', config, '--file', sqlPath, '--yes'], { inherit: true });
+  runWrangler(['d1', 'execute', binding, '--remote', '--config', config, '--file', sqlPath], { inherit: true });
 } finally {
   fs.rmSync(sqlPath, { force: true });
 }
