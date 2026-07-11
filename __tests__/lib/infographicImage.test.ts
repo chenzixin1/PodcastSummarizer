@@ -18,15 +18,22 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 function makePng(width = 400, height = 600): Uint8Array {
-  const bytes = new Uint8Array(45);
+  const bytes = new Uint8Array(58);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   new DataView(bytes.buffer).setUint32(8, 13);
   bytes.set([0x49, 0x48, 0x44, 0x52], 12);
   new DataView(bytes.buffer).setUint32(16, width);
   new DataView(bytes.buffer).setUint32(20, height);
   bytes.set([0x08, 0x02, 0x00, 0x00, 0x00], 24);
-  bytes.set([0x49, 0x45, 0x4e, 0x44], 37);
+  new DataView(bytes.buffer).setUint32(33, 1);
+  bytes.set([0x49, 0x44, 0x41, 0x54, 0x00], 37);
+  bytes.set([0x49, 0x45, 0x4e, 0x44], 50);
   return bytes;
+}
+
+function makePngHeaderOnly(): Uint8Array {
+  const bytes = makePng();
+  return new Uint8Array([...bytes.slice(0, 33), ...bytes.slice(46)]);
 }
 
 function makeJpeg(width = 200, height = 100): Uint8Array {
@@ -34,8 +41,13 @@ function makeJpeg(width = 200, height = 100): Uint8Array {
     0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08,
     height >> 8, height & 0xff, width >> 8, width & 0xff,
     0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00,
-    0xff, 0xd9,
+    0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00,
+    0x11, 0xff, 0x00, 0x22, 0xff, 0xd0, 0x33, 0xff, 0xd9,
   ]);
+}
+
+function makeJpegHeaderOnly(): Uint8Array {
+  return new Uint8Array([...makeJpeg().slice(0, 21), 0xff, 0xd9]);
 }
 
 function responseWithImage(bytes = makePng(), mediaType = 'image/png'): Response {
@@ -134,15 +146,18 @@ describe('infographic image client', () => {
 });
 
 describe('infographic raster and Polaroid SVG', () => {
-  test('reads structurally complete PNG and JPEG raster dimensions', () => {
+  test('reads structurally complete PNG and JPEG data streams', () => {
     expect(readRasterDimensions(makePng(400, 600), 'image/png')).toEqual({ width: 400, height: 600 });
     expect(readRasterDimensions(makeJpeg(200, 100), 'image/jpeg')).toEqual({ width: 200, height: 100 });
   });
 
   test.each([
     ['truncated PNG', makePng().slice(0, 28), 'image/png'],
+    ['PNG header without IDAT', makePngHeaderOnly(), 'image/png'],
     ['PNG without terminal IEND', makePng().slice(0, -12), 'image/png'],
     ['PNG with forged IHDR type', (() => { const bytes = makePng(); bytes.set([0x66, 0x61, 0x6b, 0x65], 12); return bytes; })(), 'image/png'],
+    ['JPEG header without SOS scan data', makeJpegHeaderOnly(), 'image/jpeg'],
+    ['JPEG with malformed SOS declaration', (() => { const bytes = makeJpeg(); bytes.set([0x00, 0x02], 23); return bytes; })(), 'image/jpeg'],
     ['JPEG without terminal EOI', makeJpeg().slice(0, -2), 'image/jpeg'],
     ['JPEG with zero SOF width', makeJpeg(0, 100), 'image/jpeg'],
   ] as const)('rejects %s', (_name, bytes, mediaType) => {

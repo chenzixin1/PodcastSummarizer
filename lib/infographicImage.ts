@@ -93,6 +93,7 @@ function readPngDimensions(bytes: Uint8Array): { width: number; height: number }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 8;
   let dimensions: { width: number; height: number } | null = null;
+  let hasImageData = false;
 
   while (offset + 12 <= bytes.length) {
     const chunkLength = view.getUint32(offset);
@@ -108,12 +109,41 @@ function readPngDimensions(bytes: Uint8Array): { width: number; height: number }
       dimensions = { width, height };
     }
 
+    if (type === 'IDAT' && chunkLength > 0) hasImageData = true;
+
     if (type === 'IEND') {
-      return chunkLength === 0 && chunkEnd === bytes.length ? dimensions : null;
+      return chunkLength === 0 && chunkEnd === bytes.length && hasImageData ? dimensions : null;
     }
     offset = chunkEnd;
   }
   return null;
+}
+
+function hasJpegScanData(bytes: Uint8Array, scanOffset: number): boolean {
+  const scanEnd = bytes.length - 2;
+  let offset = scanOffset;
+  let hasData = false;
+
+  while (offset < scanEnd) {
+    if (bytes[offset] !== 0xff) {
+      hasData = true;
+      offset += 1;
+      continue;
+    }
+
+    offset += 1;
+    while (offset < scanEnd && bytes[offset] === 0xff) offset += 1;
+    if (offset >= scanEnd) return false;
+    const marker = bytes[offset];
+    offset += 1;
+    if (marker === 0x00) {
+      hasData = true;
+      continue;
+    }
+    if (marker >= 0xd0 && marker <= 0xd7) continue;
+    return false;
+  }
+  return hasData;
 }
 
 function readJpegDimensions(bytes: Uint8Array): { width: number; height: number } | null {
@@ -130,7 +160,7 @@ function readJpegDimensions(bytes: Uint8Array): { width: number; height: number 
     }
     const marker = bytes[offset];
     offset += 1;
-    if (marker === 0xd9) return offset === bytes.length ? dimensions : null;
+    if (marker === 0xd9) return null;
     if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) continue;
     if (offset + 2 > bytes.length) return null;
     const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
@@ -143,7 +173,10 @@ function readJpegDimensions(bytes: Uint8Array): { width: number; height: number 
       dimensions = { width, height };
     }
     if (marker === 0xda) {
-      return dimensions;
+      if (segmentLength < 8) return null;
+      const componentCount = bytes[offset + 2];
+      if (componentCount < 1 || segmentLength !== 6 + (componentCount * 2)) return null;
+      return dimensions && hasJpegScanData(bytes, offset + segmentLength) ? dimensions : null;
     }
     offset += segmentLength;
   }
