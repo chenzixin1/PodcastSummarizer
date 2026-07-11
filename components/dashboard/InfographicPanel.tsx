@@ -21,20 +21,39 @@ export default function InfographicPanel({ podcastId, canEdit, title }: {
 }) {
   const [status, setStatus] = useState<InfographicStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [busy, setBusy] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const requestSequenceRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const requestSequence = ++requestSequenceRef.current;
     try {
-      const response = await fetch(`/api/infographics/${podcastId}`, { cache: 'no-store' });
+      const response = await fetch(`/api/infographics/${podcastId}`, { cache: 'no-store', signal });
       const body = await response.json() as ApiResponse;
       if (!response.ok || !body.success || !body.data) throw new Error(body.error || 'Failed to load infographic');
+      if (requestSequence !== requestSequenceRef.current) return;
       setStatus(body.data); setError(null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Failed to load infographic'); }
+    } catch (cause) {
+      if (signal?.aborted || requestSequence !== requestSequenceRef.current) return;
+      setError(cause instanceof Error ? cause.message : 'Failed to load infographic');
+    }
   }, [podcastId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // A panel can stay mounted while a dashboard route changes. Invalidate every
+    // prior response before showing any state for the next podcast.
+    requestSequenceRef.current += 1;
+    setStatus(null);
+    setError(null);
+    setCommandError(null);
+    setBusy(false);
+    setZoom(1);
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
   const shouldPoll = Boolean(status && POLLABLE.has(status.status));
   useEffect(() => {
     if (!shouldPoll) return;
@@ -44,19 +63,20 @@ export default function InfographicPanel({ podcastId, canEdit, title }: {
 
   const command = async (endpoint: 'generate' | 'retry') => {
     setBusy(true);
+    setCommandError(null);
     try {
       const response = await fetch(`/api/infographics/${podcastId}/${endpoint}`, { method: 'POST' });
       const body = await response.json() as ApiResponse;
       if (!response.ok || !body.success || !body.data) throw new Error(body.error || 'Unable to start infographic generation');
       setStatus(body.data); setError(null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to start infographic generation'); }
+    } catch (cause) { setCommandError(cause instanceof Error ? cause.message : 'Unable to start infographic generation'); }
     finally { setBusy(false); }
   };
 
   if (error) return <div className="infographic-message" role="alert">{error}</div>;
   if (!status) return <div className="infographic-message">Loading infographic...</div>;
-  if (status.status === 'unavailable') return <div className="infographic-message"><p>Infographic was not generated for this analysis.</p>{canEdit && <button className="infographic-action" disabled={busy} onClick={() => void command('generate')}>Generate infographic</button>}</div>;
-  if (status.status === 'failed') return <div className="infographic-message"><p>Infographic generation failed.</p>{canEdit && <button className="infographic-action" disabled={busy} onClick={() => void command('retry')}>Retry infographic</button>}</div>;
+  if (status.status === 'unavailable') return <div className="infographic-message"><p>Infographic was not generated for this analysis.</p>{commandError && <p className="infographic-command-error" role="alert">{commandError}</p>}{canEdit && <button className="infographic-action" disabled={busy} onClick={() => void command('generate')}>Generate infographic</button>}</div>;
+  if (status.status === 'failed') return <div className="infographic-message"><p>Infographic generation failed.</p>{commandError && <p className="infographic-command-error" role="alert">{commandError}</p>}{canEdit && <button className="infographic-action" disabled={busy} onClick={() => void command('retry')}>Retry infographic</button>}</div>;
   if (status.status !== 'completed' || !status.artifactUrl) return <div className="infographic-message" aria-live="polite">{status.status === 'processing' ? 'Generating infographic...' : 'Infographic is queued...'}</div>;
 
   const fullscreen = () => { void viewportRef.current?.requestFullscreen?.(); };

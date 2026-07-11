@@ -837,6 +837,9 @@ export default function DashboardPage() {
     if (lastLoadedIdRef.current !== id) {
       lastLoadedIdRef.current = id;
       hasResolvedInitialFetchRef.current = false;
+      setData(null);
+      setCanEdit(false);
+      setError(null);
       setIsLoading(true);
     }
   }, [id]);
@@ -1662,7 +1665,7 @@ export default function DashboardPage() {
     }
 
     if (activeView === 'infographic') {
-      return <div className="p-4 sm:p-6 lg:p-8"><InfographicPanel podcastId={id} canEdit={canEdit} title={data.title} /></div>;
+      return <div className="p-4 sm:p-6 lg:p-8"><InfographicPanel key={id} podcastId={id} canEdit={canEdit} title={data.title} /></div>;
     }
 
     switch (activeView) {
@@ -1964,7 +1967,7 @@ export default function DashboardPage() {
                 <button onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
                 <button onClick={() => switchActiveView('infographic')} className={`${getButtonClass('infographic')} shrink-0`}>Infographic</button>
               </div>
-              <div className="mt-3 inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
+              {activeView !== 'infographic' && <div className="mt-3 inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
                 <button
                   onClick={() => setContentLanguage('zh')}
                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
@@ -2005,8 +2008,8 @@ export default function DashboardPage() {
                 >
                   词汇提示
                 </button>
-              </div>
-              {contentLanguage === 'hint' && vocabLoadError && (
+              </div>}
+              {activeView !== 'infographic' && contentLanguage === 'hint' && vocabLoadError && (
                 <p className="mt-2 text-xs text-[var(--danger)]">词表加载失败，已降级为英文原文：{vocabLoadError}</p>
               )}
             </div>

@@ -356,6 +356,14 @@ describe('DashboardPage language modes', () => {
     expect(window.localStorage.getItem('podsum-dashboard-content-language')).toBe('bilingual');
   });
 
+  test('hides summary language controls in the infographic view', async () => {
+    render(<DashboardPage />);
+    await screen.findByRole('button', { name: 'Infographic' });
+    await userEvent.click(screen.getByRole('button', { name: 'Infographic' }));
+    expect(screen.queryByRole('button', { name: '中文' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '词汇提示' })).not.toBeInTheDocument();
+  });
+
   test('renders bilingual summary in alternating english/chinese lines', async () => {
     render(<DashboardPage />);
 
