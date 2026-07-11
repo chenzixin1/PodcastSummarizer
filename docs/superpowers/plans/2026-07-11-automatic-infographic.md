@@ -369,12 +369,13 @@ Start a lease heartbeat while the paid request is active, stop it in `finally`, 
 In the `saveResult.success` branch of `app/api/process/route.ts`, call:
 
 ```ts
-await enqueueInfographicJob(id).catch((error) => {
+const infographicEnqueue = await enqueueInfographicJob(id);
+if (!infographicEnqueue.success) {
   console.warn('[infographic] enqueue after analysis failed', {
     podcastId: id,
-    error: error instanceof Error ? error.message : String(error),
+    error: infographicEnqueue.error || 'unknown enqueue failure',
   });
-});
+}
 ```
 
 Do not await generation itself and do not change the analysis success response.
