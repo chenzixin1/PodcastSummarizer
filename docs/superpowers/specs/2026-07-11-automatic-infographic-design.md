@@ -37,14 +37,15 @@ Summary | Full Text | Mind Map | Infographic
 
 ### Tab States
 
-The tab supports four stable states:
+The tab supports five stable states:
 
 1. `Pending`: analysis is complete and an infographic job is queued.
 2. `Generating`: a worker owns the job. Show a fixed-size skeleton and concise status.
 3. `Ready`: show the complete framed infographic with zoom, fullscreen, and download controls.
 4. `Failed`: show a compact error state. Owners/editors may retry; public viewers only see that the artifact is unavailable.
+5. `Unavailable`: the analysis predates feature activation and has no infographic job. Show `Infographic was not generated for this analysis.` without automatically creating a paid job.
 
-The page polls the infographic status only while the job is pending or processing. Polling stops after completion or failure and when the page is hidden.
+The page polls the infographic status only while the job is pending or processing. Polling stops after completion, failure, or unavailable and when the page is hidden.
 
 ### Ready Viewer
 
@@ -117,7 +118,7 @@ Requirements:
 
 ## Grounded Prompt Contract
 
-The prompt is versioned as `podsum-infographic-v1` and contains two layers:
+The prompt is versioned as `podsum-infographic-v1`. Its exact stable instructions are pinned in Appendix A and must be represented by a checked-in constant covered by a snapshot test. It contains two layers:
 
 1. Stable visual instructions derived from the validated online high-utility infographic pattern.
 2. Per-article facts derived only from the stored PodSum title, Chinese summary, key data, and action items.
@@ -186,6 +187,8 @@ No handwritten or display font is used for the source caption.
 - If the complete title still exceeds three lines, allow additional lines and grow the footer; do not truncate.
 - Never overlap the URL or generated image.
 
+The layout geometry, complete text, line breaks, and padding are deterministic. Exact glyph shapes may vary with browser font availability during PNG export. This is acceptable for v1 because the requirement is a normal readable sans-serif, not pixel-identical typography across operating systems. Conservative character-width estimates and safe margins prevent fallback fonts from overflowing.
+
 ### Source URL
 
 Normalize YouTube sources to:
@@ -247,10 +250,12 @@ The row is idempotent by `podcast_id`. Enqueue behavior:
 
 The existing one-minute Cloudflare cron continues to call the internal processing worker route. That route processes the normal podcast job first and then may claim at most one due infographic job, keeping image cost and Worker duration bounded.
 
+Before claiming, the worker performs a bounded reconciliation query for completed analyses with `processed_at >= INFOGRAPHIC_AUTOMATION_STARTED_AT` and no infographic job. It enqueues at most 20 missing jobs. The activation timestamp is set once during rollout and prevents reconciliation from turning into an unauthorized historical backfill. Normal D1 analysis persistence should save the completed analysis and enqueue row in one database batch where practical; reconciliation is the recovery path for non-atomic or interrupted callers.
+
 Claiming uses a lease so concurrent cron executions cannot generate the same infographic twice.
 
-- maximum attempts: 3;
-- retry delays: approximately 1 minute, 5 minutes, then 15 minutes;
+- maximum attempts: 3 total, consisting of the initial attempt plus at most 2 retries;
+- retry delays after failure: approximately 1 minute, then 5 minutes;
 - retry transient network, timeout, `429`, and `5xx` failures;
 - fail immediately for malformed requests, unsupported response payloads, and content-policy rejection;
 - expired processing leases become claimable again;
@@ -292,6 +297,7 @@ Authorization follows the existing podcast visibility contract:
 - The current acceptance article may be explicitly seeded during rollout using the already validated Google Prompt 1 prototype, after applying the final footer composition.
 - No general historical backfill runs during migration or deploy.
 - A future backfill script must default to dry-run, require an explicit maximum count, and report estimated cost before making API calls.
+- `INFOGRAPHIC_AUTOMATION_STARTED_AT` is the hard lower bound for automatic reconciliation and is set to the production activation timestamp.
 
 ## Error Handling
 
@@ -376,6 +382,31 @@ Logs must not include API keys, full base64 images, raw transcript bodies, or th
 - Automatic historical backfill.
 - Social sharing links or a public infographic gallery.
 - Replacing the existing Mind Map.
+
+## Appendix A: Pinned Prompt 1 Instructions
+
+The implementation inserts article-specific facts into the marked `ARTICLE FACTS` section. The surrounding instructions are the accepted v1 prompt and may change only with a new prompt version.
+
+```text
+为 PodSum 文章《{{TITLE_ZH}}》（{{ORIGINAL_TITLE}}）创作一张竖版中文信息图。
+
+你是一位专门为视觉学习者设计高效信息图的艺术总监。目标是在 60 秒内让读者理解文章核心逻辑。信息图必须准确、清晰、信息密度高但不拥挤。每一段文字、图标、箭头和视觉隐喻都必须承担明确的学习功能，不添加纯装饰元素。概念清晰优先于装饰，术语准确，层级与间距清楚，关键思想同时用视觉和文字强化。
+
+核心叙事：{{ONE_SENTENCE_THESIS}}
+
+ARTICLE FACTS — 只可使用以下事实：
+{{GROUNDED_FACTS}}
+
+采用纵向学习路径：顶部是醒目标题和一句核心结论；中部用“旧范式 → 转型机制 → 新范式”或最适合本文的等价主流程连接模块；底部给出未来展望。使用一个中央视觉隐喻解释文章的核心变化，并在主流程周围加入简洁的小型关系图。
+
+视觉风格：手绘编辑式信息图（Hand-drawn Editorial Infographic），干净纸张质感、清晰线条、简洁图标，专业、有温度，但不幼稚。暖白背景，深绿色结构色，金黄色强调发现，少量砖红色标记瓶颈。避免渐变、霓虹、纯黑背景、无意义机器人、发光大脑和装饰性科技线。
+
+所有说明文字使用简体中文，关键术语第一次出现时保留英文。标题简短，单个模块不超过两句话。只使用 ARTICLE FACTS 中提供的事实，不编造数字、引语、来源或结论。确保中文清晰可读，不生成乱码、伪文字或无意义标签。
+
+不要在信息图主体中显示 YouTube 标题、YouTube URL、PodSum URL 或来源脚注；这些信息将由程序在生成后加入图片白边。
+
+竖版 3:4，高分辨率，安全边距充足。
+```
 
 ## Source References
 
