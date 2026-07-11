@@ -12,19 +12,26 @@ const PERMISSION_POLICY =
   'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
 
 describe('LiteYouTubeEmbed', () => {
-  test('renders an accessible fixed-aspect placeholder without a remote YouTube resource', () => {
+  test('renders a fixed-aspect preview with an explicit embed opt-in', () => {
     const { container } = render(<LiteYouTubeEmbed videoId={VIDEO_ID} title={TITLE} />);
 
-    expect(screen.getByRole('button', { name: `Play ${TITLE}` })).toHaveClass('aspect-video');
+    expect(screen.getByRole('button', { name: 'Try embedded playback' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open on YouTube' })).toHaveAttribute(
+      'href',
+      `https://www.youtube.com/watch?v=${VIDEO_ID}`,
+    );
     expect(container.querySelectorAll('iframe')).toHaveLength(0);
-    expect(container.innerHTML).not.toMatch(/youtube(?:-nocookie)?\.com|ytimg\.com/i);
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      `https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg`,
+    );
   });
 
   test('creates one permission-preserving iframe after click and moves focus to it', async () => {
     const user = userEvent.setup();
     const { container } = render(<LiteYouTubeEmbed videoId={VIDEO_ID} title={TITLE} />);
 
-    await user.click(screen.getByRole('button', { name: `Play ${TITLE}` }));
+    await user.click(screen.getByRole('button', { name: 'Try embedded playback' }));
 
     const iframe = screen.getByTitle(TITLE);
     expect(container.querySelectorAll('iframe')).toHaveLength(1);
@@ -45,7 +52,7 @@ describe('LiteYouTubeEmbed', () => {
       <LiteYouTubeEmbed videoId={VIDEO_ID} title={TITLE} />
     );
 
-    await user.click(screen.getByRole('button', { name: `Play ${TITLE}` }));
+    await user.click(screen.getByRole('button', { name: 'Try embedded playback' }));
     expect(screen.getByTitle(TITLE)).toHaveAttribute(
       'src',
       `https://www.youtube-nocookie.com/embed/${VIDEO_ID}?autoplay=1`
@@ -54,9 +61,7 @@ describe('LiteYouTubeEmbed', () => {
     rerender(<LiteYouTubeEmbed videoId={SECOND_VIDEO_ID} title={SECOND_TITLE} />);
 
     expect(container.querySelectorAll('iframe')).toHaveLength(0);
-    const replacementPlayButton = screen.getByRole('button', {
-      name: `Play ${SECOND_TITLE}`,
-    });
+    const replacementPlayButton = screen.getByRole('button', { name: 'Try embedded playback' });
 
     await user.click(replacementPlayButton);
 
@@ -73,7 +78,7 @@ describe('LiteYouTubeEmbed', () => {
       <LiteYouTubeEmbed videoId={VIDEO_ID} title={TITLE} />
     );
 
-    await user.click(screen.getByRole('button', { name: `Play ${TITLE}` }));
+    await user.click(screen.getByRole('button', { name: 'Try embedded playback' }));
     expect(container.querySelectorAll('iframe')).toHaveLength(1);
 
     rerender(<LiteYouTubeEmbed videoId={SECOND_VIDEO_ID} title={SECOND_TITLE} />);
@@ -82,7 +87,7 @@ describe('LiteYouTubeEmbed', () => {
     rerender(<LiteYouTubeEmbed videoId={VIDEO_ID} title={TITLE} />);
     expect(container.querySelectorAll('iframe')).toHaveLength(0);
 
-    await user.click(screen.getByRole('button', { name: `Play ${TITLE}` }));
+    await user.click(screen.getByRole('button', { name: 'Try embedded playback' }));
     expect(container.querySelectorAll('iframe')).toHaveLength(1);
     expect(screen.getByTitle(TITLE)).toHaveAttribute(
       'src',
@@ -90,10 +95,10 @@ describe('LiteYouTubeEmbed', () => {
     );
   });
 
-  test('creates exactly one iframe when the focused placeholder receives Enter', async () => {
+  test('creates exactly one iframe when the focused embed opt-in receives Enter', async () => {
     const user = userEvent.setup();
     const { container } = render(<LiteYouTubeEmbed videoId={VIDEO_ID} title={TITLE} />);
-    const playButton = screen.getByRole('button', { name: `Play ${TITLE}` });
+    const playButton = screen.getByRole('button', { name: 'Try embedded playback' });
 
     playButton.focus();
     await user.keyboard('{Enter}');

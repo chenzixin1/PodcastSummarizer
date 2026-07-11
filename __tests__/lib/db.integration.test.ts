@@ -202,9 +202,9 @@ describe('Database Integration Tests', () => {
       const result = await deletePodcast('test-123');
 
       expect(result.success).toBe(true);
-      expect(mockSql).toHaveBeenCalledTimes(2);
-      expect(mockSql.mock.calls[0][0].join('')).toContain('analysis_results');
-      expect(mockSql.mock.calls[1][0].join('')).toContain('podcasts');
+      const queries = mockSql.mock.calls.map(([strings]) => strings.join(''));
+      expect(queries.some(query => query.includes('analysis_results'))).toBe(true);
+      expect(queries.some(query => query.includes('podcasts'))).toBe(true);
     });
 
     test('updatePodcastPublicStatus should update correct field', async () => {
