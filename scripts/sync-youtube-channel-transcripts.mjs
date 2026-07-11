@@ -20,6 +20,20 @@ const DEFAULT_LANGS = [
   'en-GB',
 ];
 
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const DEFAULT_CAPTION_REQUEST_DELAY_MS = parsePositiveInteger(process.env.YOUTUBE_CAPTION_DELAY_MS, 1500);
+const DEFAULT_CAPTION_RETRY_COUNT = parsePositiveInteger(process.env.YOUTUBE_CAPTION_RETRY_COUNT, 4);
+const DEFAULT_CAPTION_RETRY_BASE_DELAY_MS = parsePositiveInteger(process.env.YOUTUBE_CAPTION_RETRY_BASE_DELAY_MS, 2500);
+const DEFAULT_CAPTION_RATE_LIMIT_COOLDOWN_MS = parsePositiveInteger(process.env.YOUTUBE_CAPTION_RATE_LIMIT_COOLDOWN_MS, 20000);
+
+const captionRateLimitState = {
+  nextAllowedAt: 0,
+};
+
 function parseArgs(argv) {
   const args = {
     channel: DEFAULT_CHANNEL,
@@ -33,6 +47,10 @@ function parseArgs(argv) {
     skipTranscripts: false,
     cookiesFromBrowser: process.env.YOUTUBE_COOKIES_FROM_BROWSER || 'chrome',
     jsRuntime: process.env.YOUTUBE_YTDLP_JS_RUNTIME || 'node',
+    captionRequestDelayMs: DEFAULT_CAPTION_REQUEST_DELAY_MS,
+    captionRetryCount: DEFAULT_CAPTION_RETRY_COUNT,
+    captionRetryBaseDelayMs: DEFAULT_CAPTION_RETRY_BASE_DELAY_MS,
+    captionRateLimitCooldownMs: DEFAULT_CAPTION_RATE_LIMIT_COOLDOWN_MS,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -70,6 +88,18 @@ function parseArgs(argv) {
     } else if (arg === '--js-runtime' && next) {
       args.jsRuntime = next;
       i += 1;
+    } else if (arg === '--caption-request-delay-ms' && next) {
+      args.captionRequestDelayMs = parsePositiveInteger(next, DEFAULT_CAPTION_REQUEST_DELAY_MS);
+      i += 1;
+    } else if (arg === '--caption-retry-count' && next) {
+      args.captionRetryCount = parsePositiveInteger(next, DEFAULT_CAPTION_RETRY_COUNT);
+      i += 1;
+    } else if (arg === '--caption-retry-base-delay-ms' && next) {
+      args.captionRetryBaseDelayMs = parsePositiveInteger(next, DEFAULT_CAPTION_RETRY_BASE_DELAY_MS);
+      i += 1;
+    } else if (arg === '--caption-rate-limit-cooldown-ms' && next) {
+      args.captionRateLimitCooldownMs = parsePositiveInteger(next, DEFAULT_CAPTION_RATE_LIMIT_COOLDOWN_MS);
+      i += 1;
     } else if (arg === '--help' || arg === '-h') {
       printHelp();
       process.exit(0);
@@ -98,6 +128,14 @@ Options:
                         Browser cookies for YouTube bot checks. Default: chrome.
   --no-cookies          Do not retry with browser cookies.
   --js-runtime <name>   yt-dlp JavaScript runtime. Default: node.
+  --caption-request-delay-ms <n>
+                        Delay between successful caption requests. Default: ${DEFAULT_CAPTION_REQUEST_DELAY_MS}
+  --caption-retry-count <n>
+                        Retry count for caption fetches on 429/5xx. Default: ${DEFAULT_CAPTION_RETRY_COUNT}
+  --caption-retry-base-delay-ms <n>
+                        Base backoff for caption retry. Default: ${DEFAULT_CAPTION_RETRY_BASE_DELAY_MS}
+  --caption-rate-limit-cooldown-ms <n>
+                        Minimum cooldown after a 429 response. Default: ${DEFAULT_CAPTION_RATE_LIMIT_COOLDOWN_MS}
 `);
 }
 
@@ -308,16 +346,73 @@ function pickCaptionFormat(formats = []) {
   return formats.find((item) => item.url) || null;
 }
 
-async function fetchCaption(format) {
-  const response = await fetch(format.url, {
-    headers: {
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-    },
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
   });
-  if (!response.ok) {
-    throw new Error(`caption fetch failed: ${response.status} ${response.statusText}`);
+}
+
+function parseRetryAfterMs(value) {
+  if (!value) return null;
+  const seconds = Number.parseInt(value, 10);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
   }
-  return response.text();
+  const timestamp = Date.parse(value);
+  if (Number.isFinite(timestamp)) {
+    return Math.max(0, timestamp - Date.now());
+  }
+  return null;
+}
+
+async function waitForCaptionWindow() {
+  const waitMs = captionRateLimitState.nextAllowedAt - Date.now();
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+}
+
+async function fetchCaption(format, args) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= args.captionRetryCount; attempt += 1) {
+    await waitForCaptionWindow();
+    const response = await fetch(format.url, {
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      },
+    }).catch((error) => {
+      lastError = error;
+      return null;
+    });
+
+    if (response?.ok) {
+      captionRateLimitState.nextAllowedAt = Date.now() + args.captionRequestDelayMs;
+      return response.text();
+    }
+
+    const status = response?.status || 0;
+    const statusText = response?.statusText || lastError?.message || 'Unknown Error';
+    lastError = new Error(`caption fetch failed: ${status} ${statusText}`);
+
+    const retryable = !response || status === 429 || status >= 500;
+    if (!retryable || attempt === args.captionRetryCount) {
+      throw lastError;
+    }
+
+    const retryAfterMs = parseRetryAfterMs(response?.headers?.get('retry-after'));
+    const exponentialBackoffMs = args.captionRetryBaseDelayMs * (2 ** (attempt - 1));
+    const jitterMs = Math.floor(Math.random() * 1000);
+    const cooldownMs = Math.max(
+      retryAfterMs || 0,
+      status === 429 ? args.captionRateLimitCooldownMs : 0,
+      exponentialBackoffMs + jitterMs,
+    );
+
+    captionRateLimitState.nextAllowedAt = Date.now() + cooldownMs;
+    console.warn(`[caption retry] status=${status || 'network'} attempt=${attempt}/${args.captionRetryCount} waitMs=${cooldownMs}`);
+  }
+
+  throw lastError || new Error('caption fetch failed');
 }
 
 function parseCaptionPayload(raw, ext) {
@@ -530,7 +625,7 @@ async function syncVideo(entry, args, outputDir, previousIndex) {
     };
   }
 
-  const rawCaption = await fetchCaption(selectedCaption.format);
+  const rawCaption = await fetchCaption(selectedCaption.format, args);
   await writeText(captionRawPath, rawCaption);
   const transcript = parseCaptionPayload(rawCaption, selectedCaption.format.ext);
   if (transcript.length === 0) {
