@@ -228,6 +228,15 @@ export async function processNextInfographicJob(
       return { processed: true, podcastId: job.podcastId, status: 'failed' };
     }
     if (artifactUrl) {
+      try {
+        await heartbeat.assertOwned();
+      } catch (heartbeatError) {
+        if (heartbeatError instanceof InfographicLeaseLostError) {
+          console.warn('[infographic] job lease lost', { podcastId: job.podcastId });
+          return { processed: true, podcastId: job.podcastId, status: 'failed' };
+        }
+        return failClaimedJob(job, workerId, classifyFailure(heartbeatError));
+      }
       await deleteObject(artifactUrl).catch(() => undefined);
     }
     const failed = await failClaimedJob(job, workerId, classifyFailure(error));

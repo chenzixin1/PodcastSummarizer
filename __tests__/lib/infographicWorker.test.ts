@@ -242,6 +242,15 @@ describe('processNextInfographicJob', () => {
     expect(mockRecordFailure).not.toHaveBeenCalled();
   });
 
+  it('rechecks the lease before deleting an artifact after a post-upload failure', async () => {
+    mockComplete.mockRejectedValue(new Error('completion write failed'));
+
+    await expect(processNextInfographicJob('worker-info')).resolves.toMatchObject({ status: 'retry_scheduled' });
+
+    expect(mockHeartbeat).toHaveBeenCalledWith('pod-1', 'worker-info', { leaseSeconds: 600 });
+    expect(mockDeleteObject).toHaveBeenCalledWith('https://cdn.example.com/pod-1.svg');
+  });
+
   it('heartbeats through generation and artifact persistence, then stops after completion', async () => {
     jest.useFakeTimers();
     let finishGeneration!: (value: typeof raster) => void;
