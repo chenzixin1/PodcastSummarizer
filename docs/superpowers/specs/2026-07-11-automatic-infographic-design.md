@@ -199,7 +199,7 @@ Normalize YouTube sources to:
 https://youtu.be/<video-id>
 ```
 
-For non-YouTube sources, preserve a sanitized canonical source URL. The URL occupies its own line and may wrap at safe URL boundaries if necessary.
+For non-YouTube sources, preserve a sanitized canonical source URL. The URL occupies its own line and may wrap at safe URL boundaries if necessary. SRT uploads may not have a source URL; in that case the footer contains the complete title only and does not render an empty link line.
 
 ### Artifact Safety
 
@@ -225,16 +225,16 @@ CREATE TABLE IF NOT EXISTS infographic_jobs (
   artifact_url TEXT,
   artifact_media_type TEXT,
   source_title TEXT NOT NULL,
-  source_url TEXT NOT NULL,
+  source_url TEXT,
   attempts INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at INTEGER,
-  lease_expires_at INTEGER,
+  next_attempt_at DATETIME,
+  lease_expires_at DATETIME,
   cost_usd REAL,
   error_code TEXT,
   error_message TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  completed_at INTEGER
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME
 );
 ```
 
@@ -282,7 +282,7 @@ POST /api/infographics/[id]/retry
   "mediaType": "image/svg+xml",
   "model": "google/gemini-3-pro-image",
   "promptVersion": "podsum-infographic-v1",
-  "updatedAt": 1783758000000,
+  "updatedAt": "2026-07-11T08:20:00.000Z",
   "canRetry": true
 }
 ```
