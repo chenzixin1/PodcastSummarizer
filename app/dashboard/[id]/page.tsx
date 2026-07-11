@@ -21,6 +21,7 @@ import {
   buildHintDictionaryCard,
   buildFullTextBilingualMarkdown,
   buildSummaryBilingualMarkdown,
+  emphasizeSummaryMarkdown,
   stripPronunciationLinks,
   type AdvancedWordDict,
   type HintDictionaryCard,
@@ -1509,16 +1510,16 @@ export default function DashboardPage() {
 
     if (activeView === 'summary') {
       if (contentLanguage === 'zh') {
-        return data.summaryZh;
+        return emphasizeSummaryMarkdown(data.summaryZh);
       }
       if (contentLanguage === 'en') {
-        return data.summaryEn;
+        return emphasizeSummaryMarkdown(data.summaryEn);
       }
       if (contentLanguage === 'bilingual') {
         if (data.summaryBilingualJson) {
-          return renderSummaryBilingualMarkdown(data.summaryBilingualJson);
+          return emphasizeSummaryMarkdown(renderSummaryBilingualMarkdown(data.summaryBilingualJson));
         }
-        return buildSummaryBilingualMarkdown(data.summaryEn, data.summaryZh);
+        return emphasizeSummaryMarkdown(buildSummaryBilingualMarkdown(data.summaryEn, data.summaryZh));
       }
       return annotateEnglishWithHints(data.summaryEn, vocabDict || {}, {
         maxHintsPerParagraph: 3,

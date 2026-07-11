@@ -433,7 +433,7 @@ describe('DashboardPage language modes', () => {
       expect(document.body).toHaveTextContent('evolves rapidly.');
       expect(document.body).toHaveTextContent('Complementary');
       expect(document.body).toHaveTextContent('architecture');
-      expect(document.body).toHaveTextContent('supports deployment.');
+      expect(document.body).toHaveTextContent('supports [deployment](#pronounce:deployment).');
       expect(document.body).toHaveTextContent('#pronounce:terrestrial');
       expect(document.body).toHaveTextContent('#pronounce:architecture');
     });
@@ -525,7 +525,7 @@ describe('DashboardPage language modes', () => {
 
     await userEvent.click(screen.getByText('中英对照'));
     await waitFor(() => {
-      expect(document.body).toHaveTextContent('Aligned summary EN');
+      expect(document.body).toHaveTextContent('Aligned summary **EN**');
       expect(document.body).toHaveTextContent('对齐后的摘要中文');
     });
 

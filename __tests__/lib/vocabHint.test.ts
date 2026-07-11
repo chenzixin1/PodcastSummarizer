@@ -3,6 +3,7 @@ import {
   buildHintDictionaryCard,
   buildFullTextBilingualMarkdown,
   buildSummaryBilingualMarkdown,
+  emphasizeSummaryMarkdown,
   extractHintCandidates,
   stripPronunciationLinks,
   type AdvancedWordDict,
@@ -46,6 +47,31 @@ describe('vocabHint helpers', () => {
 
     expect(output).toContain('Terrestrial（地球上的） infrastructure（基础设施） needs upgrades.');
     expect(output).toContain('Terrestrial systems evolve slowly.');
+  });
+
+  test('annotateEnglishWithHints annotates hard fallback words that are missing from the dictionary', () => {
+    const input = 'The agent keeps working despite errors, mistakes, and ambiguity.';
+    const output = annotateEnglishWithHints(input, {}, { maxHintsPerParagraph: 8 });
+
+    expect(output).toContain('ambiguity（歧义）');
+  });
+
+  test('extractHintCandidates keeps hard fallback vocabulary missing from the dictionary', () => {
+    const output = extractHintCandidates('Open-ended tasks can still include ambiguity.', {}, { maxHintsPerParagraph: 4 });
+
+    expect(output.some((item) => item.word === 'ambiguity')).toBe(true);
+  });
+
+  test('emphasizeSummaryMarkdown bolds key summary phrases without touching existing markdown', () => {
+    const input = '- AI agents improve through continual learning and in-context learning across millions of verifiable tasks.\n- 已有**重点**不应重复处理。';
+    const output = emphasizeSummaryMarkdown(input);
+
+    expect(output).toContain('**AI**');
+    expect(output).toContain('**continual learning**');
+    expect(output).toContain('**in-context learning**');
+    expect(output).toContain('**millions**');
+    expect(output).toContain('**verifiable tasks**');
+    expect(output).toContain('已有**重点**不应重复处理。');
   });
 
   test('annotateEnglishWithHints does not annotate urls', () => {

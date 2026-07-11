@@ -32,6 +32,7 @@ const CODE_BLOCK_PATTERN = /```[\s\S]*?```/g;
 const URL_PATTERN = /https?:\/\/[^\s)]+/gi;
 const PRONOUNCE_HASH_PREFIX = '#pronounce:';
 const MIN_HINT_SCORE = 6;
+const TOKEN_PLACEHOLDER_PREFIX = '__PODSUM_TOKEN_';
 const POS_TOKEN_PATTERN = /\b(vt|vi|v|n|adj|adv|prep|conj|pron|num|aux|modal|int|art|det|abbr)\./gi;
 const POS_LABEL_MAP: Record<string, string> = {
   vt: '及物动词',
@@ -52,8 +53,51 @@ const POS_LABEL_MAP: Record<string, string> = {
   abbr: '缩写',
 };
 const ADVANCED_MORPHEME_PATTERN =
-  /(tion|sion|tial|cial|ability|ibility|ative|ology|onomy|metry|scope|phobia|phile|soph|terrestrial|deploy|radiat|infrastructure|electrific|bandwidth|architecture|environmental|complementary)/i;
+  /(tion|sion|tial|cial|ability|ibility|ative|ology|onomy|metry|scope|phobia|phile|soph|terrestrial|deploy|radiat|infrastructure|electrific|bandwidth|architecture|environmental|complementary|ambigu|paradigm|verifiable|efficien|continual|amortiz|proponent|disparity|modality|simulation|generalit|competence|seemingly|tangential)/i;
 const RARE_PATTERN = /[qxz]|ph|rh|mn|pt|ct|[aeiou]{3}/i;
+const ADVANCED_FALLBACK_GLOSSES: Record<string, string> = {
+  ambiguity: '歧义；模糊性',
+  paradigm: '范式',
+  verifiable: '可验证的',
+  reinforcement: '强化；增强',
+  environment: '环境',
+  environments: '环境',
+  artificial: '人工的',
+  intelligence: '智能',
+  deficits: '缺陷；不足',
+  inefficiency: '低效',
+  inefficiencies: '低效问题',
+  continual: '持续的',
+  scaling: '扩展；扩大规模',
+  computational: '计算相关的',
+  sample: '样本',
+  efficient: '高效的',
+  amortized: '摊销的；分摊的',
+  demonstrably: '可证明地',
+  proponents: '支持者',
+  ambitious: '有雄心的',
+  necessity: '必要性',
+  negated: '被抵消；被否定',
+  competence: '能力；胜任力',
+  architectural: '架构上的',
+  innovations: '创新',
+  context: '上下文',
+  especially: '尤其',
+  seemingly: '看似',
+  infinitely: '无限地',
+  tangential: '间接相关的',
+  disparity: '差异；差距',
+  domains: '领域',
+  multimodal: '多模态的',
+  pretraining: '预训练',
+  modalities: '模态',
+  deployable: '可部署的',
+  deployment: '部署',
+  simulated: '模拟的',
+  simulation: '模拟',
+  generality: '通用性',
+  inference: '推理',
+};
 const SIMPLE_WORDS = new Set([
   'about', 'after', 'again', 'also', 'always', 'among', 'another', 'around', 'because', 'before', 'being',
   'between', 'both', 'build', 'built', 'center', 'centers', 'change', 'company', 'could', 'data', 'deep',
@@ -86,6 +130,34 @@ function cleanLine(line: string): string {
 
 function normalizeWordToken(word: string): string {
   return word.toLowerCase().replace(/^[^a-z]+|[^a-z]+$/g, '');
+}
+
+function protectInlineTokens(text: string): { text: string; restore: (value: string) => string } {
+  const tokens: string[] = [];
+  const save = (value: string) => {
+    const key = `${TOKEN_PLACEHOLDER_PREFIX}${tokens.length}__`;
+    tokens.push(value);
+    return key;
+  };
+
+  const output = String(text || '')
+    .replace(CODE_BLOCK_PATTERN, save)
+    .replace(/`[^`\n]+`/g, save)
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, save)
+    .replace(/\[[^\]]+\]\([^)]+\)/g, save)
+    .replace(/\*\*[^*\n][\s\S]*?\*\*/g, save)
+    .replace(URL_PATTERN, save);
+
+  return {
+    text: output,
+    restore(value: string) {
+      let restored = value;
+      tokens.forEach((token, index) => {
+        restored = restored.replaceAll(`${TOKEN_PLACEHOLDER_PREFIX}${index}__`, token);
+      });
+      return restored;
+    },
+  };
 }
 
 export function stripPronunciationLinks(markdown: string): string {
@@ -455,8 +527,13 @@ function shouldSkipHintWord(wordKey: string, entry?: AdvancedWordEntry): boolean
 }
 
 function scoreHintWord(wordKey: string, entry: AdvancedWordEntry): number {
-  void entry;
   let score = 0;
+  if (entry?.zh) {
+    score += 1;
+  }
+  if ((entry?.level || []).some((item) => /ielts|cet6|kaoyan|toefl|gre|gmat/i.test(item))) {
+    score += 1;
+  }
   if (wordKey.length >= 12) {
     score += 4;
   } else if (wordKey.length >= 10) {
@@ -543,7 +620,7 @@ export function extractHintCandidates(
       if (!key || globalUsed.has(key) || localUsed.has(key)) {
         continue;
       }
-      const entry = dict[key];
+      const entry = dict[key] || (ADVANCED_FALLBACK_GLOSSES[key] ? { zh: ADVANCED_FALLBACK_GLOSSES[key], level: ['AUTO'] } : undefined);
       if (!entry || shouldSkipHintWord(key, entry)) {
         continue;
       }
@@ -613,7 +690,7 @@ function annotateParagraph(
       continue;
     }
 
-    const entry = dict[key];
+    const entry = dict[key] || (ADVANCED_FALLBACK_GLOSSES[key] ? { zh: ADVANCED_FALLBACK_GLOSSES[key], level: ['AUTO'] } : undefined);
     if (!entry || shouldSkipHintWord(key, entry)) {
       continue;
     }
@@ -712,4 +789,38 @@ export function annotateEnglishWithHints(
   });
 
   return merged;
+}
+
+function emphasizeLine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed || /^#{1,6}\s+/.test(trimmed) || /^---+$/.test(trimmed)) {
+    return line;
+  }
+
+  const protectedLine = protectInlineTokens(line);
+  let output = protectedLine.text;
+
+  output = output.replace(/「([^」]{2,24})」/g, '「**$1**」');
+  output = output.replace(/“([^”]{2,28})”/g, '“**$1**”');
+  output = output.replace(/（([^）]{2,32})）/g, '（**$1**）');
+  output = output.replace(/\b([A-Z][A-Z0-9]{1,8})\b/g, '**$1**');
+  output = output.replace(/\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,4})\b/g, '**$1**');
+  output = output.replace(/\b(\d+(?:\.\d+)?\s*(?:%|x|倍|万|百万|千万|亿|trillion|billion|million|months?|years?))\b/gi, '**$1**');
+  output = output.replace(/\b((?:one-|multi-)?(?:million|billion|trillion)s?)\b/gi, '**$1**');
+  output = output.replace(
+    /\b(verifiable tasks?|reinforcement learning|continual learning|in-context learning|sample-efficient|computational power|context windows?|open-ended tasks?|multimodal data|pretraining|deployment learning|simulated reality|policy self-training|model weights?|AI agents?|Large Language Models?|sample efficiency|online learning|bot verification)\b/gi,
+    '**$1**'
+  );
+  output = output.replace(/([\u4E00-\u9FFF]{2,12}(?:学习|训练|模型|智能|效率|数据|环境|部署|权重|范式|样本|能力|任务|奖励|上下文|窗口|模态|现实|监督|信号|函数|架构|创新))/g, '**$1**');
+  output = output.replace(/\*{4,}([^*]+)\*{4,}/g, '**$1**');
+
+  return protectedLine.restore(output);
+}
+
+export function emphasizeSummaryMarkdown(markdown: string): string {
+  return String(markdown || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(emphasizeLine)
+    .join('\n');
 }
