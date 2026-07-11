@@ -42,6 +42,7 @@ function summary(overrides: Partial<SummaryItem>): SummaryItem {
     wordCount: null,
     durationSec: null,
     tags: [],
+    topicFacets: { topics: [], people: [], organizationsProducts: [] },
     scope: 'explore',
     ...overrides,
   };

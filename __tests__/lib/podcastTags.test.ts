@@ -21,4 +21,11 @@ describe('podcastTags', () => {
       'AI Agents',
     ]);
   });
+
+  it('filters observed generated-summary and n-gram noise', () => {
+    expect(normalizeDbTags([
+      'AI AI', 'AI AI AI', '未明确提及', '执行条件', '时间点', '负责人', 'is', 'of', 'to',
+      'Reinforcement Learning', 'NVIDIA',
+    ])).toEqual(['Reinforcement Learning', 'NVIDIA']);
+  });
 });

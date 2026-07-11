@@ -20,6 +20,18 @@ function nullableString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+function normalizeTopicFacets(value: unknown): PodcastApiRow['topicFacets'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const facets = value as Record<string, unknown>;
+  return {
+    topics: Array.isArray(facets.topics) ? facets.topics.map(String) : [],
+    people: Array.isArray(facets.people) ? facets.people.map(String) : [],
+    organizationsProducts: Array.isArray(facets.organizationsProducts)
+      ? facets.organizationsProducts.map(String)
+      : [],
+  };
+}
+
 function normalizePublicRow(value: unknown): PodcastApiRow | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -46,6 +58,7 @@ function normalizePublicRow(value: unknown): PodcastApiRow | null {
     wordCount: typeof row.wordCount === 'number' ? row.wordCount : null,
     durationSec: typeof row.durationSec === 'number' ? row.durationSec : null,
     tags: row.tags,
+    topicFacets: normalizeTopicFacets(row.topicFacets),
   };
 }
 
@@ -103,7 +116,7 @@ let homepagePublicDataLoader = loadHomepagePublicData;
 try {
   homepagePublicDataLoader = unstable_cache(
     loadHomepagePublicData,
-    ['homepage-public-data-v1'],
+    ['homepage-public-data-v2'],
     { revalidate: 60 },
   );
 } catch {

@@ -6,7 +6,7 @@ const DEFAULT_PUBLIC_LIST_PAGE_SIZE = 12;
 const DEFAULT_PUBLIC_LIST_SNAPSHOT_PAGES = 3;
 
 export const ANALYSIS_SNAPSHOT_VERSION = 1;
-export const PUBLIC_LIST_SNAPSHOT_VERSION = 1;
+export const PUBLIC_LIST_SNAPSHOT_VERSION = 2;
 
 export const ANALYSIS_SNAPSHOT_CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=86400';
 export const PUBLIC_LIST_SNAPSHOT_CACHE_CONTROL = 'public, max-age=60, stale-while-revalidate=300';
