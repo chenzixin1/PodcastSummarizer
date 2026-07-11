@@ -21,6 +21,7 @@ import {
   applyLlmFallbackToFullTextPayload,
   applyLlmFallbackToSummaryPayload,
 } from '../../../lib/bilingualAlignmentLlm';
+import { extractStructuredTopics, type StructuredTopicResult } from '../../../lib/topicExtractor';
 
 const PROCESS_DEBUG_ENABLED = process.env.PROCESS_DEBUG_LOGS === 'true';
 function processDebug(...args: unknown[]) {
@@ -60,7 +61,7 @@ export interface ProcessStreamUpdate {
   processingErrors?: string[]; // Add this for all_done or error types
 }
 
-type ModelTaskType = 'summary' | 'translation' | 'highlights' | 'brief_summary';
+type ModelTaskType = 'summary' | 'translation' | 'highlights' | 'brief_summary' | 'topic_extraction';
 
 interface OpenRouterStreamChunk {
   choices?: Array<{
@@ -1254,6 +1255,7 @@ export async function POST(request: NextRequest) {
         let summaryZh = '';
         let summaryEn = '';
         let briefSummary = '';
+        let topicExtraction: StructuredTopicResult | null = null;
         let translation: string;
         let highlights: string;
         let fullTextBilingualJson: FullTextBilingualPayload | null = null;
@@ -1336,6 +1338,28 @@ export async function POST(request: NextRequest) {
 
         await sendUpdate({
           type: 'status',
+          message: 'Classifying structured topics...'
+        });
+        topicExtraction = await extractStructuredTopics({
+          title: podcast.title ?? null,
+          briefSummary,
+          summaryZh,
+          summaryEn,
+        }, (systemPrompt, userPrompt) => callModelWithRetry(
+          systemPrompt,
+          userPrompt,
+          1400,
+          0.1,
+          undefined,
+          'topic_extraction',
+        ));
+        await sendUpdate({
+          type: 'status',
+          message: `Structured topics ready (${topicExtraction.assignments.length}, fallback=${topicExtraction.usedFallback}).`
+        });
+
+        await sendUpdate({
+          type: 'status',
           message: 'Generating mind map...'
         });
 
@@ -1401,6 +1425,8 @@ export async function POST(request: NextRequest) {
             tokenCount: textStats.tokenCount,
             wordCount: textStats.wordCount,
             characterCount: textStats.characterCount,
+            topicAssignments: topicExtraction?.assignments || [],
+            topicProposals: topicExtraction?.proposals || [],
           });
           if (saveResult.success) {
             processDebug(`分析结果保存成功，podcastId: ${id}`);

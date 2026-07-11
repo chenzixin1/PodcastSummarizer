@@ -1,6 +1,9 @@
 import { getD1DatabaseBinding, isD1DatabaseProvider, sql } from './sql';
 import { ensureCreditLedgerTables, recordUploadCreditDebit } from './credits';
 import { extractPodcastTags } from './podcastTags';
+import { deletePodcastTopics, replacePodcastTopics } from './topicRepository';
+import { labelsToTopicFacets, type TopicAssignment, type TopicProposal } from './topicTaxonomy';
+import { getTopicTaxonomy } from './topicTaxonomyData';
 import type { MindMapData } from './mindMap';
 import type { FullTextBilingualPayload, SummaryBilingualPayload } from './bilingualAlignment';
 
@@ -66,6 +69,11 @@ function buildInitialPodcastTags(podcast: Podcast): string[] {
   return tags.slice(0, 10);
 }
 
+function buildTopicFacetsFromTags(tags: unknown) {
+  const values = Array.isArray(tags) ? tags.map(String) : [];
+  return labelsToTopicFacets(values, getTopicTaxonomy());
+}
+
 // 分析结果类型
 export interface AnalysisResult {
   podcastId: string;
@@ -84,6 +92,8 @@ export interface AnalysisResult {
   tokenCount?: number | null;
   wordCount?: number | null;
   characterCount?: number | null;
+  topicAssignments?: TopicAssignment[];
+  topicProposals?: TopicProposal[];
 }
 
 export interface PartialAnalysisResult {
@@ -987,30 +997,16 @@ export async function saveAnalysisResults(result: AnalysisResult): Promise<DbRes
       RETURNING podcast_id
     `;
 
-    // 根据最新摘要重建标签并写回 podcasts
-    const podcastInfo = await sql`
-      SELECT title, original_filename as "originalFileName", source_reference as "sourceReference"
-      FROM podcasts
-      WHERE id = ${result.podcastId}
-      LIMIT 1
-    `;
-    if (podcastInfo.rows.length > 0) {
-      const row = podcastInfo.rows[0] as {
-        title?: string | null;
-        originalFileName?: string | null;
-        sourceReference?: string | null;
-      };
-      const tags = extractPodcastTags({
-        title: row.title || null,
-        fallbackName: row.originalFileName || null,
-        summary: summaryLegacy || '',
-        sourceReference: row.sourceReference || null,
-      });
-      await sql`
-        UPDATE podcasts
-        SET tags_json = ${JSON.stringify(tags)}::jsonb
-        WHERE id = ${result.podcastId}
-      `;
+    if (result.topicAssignments) {
+      try {
+        await replacePodcastTopics({
+          podcastId: result.podcastId,
+          assignments: result.topicAssignments,
+          proposals: result.topicProposals || [],
+        });
+      } catch (topicError) {
+        console.error('保存结构化 Topic 失败，主分析结果已保留:', topicError);
+      }
     }
     
     return { success: true, data: dbResult.rows[0] };
@@ -1315,6 +1311,7 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
       const normalized = {
         ...row,
         briefSummary: buildListBriefSummary(row.__briefSummaryRaw, row.__summaryRaw),
+        topicFacets: buildTopicFacetsFromTags(row.tags),
       } as Record<string, unknown>;
       delete normalized.__briefSummaryRaw;
       delete normalized.__summaryRaw;
@@ -1362,6 +1359,7 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
       const normalized = {
         ...row,
         briefSummary: buildListBriefSummary(row.__briefSummaryRaw, row.__summaryRaw),
+        topicFacets: buildTopicFacetsFromTags(row.tags),
       } as Record<string, unknown>;
       delete normalized.__briefSummaryRaw;
       delete normalized.__summaryRaw;
@@ -1377,6 +1375,11 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
 // 删除播客及其分析结果
 export async function deletePodcast(id: string): Promise<DbResult> {
   try {
+    if (isD1DatabaseProvider()) {
+      await deletePodcastTopics(id).catch((topicError) => {
+        console.warn('删除播客 Topic 关系失败，继续删除主记录:', topicError);
+      });
+    }
     // 首先删除分析结果（由于外键约束）
     await sql`DELETE FROM analysis_results WHERE podcast_id = ${id}`;
     

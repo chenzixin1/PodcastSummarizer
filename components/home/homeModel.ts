@@ -1,4 +1,5 @@
-import { extractPodcastTags, normalizeDbTags } from '../../lib/podcastTags';
+import { normalizeDbTags } from '../../lib/podcastTags';
+import type { TopicFacets } from '../../lib/topicTaxonomy';
 import { resolveFilePodcastTitle } from '../../lib/podcastTitle';
 
 export type HomeView = 'my' | 'explore' | 'topics' | 'starred';
@@ -21,6 +22,7 @@ export interface PodcastApiRow {
   wordCount?: number | null;
   durationSec?: number | null;
   tags?: unknown;
+  topicFacets?: unknown;
 }
 
 export interface SummaryItem {
@@ -36,6 +38,7 @@ export interface SummaryItem {
   wordCount: number | null;
   durationSec: number | null;
   tags: string[];
+  topicFacets: TopicFacets;
   scope: 'my' | 'explore';
 }
 
@@ -73,11 +76,16 @@ export function mapPodcastRow(row: PodcastApiRow, scope: SummaryItem['scope']): 
     (typeof row.title === 'string' ? row.title.trim() : '') ||
     resolveFilePodcastTitle(String(row.originalFileName || ''));
   const dbTags = normalizeDbTags(row.tags);
-  const fallbackTags = extractPodcastTags({
-    title,
-    sourceReference: row.sourceReference || null,
-    fallbackName: row.originalFileName || null,
-  });
+  const rawFacets = row.topicFacets && typeof row.topicFacets === 'object' && !Array.isArray(row.topicFacets)
+    ? row.topicFacets as Record<string, unknown>
+    : {};
+  const topicFacets: TopicFacets = {
+    topics: Array.isArray(rawFacets.topics) ? rawFacets.topics.map(String) : dbTags,
+    people: Array.isArray(rawFacets.people) ? rawFacets.people.map(String) : [],
+    organizationsProducts: Array.isArray(rawFacets.organizationsProducts)
+      ? rawFacets.organizationsProducts.map(String)
+      : [],
+  };
 
   return {
     id: row.id,
@@ -91,7 +99,8 @@ export function mapPodcastRow(row: PodcastApiRow, scope: SummaryItem['scope']): 
     isPublic: Boolean(row.isPublic),
     wordCount: typeof row.wordCount === 'number' ? row.wordCount : null,
     durationSec: typeof row.durationSec === 'number' ? row.durationSec : null,
-    tags: dbTags.length > 0 ? dbTags : fallbackTags,
+    tags: dbTags,
+    topicFacets,
     scope,
   };
 }

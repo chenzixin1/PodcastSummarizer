@@ -54,7 +54,7 @@ describe('homepage public data loader', () => {
   test('uses the persistent public-only cache with a one-minute revalidation window', () => {
     expect(mockUnstableCache).toHaveBeenCalledWith(
       expect.any(Function),
-      ['homepage-public-data-v1'],
+      ['homepage-public-data-v2'],
       { revalidate: 60 },
     );
   });

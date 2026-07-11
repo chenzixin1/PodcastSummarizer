@@ -864,15 +864,37 @@ export default function HomeWorkspace({
     return Array.from(map.values());
   }, [exploreItems, myItems]);
 
+  const topicGroups = useMemo(() => {
+    const groupCounts = {
+      topics: new Map<string, number>(),
+      people: new Map<string, number>(),
+      organizationsProducts: new Map<string, number>(),
+    };
+    allTopicItems.forEach((item) => {
+      (Object.keys(groupCounts) as Array<keyof typeof groupCounts>).forEach((facet) => {
+        new Set(item.topicFacets[facet]).forEach((tag) => {
+          groupCounts[facet].set(tag, (groupCounts[facet].get(tag) || 0) + 1);
+        });
+      });
+    });
+    const sorted = (counts: Map<string, number>) => Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    return {
+      topics: sorted(groupCounts.topics),
+      people: sorted(groupCounts.people),
+      organizationsProducts: sorted(groupCounts.organizationsProducts),
+    };
+  }, [allTopicItems]);
+
   const topicTags = useMemo(() => {
     const counts = new Map<string, number>();
-    allTopicItems.forEach((item) => {
-      item.tags.forEach((tag) => counts.set(tag, (counts.get(tag) || 0) + 1));
+    [...topicGroups.topics, ...topicGroups.people, ...topicGroups.organizationsProducts].forEach(([tag, count]) => {
+      counts.set(tag, Math.max(count, counts.get(tag) || 0));
     });
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, TOPIC_TAG_LIMIT);
-  }, [allTopicItems]);
+  }, [topicGroups]);
 
   const starredItems = useMemo(() => {
     return allTopicItems.filter((item) => starredIds.has(item.id));
@@ -1034,22 +1056,33 @@ export default function HomeWorkspace({
             </div>
 
             {view === 'topics' && topicTags.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 space-y-3">
                 <FilterButton active={!selectedTag} onClick={() => setSelectedTag('')}>All topics</FilterButton>
-                {topicTags.slice(0, TOPIC_FILTER_LIMIT).map(([tag, count]) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => setSelectedTag(tag)}
-                    className={[
-                      'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
-                      selectedTag === tag
-                        ? 'border-[var(--accent-strong)] bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
-                        : 'border-[var(--border-soft)] bg-[var(--paper-base)] text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]',
-                    ].join(' ')}
-                  >
-                    {tag} <span className="opacity-70">{count}</span>
-                  </button>
+                {([
+                  ['Topics', topicGroups.topics],
+                  ['People', topicGroups.people],
+                  ['Organizations & Products', topicGroups.organizationsProducts],
+                ] as Array<[string, Array<[string, number]>]>).map(([label, entries]) => entries.length > 0 && (
+                  <div key={label} className="flex items-start gap-3">
+                    <span className="w-36 shrink-0 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">{label}</span>
+                    <div className="flex flex-wrap gap-2">
+                      {entries.slice(0, TOPIC_FILTER_LIMIT).map(([tag, count]) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => setSelectedTag(tag)}
+                          className={[
+                            'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                            selectedTag === tag
+                              ? 'border-[var(--accent-strong)] bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
+                              : 'border-[var(--border-soft)] bg-[var(--paper-base)] text-[var(--text-secondary)] hover:bg-[var(--paper-muted)]',
+                          ].join(' ')}
+                        >
+                          {tag} <span className="opacity-70">{count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}

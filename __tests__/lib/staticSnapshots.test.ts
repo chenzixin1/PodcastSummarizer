@@ -278,7 +278,7 @@ describe('staticSnapshots', () => {
 
   test('reads only public list snapshots that match normalized paging', async () => {
     mockGetObjectText.mockResolvedValue(JSON.stringify({
-      snapshotVersion: 1,
+      snapshotVersion: 2,
       generatedAt: '2026-06-09T00:00:00.000Z',
       page: 1,
       pageSize: 50,

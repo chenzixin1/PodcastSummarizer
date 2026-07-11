@@ -1,4 +1,4 @@
-const MAX_TAGS = 10;
+const MAX_TAGS = 12;
 
 const EN_STOPWORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'in', 'of', 'to', 'that', 'this', 'into', 'about', 'over',
@@ -17,6 +17,7 @@ const ZH_STOPWORDS = new Set([
   '然后', '因为', '所以', '就是', '可以', '需要', '时候', '问题', '内容', '总结',
   '视频', '播客', '字幕', '重点', '分析', '翻译',
   '亿美元', '美元', '负责人', '例如', '下一步', '时间',
+  '未明确提及', '执行条件', '时间点',
 ]);
 
 function cleanWhitespace(value: string): string {
@@ -45,6 +46,7 @@ function isUsefulTag(tag: string): boolean {
   const lower = normalized.toLowerCase();
   if (
     lower.startsWith('youtube-') ||
+    /^(ai\s+){1,}ai$/i.test(normalized) ||
     BLOCKED_TAGS.has(lower) ||
     EN_STOPWORDS.has(lower) ||
     ZH_STOPWORDS.has(normalized)
