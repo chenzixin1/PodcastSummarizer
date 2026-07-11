@@ -636,6 +636,23 @@ body {
     #121922;
 }
 
+.infographic-panel { position: relative; min-height: 32rem; }
+.infographic-toolbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .4rem; margin-bottom: .7rem; }
+.infographic-toolbar button { width: 2.25rem; height: 2.25rem; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--table-border); border-radius: 6px; color: #2f6656; background: var(--card-bg, #fffdf8); }
+.infographic-toolbar button:disabled { opacity: .45; cursor: not-allowed; }
+.infographic-viewport { min-height: 30rem; overflow: auto; display: grid; place-items: center; background: #f7f1e5; }
+.infographic-viewport:fullscreen { width: 100vw; height: 100vh; padding: 2rem; background: #161b1a; }
+.infographic-image { max-width: 100%; max-height: 72vh; width: auto; height: auto; object-fit: contain; transform-origin: center; transition: transform .15s ease; }
+.infographic-message { min-height: 18rem; display: grid; place-content: center; gap: .9rem; color: var(--text-secondary, #635b50); }
+.infographic-message p { margin: 0; }
+.infographic-action { justify-self: center; border: 1px solid #2f6656; border-radius: 6px; padding: .55rem .9rem; color: white; background: #2f6656; font-weight: 600; }
+
+@media (max-width: 640px) {
+  .infographic-panel { min-height: 23rem; }
+  .infographic-viewport { min-height: 21rem; }
+  .infographic-image { max-height: 62vh; }
+}
+
 @media (max-width: 640px) {
   .dashboard-reading {
     font-size: 0.98rem;
