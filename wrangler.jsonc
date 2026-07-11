@@ -66,6 +66,10 @@
     "CHROME_EXTENSION_IDS": "bgohgakmnepefbcccanofomnhodflnab",
     "OPENROUTER_MODEL": "openai/gpt-4o-mini",
     "OPENROUTER_MINDMAP_MODEL": "openai/gpt-4o-mini",
+    "OPENROUTER_INFOGRAPHIC_MODEL": "google/gemini-3-pro-image",
+    "INFOGRAPHIC_AUTOMATION_STARTED_AT": "2026-07-11T09:15:46.000Z",
+    "INFOGRAPHIC_WORKER_CONCURRENCY": "1",
+    "INFOGRAPHIC_JOB_LEASE_SECONDS": "600",
     "ADMIN_EMAILS": "chenzixin1@gmail.com",
     "NEXTAUTH_URL": "https://podsum.cc",
     "NEXT_PUBLIC_APP_URL": "https://podsum.cc"

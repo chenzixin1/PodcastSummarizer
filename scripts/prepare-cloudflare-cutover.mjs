@@ -8,7 +8,7 @@ const commandsPath = path.join(outputDir, 'cutover-commands.txt');
 const rollbackCommandsPath = path.join(outputDir, 'rollback-commands.txt');
 const productionUrl = (process.env.PRODUCTION_APP_URL || 'https://podsum.cc').replace(/\/+$/, '');
 const keepPreviewRoute = process.env.CUTOVER_KEEP_PREVIEW === 'true';
-const productionCrons = ['0 3 * * *', '0 4 * * *'];
+const productionCrons = ['* * * * *', '0 3 * * *', '0 4 * * *'];
 const productionD1DatabaseName = process.env.PRODUCTION_D1_DATABASE_NAME || 'podsum-d1-production';
 const productionD1DatabaseId = process.env.PRODUCTION_D1_DATABASE_ID || '5d0b65e0-d556-4aa4-953f-4d680d11c34a';
 
