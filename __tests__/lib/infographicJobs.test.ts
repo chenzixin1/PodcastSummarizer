@@ -159,6 +159,48 @@ describe('infographicJobs', () => {
     expect(values).toContain('worker-1');
   });
 
+  it('uses PostgreSQL interval syntax for failure retries outside D1', async () => {
+    mockIsD1DatabaseProvider.mockReturnValue(false);
+    mockSql.mockResolvedValue({ rows: [{ ...pendingJob, status: 'pending', attempts: 1 }] } as any);
+
+    await recordInfographicFailure('pod-1', 'worker-1', {
+      transient: true,
+      errorCode: 'upstream_timeout',
+      message: 'OpenRouter timed out',
+    });
+
+    const failureCall = mockSql.mock.calls.find(([strings]) => queryFrom(strings as TemplateStringsArray).includes('UPDATE infographic_jobs'));
+    expect(failureCall).toBeDefined();
+    const query = queryFrom(failureCall![0] as TemplateStringsArray);
+    expect(query).toContain("CURRENT_TIMESTAMP + INTERVAL '1 minute'");
+    expect(query).toContain("CURRENT_TIMESTAMP + INTERVAL '5 minutes'");
+    expect(query).not.toContain("datetime('now'");
+  });
+
+  it('redacts, normalizes, and bounds persisted failure diagnostics', async () => {
+    mockSql.mockResolvedValue({ rows: [{ ...pendingJob, status: 'failed', attempts: 3 }] } as any);
+    const base64Payload = 'a'.repeat(64);
+    const rawMessage = `Authorization: Bearer sk-live-super-secret-token provider body: {"prompt":"private prompt","key":"abc"} ${base64Payload} ${'timeout '.repeat(100)}`;
+
+    await recordInfographicFailure('pod-1', 'worker-1', {
+      transient: false,
+      errorCode: 'OpenRouter / 500',
+      message: rawMessage,
+    });
+
+    const [, ...values] = mockSql.mock.calls[0];
+    const persistedCode = values.find((value) => value === 'provider_error');
+    const persistedMessage = values.find((value) => typeof value === 'string' && String(value).includes('[REDACTED')) as string;
+    expect(persistedCode).toBe('provider_error');
+    expect(persistedMessage).toContain('[REDACTED]');
+    expect(persistedMessage).toContain('[REDACTED_PROVIDER_BODY]');
+    expect(persistedMessage).not.toContain('sk-live-super-secret-token');
+    expect(persistedMessage).not.toContain('private prompt');
+    expect(persistedMessage).not.toContain(base64Payload);
+    expect(persistedMessage).toContain('[REDACTED_BASE64]');
+    expect(persistedMessage.length).toBeLessThanOrEqual(512);
+  });
+
   it('allows editor retries only for failed rows', async () => {
     mockSql.mockResolvedValue({ rows: [{ ...pendingJob, attempts: 0, errorCode: null, errorMessage: null }] } as any);
 
@@ -185,10 +227,10 @@ describe('infographicJobs', () => {
     });
   });
 
-  it('reconciles only analyzed podcasts after activation with a bounded limit', async () => {
+  it('reconciles only analyzed podcasts after activation with a D1-compatible timestamp and bounded limit', async () => {
     mockSql.mockResolvedValue({ rows: [], rowCount: 2 } as any);
 
-    await reconcileInfographicJobs({ activationTime: '2026-07-11T00:00:00.000Z', limit: 20 });
+    await reconcileInfographicJobs({ activationTime: '2026-07-11T12:34:56.789Z', limit: 20 });
 
     const [strings, ...values] = mockSql.mock.calls[0];
     const query = queryFrom(strings as TemplateStringsArray);
@@ -196,7 +238,7 @@ describe('infographicJobs', () => {
     expect(query).toContain('ar.processed_at >= ?');
     expect(query).toContain('LIMIT ?');
     expect(query).toContain('ON CONFLICT (podcast_id) DO NOTHING');
-    expect(values).toContain('2026-07-11T00:00:00.000Z');
+    expect(values).toContain('2026-07-11 12:34:56');
     expect(values).toContain(20);
   });
 });

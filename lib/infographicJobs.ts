@@ -71,6 +71,21 @@ export interface ReconcileInfographicJobsResult {
 
 const DEFAULT_INFOGRAPHIC_LEASE_SECONDS = 10 * 60;
 const MAX_RECONCILIATION_LIMIT = 20;
+const MAX_ERROR_CODE_LENGTH = 64;
+const MAX_ERROR_MESSAGE_LENGTH = 512;
+const SAFE_ERROR_CODES = new Set([
+  'unknown',
+  'generation_failed',
+  'upstream_timeout',
+  'upstream_unavailable',
+  'provider_error',
+  'policy_violation',
+  'invalid_response',
+  'artifact_upload_failed',
+  'artifact_verification_failed',
+  'missing_analysis',
+  'lease_lost',
+]);
 
 function toNullableString(value: unknown): string | null {
   if (value === null || value === undefined || value === '') {
@@ -151,6 +166,37 @@ function normalizeReconciliationLimit(limit?: number): number {
     return MAX_RECONCILIATION_LIMIT;
   }
   return Math.max(1, Math.min(MAX_RECONCILIATION_LIMIT, Math.floor(limit)));
+}
+
+function normalizeD1DateTime(value: string): string | null {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+  return new Date(timestamp).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function sanitizeErrorCode(value: string): string {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, MAX_ERROR_CODE_LENGTH);
+
+  return SAFE_ERROR_CODES.has(normalized) ? normalized : 'provider_error';
+}
+
+function sanitizeErrorMessage(value: string): string {
+  const sanitized = String(value || '')
+    .trim()
+    .replace(/(authorization|x-api-key|api[_-]?key|access[_-]?token)\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/gi, '$1: [REDACTED]')
+    .replace(/bearer\s+[a-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/(?:provider|request|response)\s*(?:body|payload)\s*[:=]\s*(?:\{[\s\S]*?\}|\[[\s\S]*?\]|[^\n]+)/gi, '[REDACTED_PROVIDER_BODY]')
+    .replace(/\b(?:sk|rk|pk|api)[_-][a-z0-9._-]{16,}\b/gi, '[REDACTED_API_KEY]')
+    .replace(/\b[a-z0-9+/_-]{48,}={0,2}\b/gi, '[REDACTED_BASE64]');
+
+  return (sanitized || 'Infographic generation failed').slice(0, MAX_ERROR_MESSAGE_LENGTH);
 }
 
 export async function ensureInfographicJobsTable(): Promise<void> {
@@ -395,29 +441,55 @@ export async function recordInfographicFailure(
 ): Promise<InfographicJobResult> {
   try {
     await ensureInfographicJobsTable();
-    const result = await sql`
-      UPDATE infographic_jobs
-      SET
-        status = CASE
-          WHEN ${payload.transient} AND attempts < 3 THEN 'pending'
-          ELSE 'failed'
-        END,
-        next_attempt_at = CASE
-          WHEN ${payload.transient} AND attempts < 3 AND attempts = 1 THEN datetime('now', '+1 minute')
-          WHEN ${payload.transient} AND attempts < 3 AND attempts = 2 THEN datetime('now', '+5 minutes')
-          ELSE NULL
-        END,
-        lease_expires_at = NULL,
-        worker_id = NULL,
-        error_code = ${payload.errorCode},
-        error_message = ${payload.message},
-        completed_at = NULL,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE podcast_id = ${podcastId}
-        AND status = 'processing'
-        AND worker_id = ${workerId}
-      RETURNING *
-    `;
+    const errorCode = sanitizeErrorCode(payload.errorCode);
+    const errorMessage = sanitizeErrorMessage(payload.message);
+    const result = isD1DatabaseProvider()
+      ? await sql`
+          UPDATE infographic_jobs
+          SET
+            status = CASE
+              WHEN ${payload.transient} AND attempts < 3 THEN 'pending'
+              ELSE 'failed'
+            END,
+            next_attempt_at = CASE
+              WHEN ${payload.transient} AND attempts < 3 AND attempts = 1 THEN datetime('now', '+1 minute')
+              WHEN ${payload.transient} AND attempts < 3 AND attempts = 2 THEN datetime('now', '+5 minutes')
+              ELSE NULL
+            END,
+            lease_expires_at = NULL,
+            worker_id = NULL,
+            error_code = ${errorCode},
+            error_message = ${errorMessage},
+            completed_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE podcast_id = ${podcastId}
+            AND status = 'processing'
+            AND worker_id = ${workerId}
+          RETURNING *
+        `
+      : await sql`
+          UPDATE infographic_jobs
+          SET
+            status = CASE
+              WHEN ${payload.transient} AND attempts < 3 THEN 'pending'
+              ELSE 'failed'
+            END,
+            next_attempt_at = CASE
+              WHEN ${payload.transient} AND attempts < 3 AND attempts = 1 THEN CURRENT_TIMESTAMP + INTERVAL '1 minute'
+              WHEN ${payload.transient} AND attempts < 3 AND attempts = 2 THEN CURRENT_TIMESTAMP + INTERVAL '5 minutes'
+              ELSE NULL
+            END,
+            lease_expires_at = NULL,
+            worker_id = NULL,
+            error_code = ${errorCode},
+            error_message = ${errorMessage},
+            completed_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE podcast_id = ${podcastId}
+            AND status = 'processing'
+            AND worker_id = ${workerId}
+          RETURNING *
+        `;
 
     if (result.rows.length === 0) {
       return { success: false, error: 'Infographic job not found or lease is no longer owned' };
@@ -471,6 +543,12 @@ export async function reconcileInfographicJobs(
   try {
     await ensureInfographicJobsTable();
     const limit = normalizeReconciliationLimit(options.limit);
+    const activationTime = isD1DatabaseProvider()
+      ? normalizeD1DateTime(options.activationTime)
+      : options.activationTime;
+    if (!activationTime) {
+      return { success: false, error: 'Invalid infographic activation timestamp' };
+    }
     const result = await sql`
       INSERT INTO infographic_jobs (
         podcast_id,
@@ -491,7 +569,7 @@ export async function reconcileInfographicJobs(
       JOIN analysis_results ar ON ar.podcast_id = p.id
       LEFT JOIN infographic_jobs existing ON existing.podcast_id = p.id
       WHERE existing.podcast_id IS NULL
-        AND ar.processed_at >= ${options.activationTime}
+        AND ar.processed_at >= ${activationTime}
       ORDER BY ar.processed_at ASC
       LIMIT ${limit}
       ON CONFLICT (podcast_id) DO NOTHING
