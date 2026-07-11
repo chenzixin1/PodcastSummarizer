@@ -151,6 +151,15 @@ console.log('FAKE_NODE_EXEC_PATH=' + process.execPath);
 }
 
 describe('preview deployment safety', () => {
+  test('production cutover applies D1 migrations before deploying the Worker', () => {
+    const source = readProjectFile('scripts/prepare-cloudflare-cutover.mjs');
+    const migrationIndex = source.indexOf('wrangler d1 migrations apply PODSUM_DB --remote');
+    const deployIndex = source.indexOf('npx wrangler deploy -c ${productionConfigPath}');
+
+    expect(migrationIndex).toBeGreaterThanOrEqual(0);
+    expect(deployIndex).toBeGreaterThan(migrationIndex);
+  });
+
   test('CI validates Node 22 builds and performance budgets without deploying', () => {
     const workflow = readProjectFile('.github/workflows/ci.yml');
 

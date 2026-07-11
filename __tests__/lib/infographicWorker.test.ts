@@ -321,6 +321,26 @@ describe('processNextInfographicJob', () => {
     expect(mockCompose).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: null }));
   });
 
+  it('stops before R2 upload when a heartbeat loses the lease during generation', async () => {
+    jest.useFakeTimers();
+    let finishGeneration!: (value: typeof raster) => void;
+    mockGenerate.mockReturnValue(new Promise(resolve => {
+      finishGeneration = resolve;
+    }));
+    mockHeartbeat.mockResolvedValue({ success: false, error: 'lease lost' });
+
+    const processing = processNextInfographicJob('worker-info');
+    await Promise.resolve();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(60_000);
+    finishGeneration(raster);
+
+    await expect(processing).resolves.toEqual({ processed: true, podcastId: 'pod-1', status: 'failed' });
+    expect(mockUploadObject).not.toHaveBeenCalled();
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+  });
+
   it('does not write provider secrets or payloads to logs', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);

@@ -11,7 +11,9 @@ import {
   claimNextInfographicJob,
   completeInfographicJob,
   enqueueInfographicJob,
+  getInfographicJobLeaseSeconds,
   getInfographicJob,
+  getInfographicWorkerConcurrency,
   heartbeatInfographicJob,
   mapInfographicJobToResponse,
   reconcileInfographicJobs,
@@ -49,10 +51,31 @@ function queryFrom(strings: TemplateStringsArray): string {
 }
 
 describe('infographicJobs', () => {
+  const previousConcurrency = process.env.INFOGRAPHIC_WORKER_CONCURRENCY;
+  const previousLeaseSeconds = process.env.INFOGRAPHIC_JOB_LEASE_SECONDS;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.INFOGRAPHIC_WORKER_CONCURRENCY;
+    delete process.env.INFOGRAPHIC_JOB_LEASE_SECONDS;
     mockIsD1DatabaseProvider.mockReturnValue(true);
     mockSql.mockResolvedValue({ rows: [] });
+  });
+
+  afterAll(() => {
+    if (previousConcurrency === undefined) delete process.env.INFOGRAPHIC_WORKER_CONCURRENCY;
+    else process.env.INFOGRAPHIC_WORKER_CONCURRENCY = previousConcurrency;
+    if (previousLeaseSeconds === undefined) delete process.env.INFOGRAPHIC_JOB_LEASE_SECONDS;
+    else process.env.INFOGRAPHIC_JOB_LEASE_SECONDS = previousLeaseSeconds;
+  });
+
+  it('reads infographic worker concurrency and lease controls from env', () => {
+    expect(getInfographicWorkerConcurrency()).toBe(1);
+    expect(getInfographicJobLeaseSeconds()).toBe(600);
+    process.env.INFOGRAPHIC_WORKER_CONCURRENCY = '2';
+    process.env.INFOGRAPHIC_JOB_LEASE_SECONDS = '480';
+    expect(getInfographicWorkerConcurrency()).toBe(2);
+    expect(getInfographicJobLeaseSeconds()).toBe(480);
   });
 
   it('idempotently enqueues an analyzed podcast and leaves an existing completed job unchanged', async () => {
@@ -108,6 +131,8 @@ describe('infographicJobs', () => {
     expect(query).toContain("status = 'processing'");
     expect(query).toContain('lease_expires_at < CURRENT_TIMESTAMP');
     expect(query).toContain("datetime('now', '+' || ? || ' seconds')");
+    expect(query).toContain('SELECT COUNT(*)');
+    expect(query).toContain('< ?');
     expect(query).toContain('UPDATE infographic_jobs');
     expect(values).toEqual(['worker-1', 600, 1]);
   });
