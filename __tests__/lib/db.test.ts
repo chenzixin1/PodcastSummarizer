@@ -14,6 +14,14 @@ jest.mock('@vercel/postgres', () => ({
   sql: jest.fn()
 }));
 
+jest.mock('../../lib/infographicJobs', () => ({
+  getInfographicJob: jest.fn(),
+}));
+
+jest.mock('../../lib/objectStorage', () => ({
+  deleteObject: jest.fn(),
+}));
+
 import {
   initDatabase,
   savePodcast,
@@ -30,8 +38,12 @@ import {
 } from '../../lib/db';
 
 import { sql } from '@vercel/postgres';
+import { getInfographicJob, type InfographicJob } from '../../lib/infographicJobs';
+import { deleteObject } from '../../lib/objectStorage';
 
 const mockSql = sql as jest.MockedFunction<typeof sql>;
+const mockGetInfographicJob = getInfographicJob as jest.MockedFunction<typeof getInfographicJob>;
+const mockDeleteObject = deleteObject as jest.MockedFunction<typeof deleteObject>;
 
 describe('Database Operations Tests', () => {
   beforeEach(() => {
@@ -41,6 +53,8 @@ describe('Database Operations Tests', () => {
     mockSql.mockImplementation(() => {
       return Promise.resolve({ rows: [] } as any);
     });
+    mockGetInfographicJob.mockResolvedValue({ success: false, data: null, error: 'Infographic job not found' });
+    mockDeleteObject.mockResolvedValue();
   });
 
   describe('initDatabase', () => {
@@ -287,6 +301,41 @@ describe('Database Operations Tests', () => {
       expect(result.success).toBe(true);
       expect(result.data).toEqual({ id: 'test-id-123' });
       expect(mockSql).toHaveBeenCalledTimes(2);
+    });
+
+    test('should delete the stored infographic artifact before deleting the podcast', async () => {
+      mockGetInfographicJob.mockResolvedValue({
+        success: true,
+        data: { artifactUrl: 'https://cdn.example.com/infographic.svg' } as InfographicJob,
+      });
+      mockSql
+        .mockResolvedValueOnce({ rows: [] } as any)
+        .mockResolvedValueOnce({ rows: [{ id: 'test-id-123' }] } as any);
+
+      const result = await deletePodcast('test-id-123');
+
+      expect(result.success).toBe(true);
+      expect(mockDeleteObject).toHaveBeenCalledWith('https://cdn.example.com/infographic.svg');
+      expect(mockDeleteObject.mock.invocationCallOrder[0]).toBeLessThan(mockSql.mock.invocationCallOrder[0]);
+    });
+
+    test('should continue deleting the podcast when infographic storage deletion fails', async () => {
+      const warning = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mockGetInfographicJob.mockResolvedValue({
+        success: true,
+        data: { artifactUrl: 'https://cdn.example.com/infographic.svg' } as InfographicJob,
+      });
+      mockDeleteObject.mockRejectedValue(new Error('R2 unavailable'));
+      mockSql
+        .mockResolvedValueOnce({ rows: [] } as any)
+        .mockResolvedValueOnce({ rows: [{ id: 'test-id-123' }] } as any);
+
+      const result = await deletePodcast('test-id-123');
+
+      expect(result.success).toBe(true);
+      expect(mockSql).toHaveBeenCalledTimes(2);
+      expect(warning).toHaveBeenCalled();
+      warning.mockRestore();
     });
 
     test('should return error when podcast not found for deletion', async () => {

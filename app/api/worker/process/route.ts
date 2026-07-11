@@ -15,6 +15,8 @@ import {
   isWorkerAuthorizedBySecret,
 } from '../../../../lib/workerAuth';
 import { POST as processPodcastRoute } from '../../process/route';
+import { reconcileInfographicJobs } from '../../../../lib/infographicJobs';
+import { processNextInfographicJob } from '../../../../lib/infographicWorker';
 
 interface PodcastJobPayload {
   blobUrl: string;
@@ -102,6 +104,29 @@ function startProcessingJobHeartbeat(podcastId: string, workerId: string): () =>
   };
 }
 
+async function responseWithInfographic(workerId: string, data: Record<string, unknown>) {
+  try {
+    const reconciled = await reconcileInfographicJobs({
+      activationTime: process.env.INFOGRAPHIC_AUTOMATION_STARTED_AT || '',
+      limit: 20,
+    });
+    if (!reconciled.success) {
+      console.warn('[infographic] reconciliation failed');
+    }
+    const infographic = await processNextInfographicJob(`${workerId}:infographic`);
+    return NextResponse.json({ success: true, data: { ...data, infographic } });
+  } catch {
+    console.warn('[infographic] worker integration failed');
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...data,
+        infographic: { processed: false, podcastId: null, status: 'failed' },
+      },
+    });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     if (!isAuthorized(request)) {
@@ -118,7 +143,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!claimed.data) {
-      return NextResponse.json({ success: true, data: { message: 'No queued jobs' } });
+      return responseWithInfographic(workerId, { message: 'No queued jobs' });
     }
 
     const job = claimed.data;
@@ -312,12 +337,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Processing did not complete' }, { status: 500 });
     }
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        podcastId: job.podcastId,
-        message: 'Job completed'
-      }
+    return responseWithInfographic(workerId, {
+      podcastId: job.podcastId,
+      message: 'Job completed',
     });
     } finally {
       stopHeartbeat();

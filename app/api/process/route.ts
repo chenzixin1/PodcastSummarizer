@@ -9,6 +9,7 @@ import { authOptions } from '../../../lib/auth';
 import { isAdminEmailAllowed } from '../../../lib/adminGuard';
 import { isWorkerAuthorizedBySecret } from '../../../lib/workerAuth';
 import { getObjectText } from '../../../lib/objectStorage';
+import { enqueueInfographicJob } from '../../../lib/infographicJobs';
 import { generateMindMapData, type MindMapData } from '../../../lib/mindMap';
 import {
   BILINGUAL_ALIGNMENT_VERSION,
@@ -1430,6 +1431,13 @@ export async function POST(request: NextRequest) {
           });
           if (saveResult.success) {
             processDebug(`分析结果保存成功，podcastId: ${id}`);
+            const infographicEnqueue = await enqueueInfographicJob(id);
+            if (!infographicEnqueue.success) {
+              console.warn('[infographic] enqueue after analysis failed', {
+                podcastId: id,
+                error: infographicEnqueue.error || 'unknown enqueue failure',
+              });
+            }
             await refreshSnapshotsForPodcastMutation(id, 'process analysis completion');
           } else {
             console.error('保存分析结果到数据库失败:', saveResult.error);

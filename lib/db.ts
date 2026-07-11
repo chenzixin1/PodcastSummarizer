@@ -6,6 +6,8 @@ import { labelsToTopicFacets, type TopicAssignment, type TopicProposal } from '.
 import { getTopicTaxonomy } from './topicTaxonomyData';
 import type { MindMapData } from './mindMap';
 import type { FullTextBilingualPayload, SummaryBilingualPayload } from './bilingualAlignment';
+import { getInfographicJob } from './infographicJobs';
+import { deleteObject } from './objectStorage';
 
 // 播客类型
 export interface Podcast {
@@ -1375,6 +1377,13 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
 // 删除播客及其分析结果
 export async function deletePodcast(id: string): Promise<DbResult> {
   try {
+    const infographicJob = await getInfographicJob(id);
+    const artifactUrl = infographicJob.success ? infographicJob.data?.artifactUrl : null;
+    if (artifactUrl) {
+      await deleteObject(artifactUrl).catch((storageError) => {
+        console.warn('删除播客信息图存储文件失败，继续删除主记录:', storageError);
+      });
+    }
     if (isD1DatabaseProvider()) {
       await deletePodcastTopics(id).catch((topicError) => {
         console.warn('删除播客 Topic 关系失败，继续删除主记录:', topicError);
