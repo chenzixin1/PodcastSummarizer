@@ -14,6 +14,12 @@ export async function GET(
     }
 
     const jobResult = await getInfographicJob(id);
+    if (!jobResult.success && jobResult.error !== 'Infographic job not found') {
+      return NextResponse.json(
+        { success: false, error: jobResult.error || 'Failed to get infographic status' },
+        { status: 500 },
+      );
+    }
     return NextResponse.json({
       success: true,
       data: mapInfographicJobToResponse(jobResult.data || null, access.canEdit),

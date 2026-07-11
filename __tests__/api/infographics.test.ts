@@ -94,6 +94,13 @@ describe('infographic API routes', () => {
     expect(body.data).toEqual(expect.objectContaining({ status: 'unavailable', canRetry: false }));
   });
 
+  it('does not turn a job lookup failure into an unavailable status', async () => {
+    mockGetInfographicJob.mockResolvedValue({ success: false, data: null, error: 'Database unavailable' });
+    const response = await GET(request(), context);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ success: false, error: 'Database unavailable' });
+  });
+
   it('requires authentication for a private podcast and denies a non-owner', async () => {
     mockGetPodcast.mockResolvedValue({ success: true, data: { id, isPublic: false, userId: 'owner-1' } });
     let response = await GET(request(), context);
