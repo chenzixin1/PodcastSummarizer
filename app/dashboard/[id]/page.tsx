@@ -14,6 +14,7 @@ import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
 import AppHeader from '../../../components/AppHeader';
 import LiteYouTubeEmbed from '../../../components/LiteYouTubeEmbed';
+import InfographicPanel from '../../../components/dashboard/InfographicPanel';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
 import {
@@ -120,7 +121,7 @@ interface DashboardApiPayload {
   };
 }
 
-type ViewMode = 'summary' | 'fullText' | 'mindMap';
+type ViewMode = 'summary' | 'fullText' | 'mindMap' | 'infographic';
 type ProcessingTask = 'summary' | 'translation' | 'highlights';
 type ThemeMode = 'light' | 'dark';
 type ContentLanguageMode = 'zh' | 'en' | 'bilingual' | 'hint';
@@ -597,6 +598,7 @@ export default function DashboardPage() {
     summary: 0,
     fullText: 0,
     mindMap: 0,
+    infographic: 0,
   });
   const lastHeightRef = useRef(0);
   const requestSentRef = useRef(false);
@@ -1019,6 +1021,7 @@ export default function DashboardPage() {
       setSourceSaveError(null);
       return;
     }
+
     setSourceInput(data.sourceReference || '');
     setSourceSaveStatus('idle');
     setSourceSaveError(null);
@@ -1658,6 +1661,10 @@ export default function DashboardPage() {
       return <div className="text-center p-10 text-[var(--text-muted)]">No data available.</div>;
     }
 
+    if (activeView === 'infographic') {
+      return <div className="p-4 sm:p-6 lg:p-8"><InfographicPanel podcastId={id} canEdit={canEdit} title={data.title} /></div>;
+    }
+
     switch (activeView) {
       case 'summary':
         return (
@@ -1955,6 +1962,7 @@ export default function DashboardPage() {
                 <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
                 <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
                 <button onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
+                <button onClick={() => switchActiveView('infographic')} className={`${getButtonClass('infographic')} shrink-0`}>Infographic</button>
               </div>
               <div className="mt-3 inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
                 <button
