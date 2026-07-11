@@ -245,7 +245,7 @@ The row is idempotent by `podcast_id`. Enqueue behavior:
 - create `pending` when no row exists;
 - leave a matching completed `prompt_version` unchanged;
 - do not restart a processing lease that has not expired;
-- allow an owner retry to reset a failed row;
+- allow any user with edit permission to reset a failed row;
 - a future prompt-version migration requires an explicit backfill operation.
 
 ## Worker Scheduling and Retry
@@ -362,7 +362,7 @@ Logs must not include API keys, full base64 images, raw transcript bodies, or th
 - fourth tab renders without shifting navigation;
 - each of the five states renders correctly;
 - a successful historical generate command transitions `Unavailable` to `Pending` without a page reload;
-- polling stops on completion/failure and when hidden;
+- polling stops on completion, failure, unavailable, and when hidden;
 - viewer controls remain stable on desktop and mobile;
 - PNG download uses the framed SVG and falls back safely.
 
