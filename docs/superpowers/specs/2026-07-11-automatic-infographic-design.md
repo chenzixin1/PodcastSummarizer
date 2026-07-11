@@ -43,9 +43,11 @@ The tab supports five stable states:
 2. `Generating`: a worker owns the job. Show a fixed-size skeleton and concise status.
 3. `Ready`: show the complete framed infographic with zoom, fullscreen, and download controls.
 4. `Failed`: show a compact error state. Owners/editors may retry; public viewers only see that the artifact is unavailable.
-5. `Unavailable`: the analysis predates feature activation and has no infographic job. Show `Infographic was not generated for this analysis.` without automatically creating a paid job.
+5. `Unavailable`: the analysis predates feature activation and has no infographic job. Public viewers see `Infographic was not generated for this analysis.` Owners/editors also see a primary `Generate infographic` command that queues one job for this article.
 
 The page polls the infographic status only while the job is pending or processing. Polling stops after completion, failure, or unavailable and when the page is hidden.
+
+Clicking `Generate infographic` changes the local state to pending immediately after the API confirms enqueueing. The command is disabled while submitting. Repeated clicks and repeated requests are idempotent and cannot create parallel paid generations for the same article and prompt version.
 
 ### Ready Viewer
 
@@ -267,6 +269,7 @@ Add:
 
 ```text
 GET  /api/infographics/[id]
+POST /api/infographics/[id]/generate
 POST /api/infographics/[id]/retry
 ```
 
@@ -288,14 +291,20 @@ Authorization follows the existing podcast visibility contract:
 
 - public analyses expose completed artifacts and non-sensitive status;
 - private analyses require the owner;
+- generate requires edit permission and an existing completed analysis;
 - retry requires edit permission;
 - never return cost, prompt body, raw model response, or internal error details publicly.
+
+`POST /generate` is intended for historical analyses with no job. It performs an idempotent insert of a pending row using the current prompt version. If a pending, processing, or matching completed row already exists, it returns that state without creating another job. A failed row must use the explicit retry endpoint so the user action remains unambiguous.
+
+Manual historical generation does not consume an additional PodSum conversion credit in v1. Cost is bounded by owner/edit permission, one current-version job per article, the global worker concurrency, and the retry ceiling. Billing or a separate infographic credit is out of scope for v1.
 
 ## Existing and New Analyses
 
 - Newly completed analyses enqueue automatically after `saveAnalysisResults()` succeeds.
 - The current acceptance article may be explicitly seeded during rollout using the already validated Google Prompt 1 prototype, after applying the final footer composition.
 - No general historical backfill runs during migration or deploy.
+- Owners/editors may generate one historical article at a time from its `Unavailable` tab state.
 - A future backfill script must default to dry-run, require an explicit maximum count, and report estimated cost before making API calls.
 - `INFOGRAPHIC_AUTOMATION_STARTED_AT` is the hard lower bound for automatic reconciliation and is set to the production activation timestamp.
 
@@ -340,6 +349,10 @@ Logs must not include API keys, full base64 images, raw transcript bodies, or th
 ### API Tests
 
 - public/private visibility;
+- owner/editor can generate a historical completed analysis;
+- public viewers and non-owners cannot generate;
+- repeated generate requests return the existing job without duplicate rows;
+- generate rejects articles whose analysis is incomplete;
 - owner-only retry;
 - completed response returns the artifact URL;
 - public response redacts cost and internal errors.
@@ -369,7 +382,7 @@ Logs must not include API keys, full base64 images, raw transcript bodies, or th
 - Process at most one infographic job per cron invocation initially.
 - No model fallback.
 - No automatic regeneration of completed rows.
-- No historical bulk generation.
+- No historical bulk generation; owners/editors may generate one article at a time.
 - A retry ceiling prevents unbounded spend.
 - Record actual cost for later budgeting without exposing it to end users.
 
