@@ -2,6 +2,8 @@
  * @jest-environment node
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- SQL client mocks expose untyped result rows. */
+
 jest.mock('../../lib/sql', () => ({
   isD1DatabaseProvider: jest.fn(),
   sql: jest.fn(),

@@ -9,6 +9,8 @@
  * 5. 错误处理
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- SQL client mocks expose untyped result rows. */
+
 // Mock Vercel Postgres
 jest.mock('@vercel/postgres', () => ({
   sql: jest.fn()
@@ -33,8 +35,7 @@ import {
   deletePodcast,
   updatePodcastPublicStatus,
   type Podcast,
-  type AnalysisResult,
-  type DbResult
+  type AnalysisResult
 } from '../../lib/db';
 
 import { sql } from '@vercel/postgres';
