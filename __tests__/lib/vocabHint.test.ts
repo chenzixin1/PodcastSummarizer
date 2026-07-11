@@ -56,6 +56,23 @@ describe('vocabHint helpers', () => {
     expect(output).toContain('ambiguity（歧义）');
   });
 
+  test('annotateEnglishWithHints ranks hard words across the whole paragraph before applying the limit', () => {
+    const dict: AdvancedWordDict = {
+      verifiable: { zh: '可验证的' },
+      reinforcement: { zh: '强化' },
+      creation: { zh: '创造' },
+      artificial: { zh: '人工的' },
+    };
+    const input =
+      'A research bet is that verifiable tasks across Reinforcement Learning environments will lead to the creation of Artificial General Intelligence, even in the face of ambiguity.';
+    const output = annotateEnglishWithHints(input, dict, {
+      maxHintsPerParagraph: 3,
+      interactionMode: 'pronounceLink',
+    });
+
+    expect(output).toContain('[ambiguity](#pronounce:ambiguity)');
+  });
+
   test('extractHintCandidates keeps hard fallback vocabulary missing from the dictionary', () => {
     const output = extractHintCandidates('Open-ended tasks can still include ambiguity.', {}, { maxHintsPerParagraph: 4 });
 

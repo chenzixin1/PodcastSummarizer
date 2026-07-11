@@ -531,6 +531,9 @@ function scoreHintWord(wordKey: string, entry: AdvancedWordEntry): number {
   if (entry?.zh) {
     score += 1;
   }
+  if ((entry?.level || []).some((item) => /auto/i.test(item))) {
+    score += 2;
+  }
   if ((entry?.level || []).some((item) => /ielts|cet6|kaoyan|toefl|gre|gmat/i.test(item))) {
     score += 1;
   }
@@ -675,15 +678,10 @@ function annotateParagraph(
 
   const tokenPattern = /\b[A-Za-z][A-Za-z'-]{2,}\b/g;
   const used = new Set<string>();
-  const replacements: Array<{ start: number; end: number; replacement: string }> = [];
-  let hintCount = 0;
+  const candidates: Array<{ start: number; end: number; rawWord: string; key: string; entry: AdvancedWordEntry }> = [];
 
   let matched: RegExpExecArray | null;
   while ((matched = tokenPattern.exec(safeText)) !== null) {
-    if (hintCount >= maxHintsPerParagraph) {
-      break;
-    }
-
     const rawWord = matched[0];
     const key = normalizeWordToken(rawWord);
     if (!key || used.has(key)) {
@@ -714,18 +712,34 @@ function annotateParagraph(
     }
 
     used.add(key);
-    hintCount += 1;
-    const displayText = interactionMode === 'plain' ? `${rawWord}（${zh}）` : rawWord;
-    const replacement =
-      interactionMode === 'pronounceLink'
-        ? `[${displayText}](${PRONOUNCE_HASH_PREFIX}${encodeURIComponent(key)})`
-        : displayText;
-    replacements.push({
+    candidates.push({
       start: matched.index,
       end: matched.index + rawWord.length,
-      replacement,
+      rawWord,
+      key,
+      entry,
     });
   }
+
+  const replacements = candidates
+    .sort((a, b) => scoreHintWord(b.key, b.entry) - scoreHintWord(a.key, a.entry))
+    .slice(0, maxHintsPerParagraph)
+    .sort((a, b) => a.start - b.start)
+    .map((candidate) => {
+      const modelGloss = sanitizeGloss(generatedHints[candidate.key] || '');
+      const fallbackGloss = sanitizeGloss((candidate.entry?.zh || '').split(/[；;，,。/]/)[0] || '');
+      const zh = modelGloss || (requireGeneratedHints ? '' : fallbackGloss);
+      const displayText = interactionMode === 'plain' ? `${candidate.rawWord}（${zh}）` : candidate.rawWord;
+      const replacement =
+        interactionMode === 'pronounceLink'
+          ? `[${displayText}](${PRONOUNCE_HASH_PREFIX}${encodeURIComponent(candidate.key)})`
+          : displayText;
+      return {
+        start: candidate.start,
+        end: candidate.end,
+        replacement,
+      };
+    });
 
   if (replacements.length === 0) {
     return paragraph;

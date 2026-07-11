@@ -1550,7 +1550,7 @@ export default function DashboardPage() {
       return buildFullTextBilingualMarkdown(data.translation, data.fullTextHighlights);
     }
     return annotateEnglishWithHints(data.translation, vocabDict || {}, {
-      maxHintsPerParagraph: 3,
+      maxHintsPerParagraph: 6,
       segmentByLine: false,
       interactionMode: 'pronounceLink',
     });
