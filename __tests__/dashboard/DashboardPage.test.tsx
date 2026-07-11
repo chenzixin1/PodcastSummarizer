@@ -271,7 +271,7 @@ describe('DashboardPage language modes', () => {
     render(<DashboardPage />);
 
     const playButton = await screen.findByRole('button', {
-      name: 'Play Original video for Demo Podcast',
+      name: 'Try embedded playback',
     });
     expect(document.querySelectorAll('iframe')).toHaveLength(0);
 
@@ -283,6 +283,63 @@ describe('DashboardPage language modes', () => {
       'src',
       'https://www.youtube-nocookie.com/embed/I9aGC6Ui3eE?autoplay=1'
     );
+  });
+
+  test('shows a stable YouTube source card before loading the embed player', async () => {
+    const payload = JSON.parse(JSON.stringify(analysisPayload));
+    payload.data.podcast.sourceReference = 'https://www.youtube.com/watch?v=I9aGC6Ui3eE';
+
+    mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/snapshots/analysis/')) {
+        return {
+          ok: false,
+          status: 404,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ success: false }),
+        } as Response;
+      }
+
+      if (url.includes('/api/analysis/')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify(payload),
+        } as Response;
+      }
+
+      if (url === '/vocab/advanced-words.json') {
+        return {
+          ok: true,
+          json: async () => ({}),
+        } as Response;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ success: false }),
+        text: async () => '',
+      } as Response;
+    });
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Open on YouTube')).toBeInTheDocument();
+      expect(screen.getByText('Try embedded playback')).toBeInTheDocument();
+    });
+    expect(document.querySelector('iframe')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('Try embedded playback'));
+
+    await waitFor(() => {
+      expect(document.querySelector('iframe')).toHaveAttribute(
+        'src',
+        'https://www.youtube-nocookie.com/embed/I9aGC6Ui3eE?autoplay=1',
+      );
+    });
   });
 
   test('shows four language mode buttons and persists selection', async () => {
