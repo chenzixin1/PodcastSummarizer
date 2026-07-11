@@ -11,6 +11,7 @@ import {
   claimNextInfographicJob,
   completeInfographicJob,
   enqueueInfographicJob,
+  getInfographicJob,
   heartbeatInfographicJob,
   mapInfographicJobToResponse,
   reconcileInfographicJobs,
@@ -98,7 +99,9 @@ describe('infographicJobs', () => {
       data: { status: 'processing', attempts: 1, workerId: 'worker-1' },
     });
 
-    const [strings, ...values] = mockSql.mock.calls[0];
+    const claimCall = mockSql.mock.calls.find(([strings]) => queryFrom(strings as TemplateStringsArray).includes('attempts = attempts + 1'));
+    expect(claimCall).toBeDefined();
+    const [strings, ...values] = claimCall!;
     const query = queryFrom(strings as TemplateStringsArray);
     expect(query).toContain("status = 'pending'");
     expect(query).toContain('next_attempt_at <= CURRENT_TIMESTAMP');
@@ -107,6 +110,27 @@ describe('infographicJobs', () => {
     expect(query).toContain("datetime('now', '+' || ? || ' seconds')");
     expect(query).toContain('UPDATE infographic_jobs');
     expect(values).toEqual(['worker-1', 600]);
+  });
+
+  it('terminalizes a stale third-attempt lease and never reclaims it', async () => {
+    mockSql.mockResolvedValue({ rows: [] } as any);
+
+    expect(await claimNextInfographicJob('worker-1', { leaseSeconds: 600 })).toEqual({ success: true, data: null });
+
+    const terminalizeCall = mockSql.mock.calls.find(([strings]) => {
+      const query = queryFrom(strings as TemplateStringsArray);
+      return query.includes("status = 'failed'") && query.includes('attempts >= 3');
+    });
+    const claimCall = mockSql.mock.calls.find(([strings]) => queryFrom(strings as TemplateStringsArray).includes('attempts = attempts + 1'));
+    expect(terminalizeCall).toBeDefined();
+    expect(claimCall).toBeDefined();
+
+    const terminalizeQuery = queryFrom(terminalizeCall![0] as TemplateStringsArray);
+    expect(terminalizeQuery).toContain('lease_expires_at < CURRENT_TIMESTAMP');
+    expect(terminalizeQuery).toContain("error_code = 'lease_lost'");
+    expect(terminalizeQuery).toContain("error_message = 'Worker lease expired after maximum attempts'");
+    const claimQuery = queryFrom(claimCall![0] as TemplateStringsArray);
+    expect(claimQuery).toContain('attempts < 3');
   });
 
   it('fences heartbeats and completion to the worker that owns the lease', async () => {
@@ -225,6 +249,20 @@ describe('infographicJobs', () => {
       updatedAt: '2026-07-11 10:00:00',
       canRetry: true,
     });
+  });
+
+  it('safely rejects an invalid persisted status', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockSql.mockResolvedValue({ rows: [{ ...pendingJob, status: 'unexpected_state' }] } as any);
+
+    try {
+      await expect(getInfographicJob('pod-1')).resolves.toEqual({
+        success: false,
+        error: 'Invalid infographic job status',
+      });
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('reconciles only analyzed podcasts after activation with a D1-compatible timestamp and bounded limit', async () => {

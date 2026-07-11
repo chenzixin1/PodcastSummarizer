@@ -86,6 +86,12 @@ const SAFE_ERROR_CODES = new Set([
   'missing_analysis',
   'lease_lost',
 ]);
+const INFOGRAPHIC_JOB_STATUSES = new Set<InfographicJobStatus>([
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+]);
 
 function toNullableString(value: unknown): string | null {
   if (value === null || value === undefined || value === '') {
@@ -103,9 +109,14 @@ function rowValue(row: Record<string, unknown>, camelCase: string, snakeCase = c
 }
 
 function mapRowToInfographicJob(row: Record<string, unknown>): InfographicJob {
+  const status = toRequiredString(rowValue(row, 'status'));
+  if (!INFOGRAPHIC_JOB_STATUSES.has(status as InfographicJobStatus)) {
+    throw new Error('Invalid infographic job status');
+  }
+
   return {
     podcastId: toRequiredString(rowValue(row, 'podcastId', 'podcast_id')),
-    status: toRequiredString(rowValue(row, 'status') || 'pending') as InfographicJobStatus,
+    status: status as InfographicJobStatus,
     model: toRequiredString(rowValue(row, 'model')),
     promptVersion: toRequiredString(rowValue(row, 'promptVersion', 'prompt_version')),
     artifactUrl: toNullableString(rowValue(row, 'artifactUrl', 'artifact_url')),
@@ -281,12 +292,31 @@ export async function getInfographicJob(podcastId: string): Promise<InfographicJ
   }
 }
 
+async function finalizeExhaustedInfographicLeases(): Promise<void> {
+  await sql`
+    UPDATE infographic_jobs
+    SET
+      status = 'failed',
+      next_attempt_at = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      error_code = 'lease_lost',
+      error_message = 'Worker lease expired after maximum attempts',
+      completed_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE status = 'processing'
+      AND attempts >= 3
+      AND (lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)
+  `;
+}
+
 export async function claimNextInfographicJob(
   workerId: string,
   options?: ClaimInfographicJobOptions,
 ): Promise<InfographicJobResult> {
   try {
     await ensureInfographicJobsTable();
+    await finalizeExhaustedInfographicLeases();
     const leaseSeconds = normalizeLeaseSeconds(options);
     const result = isD1DatabaseProvider()
       ? await sql`
@@ -301,13 +331,16 @@ export async function claimNextInfographicJob(
           WHERE podcast_id = (
             SELECT podcast_id
             FROM infographic_jobs
-            WHERE (
-              status = 'pending'
-              AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
-            ) OR (
-              status = 'processing'
-              AND (lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)
-            )
+            WHERE attempts < 3
+              AND (
+                (
+                  status = 'pending'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+                ) OR (
+                  status = 'processing'
+                  AND (lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)
+                )
+              )
             ORDER BY
               CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
               COALESCE(next_attempt_at, lease_expires_at, updated_at) ASC
@@ -319,13 +352,16 @@ export async function claimNextInfographicJob(
           WITH next_job AS (
             SELECT podcast_id
             FROM infographic_jobs
-            WHERE (
-              status = 'pending'
-              AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
-            ) OR (
-              status = 'processing'
-              AND (lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)
-            )
+            WHERE attempts < 3
+              AND (
+                (
+                  status = 'pending'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+                ) OR (
+                  status = 'processing'
+                  AND (lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)
+                )
+              )
             ORDER BY
               CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
               COALESCE(next_attempt_at, lease_expires_at, updated_at) ASC
