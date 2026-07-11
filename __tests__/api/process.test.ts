@@ -148,27 +148,36 @@ jest.mock('../../lib/staticSnapshotHooks', () => ({
   refreshSnapshotsForPodcastMutation: jest.fn(),
 }));
 
+jest.mock('../../lib/infographicJobs', () => ({
+  enqueueInfographicJob: jest.fn(),
+}));
+
 jest.mock('../../lib/qaContextChunks', () => ({
   rebuildQaContextChunksForPodcast: jest.fn(),
 }));
 
 import { POST } from '../../app/api/process/route';
+import { getPodcast, saveAnalysisPartialResults, saveAnalysisResults } from '../../lib/db';
+import { enqueueInfographicJob } from '../../lib/infographicJobs';
+import { generateMindMapData } from '../../lib/mindMap';
+import { getObjectText } from '../../lib/objectStorage';
+import { rebuildQaContextChunksForPodcast } from '../../lib/qaContextChunks';
+import { refreshSnapshotsForPodcastMutation } from '../../lib/staticSnapshotHooks';
 
 global.fetch = jest.fn();
 
-const {
-  saveAnalysisResults: mockSaveAnalysisResults,
-  saveAnalysisPartialResults: mockSaveAnalysisPartialResults,
-  getPodcast: mockGetPodcast,
-} = require('../../lib/db');
-const { getObjectText: mockGetObjectText } = require('../../lib/objectStorage');
-const { generateMindMapData: mockGenerateMindMapData } = require('../../lib/mindMap');
-const {
-  refreshSnapshotsForPodcastMutation: mockRefreshSnapshotsForPodcastMutation,
-} = require('../../lib/staticSnapshotHooks');
-const {
-  rebuildQaContextChunksForPodcast: mockRebuildQaContextChunksForPodcast,
-} = require('../../lib/qaContextChunks');
+const mockSaveAnalysisResults = saveAnalysisResults as jest.MockedFunction<typeof saveAnalysisResults>;
+const mockSaveAnalysisPartialResults = saveAnalysisPartialResults as jest.MockedFunction<typeof saveAnalysisPartialResults>;
+const mockGetPodcast = getPodcast as jest.MockedFunction<typeof getPodcast>;
+const mockGetObjectText = getObjectText as jest.MockedFunction<typeof getObjectText>;
+const mockGenerateMindMapData = generateMindMapData as jest.MockedFunction<typeof generateMindMapData>;
+const mockRefreshSnapshotsForPodcastMutation = refreshSnapshotsForPodcastMutation as jest.MockedFunction<
+  typeof refreshSnapshotsForPodcastMutation
+>;
+const mockRebuildQaContextChunksForPodcast = rebuildQaContextChunksForPodcast as jest.MockedFunction<
+  typeof rebuildQaContextChunksForPodcast
+>;
+const mockEnqueueInfographicJob = enqueueInfographicJob as jest.MockedFunction<typeof enqueueInfographicJob>;
 
 // Helper function to read stream response
 async function readStreamResponse(response: Response): Promise<string[]> {
@@ -319,12 +328,13 @@ describe('Process API Tests', () => {
 Hello world`);
     mockGenerateMindMapData.mockResolvedValue({
       success: true,
-      data: { label: 'mind-map' },
+      data: { root: { label: 'mind-map' } },
     });
     mockRefreshSnapshotsForPodcastMutation.mockResolvedValue({
       success: true,
       published: true,
     });
+    mockEnqueueInfographicJob.mockResolvedValue({ success: true, data: null });
     mockRebuildQaContextChunksForPodcast.mockResolvedValue({
       success: true,
       chunkCount: 1,
@@ -453,6 +463,7 @@ Hello world`);
       'test-id',
       'process analysis completion'
     );
+    expect(mockEnqueueInfographicJob).toHaveBeenCalledWith('test-id');
     expect(mockRebuildQaContextChunksForPodcast).toHaveBeenCalledWith(
       expect.objectContaining({ podcastId: 'test-id' })
     );

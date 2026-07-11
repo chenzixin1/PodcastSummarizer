@@ -237,11 +237,19 @@ describe('processNextInfographicJob', () => {
     }));
   });
 
-  it('heartbeats the lease while the paid generation request is active and stops afterward', async () => {
+  it('heartbeats through generation and artifact persistence, then stops after completion', async () => {
     jest.useFakeTimers();
     let finishGeneration!: (value: typeof raster) => void;
+    let finishUpload!: (value: { key: string; provider: 'r2'; url: string }) => void;
+    let finishCompletion!: (value: Awaited<ReturnType<typeof completeInfographicJob>>) => void;
     mockGenerate.mockReturnValue(new Promise(resolve => {
       finishGeneration = resolve;
+    }));
+    mockUploadObject.mockReturnValue(new Promise(resolve => {
+      finishUpload = resolve;
+    }));
+    mockComplete.mockReturnValue(new Promise(resolve => {
+      finishCompletion = resolve;
     }));
 
     const processing = processNextInfographicJob('worker-info');
@@ -251,6 +259,45 @@ describe('processNextInfographicJob', () => {
 
     expect(mockHeartbeat).toHaveBeenCalledWith('pod-1', 'worker-info');
     finishGeneration(raster);
+    await Promise.resolve();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(mockHeartbeat).toHaveBeenCalledTimes(2);
+    finishUpload({
+      key: 'infographics/pod-1/podsum-infographic-v1.svg',
+      provider: 'r2',
+      url: 'https://cdn.example.com/pod-1.svg',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(mockHeartbeat).toHaveBeenCalledTimes(3);
+    finishCompletion({ success: true, data: { ...claimedJob, status: 'completed' } });
+    await processing;
+    const heartbeatCount = mockHeartbeat.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(mockHeartbeat).toHaveBeenCalledTimes(heartbeatCount);
+  });
+
+  it('keeps heartbeating until fenced failure recording completes', async () => {
+    jest.useFakeTimers();
+    let finishFailure!: (value: Awaited<ReturnType<typeof recordInfographicFailure>>) => void;
+    mockGenerate.mockRejectedValue(new InfographicGenerationError(
+      'upstream_timeout',
+      true,
+      'Image provider request timed out',
+    ));
+    mockRecordFailure.mockReturnValue(new Promise(resolve => {
+      finishFailure = resolve;
+    }));
+
+    const processing = processNextInfographicJob('worker-info');
+    await Promise.resolve();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    expect(mockHeartbeat).toHaveBeenCalledWith('pod-1', 'worker-info');
+    finishFailure({ success: true, data: { ...claimedJob, status: 'pending' } });
     await processing;
     const heartbeatCount = mockHeartbeat.mock.calls.length;
     await jest.advanceTimersByTimeAsync(120_000);

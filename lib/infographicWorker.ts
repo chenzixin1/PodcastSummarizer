@@ -143,12 +143,10 @@ export async function processNextInfographicJob(workerId: string): Promise<Proce
     actionItems: stringValue(analysis.actionItems),
   });
 
-  let stopHeartbeat: (() => void) | null = startHeartbeat(job.podcastId, workerId);
+  const stopHeartbeat = startHeartbeat(job.podcastId, workerId);
   let artifactUrl: string | null = null;
   try {
     const raster = await generateInfographicRaster(prompt);
-    stopHeartbeat();
-    stopHeartbeat = null;
 
     const svgBytes = composeInfographicSvg({ raster, sourceTitle, sourceUrl });
     const svg = new TextDecoder().decode(svgBytes);
@@ -166,11 +164,12 @@ export async function processNextInfographicJob(workerId: string): Promise<Proce
     });
     if (!completed.success) {
       await deleteObject(uploaded.url).catch(() => undefined);
-      return failClaimedJob(job, workerId, {
+      const failed = await failClaimedJob(job, workerId, {
         transient: false,
         errorCode: 'lease_lost',
         message: completed.error || 'Infographic job lease was lost before completion',
       });
+      return failed;
     }
 
     return { processed: true, podcastId: job.podcastId, status: 'completed' };
@@ -178,8 +177,9 @@ export async function processNextInfographicJob(workerId: string): Promise<Proce
     if (artifactUrl) {
       await deleteObject(artifactUrl).catch(() => undefined);
     }
-    return failClaimedJob(job, workerId, classifyFailure(error));
+    const failed = await failClaimedJob(job, workerId, classifyFailure(error));
+    return failed;
   } finally {
-    stopHeartbeat?.();
+    stopHeartbeat();
   }
 }

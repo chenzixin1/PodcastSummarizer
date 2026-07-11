@@ -4,6 +4,10 @@
 
 import { NextRequest } from 'next/server';
 import { POST } from '../../app/api/worker/process/route';
+import * as infographicJobsModule from '../../lib/infographicJobs';
+import * as infographicWorkerModule from '../../lib/infographicWorker';
+import * as processingJobsModule from '../../lib/processingJobs';
+import * as workerAuthModule from '../../lib/workerAuth';
 
 jest.mock('../../lib/db', () => ({
   getPodcast: jest.fn(),
@@ -29,8 +33,18 @@ jest.mock('../../app/api/process/route', () => ({
   POST: jest.fn(),
 }));
 
-const processingJobs = require('../../lib/processingJobs');
-const workerAuth = require('../../lib/workerAuth');
+jest.mock('../../lib/infographicJobs', () => ({
+  reconcileInfographicJobs: jest.fn(),
+}));
+
+jest.mock('../../lib/infographicWorker', () => ({
+  processNextInfographicJob: jest.fn(),
+}));
+
+const processingJobs = jest.mocked(processingJobsModule);
+const workerAuth = jest.mocked(workerAuthModule);
+const infographicJobs = jest.mocked(infographicJobsModule);
+const infographicWorker = jest.mocked(infographicWorkerModule);
 
 describe('POST /api/worker/process', () => {
   beforeEach(() => {
@@ -42,6 +56,12 @@ describe('POST /api/worker/process', () => {
     processingJobs.getProcessingJobLeaseSeconds.mockReturnValue(300);
     processingJobs.getProcessingWorkerConcurrency.mockReturnValue(1);
     processingJobs.claimNextProcessingJob.mockResolvedValue({ success: true, data: null });
+    infographicJobs.reconcileInfographicJobs.mockResolvedValue({ success: true, data: { enqueued: 0 } });
+    infographicWorker.processNextInfographicJob.mockResolvedValue({
+      processed: false,
+      podcastId: null,
+      status: 'idle',
+    });
   });
 
   it('claims work with the configured lease and concurrency guard', async () => {
@@ -61,5 +81,13 @@ describe('POST /api/worker/process', () => {
       leaseSeconds: 300,
       maxActiveWorkers: 1,
     });
+    expect(infographicJobs.reconcileInfographicJobs).toHaveBeenCalledWith({
+      activationTime: '',
+      limit: 20,
+    });
+    expect(infographicWorker.processNextInfographicJob).toHaveBeenCalledWith(
+      expect.stringMatching(/^worker-.*:infographic$/),
+    );
+    expect(data.data.infographic).toEqual({ processed: false, podcastId: null, status: 'idle' });
   });
 });
