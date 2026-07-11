@@ -43,6 +43,7 @@ export interface InfographicJobResult {
 }
 
 export interface ClaimInfographicJobOptions {
+  maxActiveWorkers?: number;
   leaseSeconds?: number;
 }
 
@@ -70,6 +71,7 @@ export interface ReconcileInfographicJobsResult {
 }
 
 const DEFAULT_INFOGRAPHIC_LEASE_SECONDS = 10 * 60;
+const DEFAULT_INFOGRAPHIC_WORKER_CONCURRENCY = 1;
 const MAX_RECONCILIATION_LIMIT = 20;
 const MAX_ERROR_CODE_LENGTH = 64;
 const MAX_ERROR_MESSAGE_LENGTH = 512;
@@ -165,11 +167,36 @@ export function mapInfographicJobToResponse(
   };
 }
 
-function normalizeLeaseSeconds(options?: ClaimInfographicJobOptions): number {
-  const value = options?.leaseSeconds;
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : DEFAULT_INFOGRAPHIC_LEASE_SECONDS;
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function getInfographicWorkerConcurrency(): number {
+  return parsePositiveInteger(
+    process.env.INFOGRAPHIC_WORKER_CONCURRENCY,
+    DEFAULT_INFOGRAPHIC_WORKER_CONCURRENCY,
+  );
+}
+
+export function getInfographicJobLeaseSeconds(): number {
+  return parsePositiveInteger(
+    process.env.INFOGRAPHIC_JOB_LEASE_SECONDS,
+    DEFAULT_INFOGRAPHIC_LEASE_SECONDS,
+  );
+}
+
+function normalizeClaimOptions(options?: ClaimInfographicJobOptions): Required<ClaimInfographicJobOptions> {
+  return {
+    maxActiveWorkers:
+      typeof options?.maxActiveWorkers === 'number' && Number.isFinite(options.maxActiveWorkers) && options.maxActiveWorkers > 0
+        ? Math.floor(options.maxActiveWorkers)
+        : getInfographicWorkerConcurrency(),
+    leaseSeconds:
+      typeof options?.leaseSeconds === 'number' && Number.isFinite(options.leaseSeconds) && options.leaseSeconds > 0
+        ? Math.floor(options.leaseSeconds)
+        : getInfographicJobLeaseSeconds(),
+  };
 }
 
 function normalizeReconciliationLimit(limit?: number): number {
@@ -317,7 +344,7 @@ export async function claimNextInfographicJob(
   try {
     await ensureInfographicJobsTable();
     await finalizeExhaustedInfographicLeases();
-    const leaseSeconds = normalizeLeaseSeconds(options);
+    const { leaseSeconds, maxActiveWorkers } = normalizeClaimOptions(options);
     const result = isD1DatabaseProvider()
       ? await sql`
           UPDATE infographic_jobs
@@ -332,6 +359,13 @@ export async function claimNextInfographicJob(
             SELECT podcast_id
             FROM infographic_jobs
             WHERE attempts < 3
+              AND (
+                SELECT COUNT(*)
+                FROM infographic_jobs
+                WHERE status = 'processing'
+                  AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at >= CURRENT_TIMESTAMP
+              ) < ${maxActiveWorkers}
               AND (
                 (
                   status = 'pending'
@@ -349,10 +383,21 @@ export async function claimNextInfographicJob(
           RETURNING *
         `
       : await sql`
-          WITH next_job AS (
-            SELECT podcast_id
+          WITH queue_lock AS (
+            SELECT pg_advisory_xact_lock(hashtext('infographic_jobs'))
+          ),
+          active_workers AS (
+            SELECT COUNT(*) AS count
             FROM infographic_jobs
+            WHERE status = 'processing'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at >= CURRENT_TIMESTAMP
+          ),
+          next_job AS (
+            SELECT podcast_id
+            FROM infographic_jobs, active_workers, queue_lock
             WHERE attempts < 3
+              AND active_workers.count < ${maxActiveWorkers}
               AND (
                 (
                   status = 'pending'
@@ -399,7 +444,7 @@ export async function heartbeatInfographicJob(
 ): Promise<InfographicJobResult> {
   try {
     await ensureInfographicJobsTable();
-    const leaseSeconds = normalizeLeaseSeconds(options);
+    const { leaseSeconds } = normalizeClaimOptions(options);
     const result = isD1DatabaseProvider()
       ? await sql`
           UPDATE infographic_jobs

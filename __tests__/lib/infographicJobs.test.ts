@@ -109,7 +109,7 @@ describe('infographicJobs', () => {
     expect(query).toContain('lease_expires_at < CURRENT_TIMESTAMP');
     expect(query).toContain("datetime('now', '+' || ? || ' seconds')");
     expect(query).toContain('UPDATE infographic_jobs');
-    expect(values).toEqual(['worker-1', 600]);
+    expect(values).toEqual(['worker-1', 600, 1]);
   });
 
   it('terminalizes a stale third-attempt lease and never reclaims it', async () => {

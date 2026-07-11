@@ -34,6 +34,8 @@ jest.mock('../../app/api/process/route', () => ({
 }));
 
 jest.mock('../../lib/infographicJobs', () => ({
+  getInfographicJobLeaseSeconds: jest.fn(),
+  getInfographicWorkerConcurrency: jest.fn(),
   reconcileInfographicJobs: jest.fn(),
 }));
 
@@ -57,6 +59,8 @@ describe('POST /api/worker/process', () => {
     processingJobs.getProcessingWorkerConcurrency.mockReturnValue(1);
     processingJobs.claimNextProcessingJob.mockResolvedValue({ success: true, data: null });
     infographicJobs.reconcileInfographicJobs.mockResolvedValue({ success: true, data: { enqueued: 0 } });
+    infographicJobs.getInfographicJobLeaseSeconds.mockReturnValue(600);
+    infographicJobs.getInfographicWorkerConcurrency.mockReturnValue(1);
     infographicWorker.processNextInfographicJob.mockResolvedValue({
       processed: false,
       podcastId: null,
@@ -87,6 +91,7 @@ describe('POST /api/worker/process', () => {
     });
     expect(infographicWorker.processNextInfographicJob).toHaveBeenCalledWith(
       expect.stringMatching(/^worker-.*:infographic$/),
+      { leaseSeconds: 600, maxActiveWorkers: 1 },
     );
     expect(data.data.infographic).toEqual({ processed: false, podcastId: null, status: 'idle' });
   });

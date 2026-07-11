@@ -15,7 +15,11 @@ import {
   isWorkerAuthorizedBySecret,
 } from '../../../../lib/workerAuth';
 import { POST as processPodcastRoute } from '../../process/route';
-import { reconcileInfographicJobs } from '../../../../lib/infographicJobs';
+import {
+  getInfographicJobLeaseSeconds,
+  getInfographicWorkerConcurrency,
+  reconcileInfographicJobs,
+} from '../../../../lib/infographicJobs';
 import { processNextInfographicJob } from '../../../../lib/infographicWorker';
 
 interface PodcastJobPayload {
@@ -113,7 +117,10 @@ async function responseWithInfographic(workerId: string, data: Record<string, un
     if (!reconciled.success) {
       console.warn('[infographic] reconciliation failed');
     }
-    const infographic = await processNextInfographicJob(`${workerId}:infographic`);
+    const infographic = await processNextInfographicJob(`${workerId}:infographic`, {
+      leaseSeconds: getInfographicJobLeaseSeconds(),
+      maxActiveWorkers: getInfographicWorkerConcurrency(),
+    });
     return NextResponse.json({ success: true, data: { ...data, infographic } });
   } catch {
     console.warn('[infographic] worker integration failed');

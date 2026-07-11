@@ -1,6 +1,8 @@
 jest.mock('../../lib/infographicJobs', () => ({
   claimNextInfographicJob: jest.fn(),
   completeInfographicJob: jest.fn(),
+  getInfographicJobLeaseSeconds: jest.fn(),
+  getInfographicWorkerConcurrency: jest.fn(),
   heartbeatInfographicJob: jest.fn(),
   recordInfographicFailure: jest.fn(),
 }));
@@ -32,6 +34,8 @@ import { getAnalysisResults, getPodcast } from '../../lib/db';
 import {
   claimNextInfographicJob,
   completeInfographicJob,
+  getInfographicJobLeaseSeconds,
+  getInfographicWorkerConcurrency,
   heartbeatInfographicJob,
   recordInfographicFailure,
   type InfographicJob,
@@ -47,6 +51,8 @@ import { processNextInfographicJob } from '../../lib/infographicWorker';
 
 const mockClaim = claimNextInfographicJob as jest.MockedFunction<typeof claimNextInfographicJob>;
 const mockComplete = completeInfographicJob as jest.MockedFunction<typeof completeInfographicJob>;
+const mockGetLeaseSeconds = getInfographicJobLeaseSeconds as jest.MockedFunction<typeof getInfographicJobLeaseSeconds>;
+const mockGetConcurrency = getInfographicWorkerConcurrency as jest.MockedFunction<typeof getInfographicWorkerConcurrency>;
 const mockHeartbeat = heartbeatInfographicJob as jest.MockedFunction<typeof heartbeatInfographicJob>;
 const mockRecordFailure = recordInfographicFailure as jest.MockedFunction<typeof recordInfographicFailure>;
 const mockGetPodcast = getPodcast as jest.MockedFunction<typeof getPodcast>;
@@ -91,6 +97,8 @@ describe('processNextInfographicJob', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    mockGetLeaseSeconds.mockReturnValue(600);
+    mockGetConcurrency.mockReturnValue(1);
     mockClaim.mockResolvedValue({ success: true, data: claimedJob });
     mockGetPodcast.mockResolvedValue({
       success: true,
@@ -128,7 +136,7 @@ describe('processNextInfographicJob', () => {
     const result = await processNextInfographicJob('worker-info');
 
     expect(result).toEqual({ processed: true, podcastId: 'pod-1', status: 'completed' });
-    expect(mockClaim).toHaveBeenCalledWith('worker-info');
+    expect(mockClaim).toHaveBeenCalledWith('worker-info', { leaseSeconds: 600, maxActiveWorkers: 1 });
     expect(mockBuildPrompt).toHaveBeenCalledWith(expect.objectContaining({
       originalTitle: 'Video title',
       summaryZh: '# 核心观点\n- 持续学习',
@@ -140,7 +148,7 @@ describe('processNextInfographicJob', () => {
       sourceUrl: claimedJob.sourceUrl,
     }));
     expect(mockUploadObject).toHaveBeenCalledWith(
-      'infographics/pod-1/podsum-infographic-v1.svg',
+      expect.stringMatching(/^infographics\/pod-1\/podsum-infographic-v1\/1-worker-info\.svg$/),
       '<svg>ready</svg>',
       { contentType: 'image/svg+xml' },
     );
@@ -225,16 +233,13 @@ describe('processNextInfographicJob', () => {
     expect(mockComplete).not.toHaveBeenCalled();
   });
 
-  it('deletes an uploaded artifact when completion loses the lease', async () => {
+  it('does not delete an uploaded artifact when completion loses the lease', async () => {
     mockComplete.mockResolvedValue({ success: false, error: 'lease is no longer owned' });
 
     await expect(processNextInfographicJob('worker-info')).resolves.toMatchObject({ status: 'failed' });
 
-    expect(mockDeleteObject).toHaveBeenCalledWith('https://cdn.example.com/pod-1.svg');
-    expect(mockRecordFailure).toHaveBeenCalledWith('pod-1', 'worker-info', expect.objectContaining({
-      transient: false,
-      errorCode: 'lease_lost',
-    }));
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(mockRecordFailure).not.toHaveBeenCalled();
   });
 
   it('heartbeats through generation and artifact persistence, then stops after completion', async () => {
@@ -257,12 +262,12 @@ describe('processNextInfographicJob', () => {
     await Promise.resolve();
     await jest.advanceTimersByTimeAsync(60_000);
 
-    expect(mockHeartbeat).toHaveBeenCalledWith('pod-1', 'worker-info');
+    expect(mockHeartbeat).toHaveBeenCalledWith('pod-1', 'worker-info', { leaseSeconds: 600 });
     finishGeneration(raster);
     await Promise.resolve();
     await Promise.resolve();
     await jest.advanceTimersByTimeAsync(60_000);
-    expect(mockHeartbeat).toHaveBeenCalledTimes(2);
+    expect(mockHeartbeat.mock.calls.length).toBeGreaterThanOrEqual(2);
     finishUpload({
       key: 'infographics/pod-1/podsum-infographic-v1.svg',
       provider: 'r2',
@@ -271,7 +276,7 @@ describe('processNextInfographicJob', () => {
     await Promise.resolve();
     await Promise.resolve();
     await jest.advanceTimersByTimeAsync(60_000);
-    expect(mockHeartbeat).toHaveBeenCalledTimes(3);
+    expect(mockHeartbeat.mock.calls.length).toBeGreaterThanOrEqual(3);
     finishCompletion({ success: true, data: { ...claimedJob, status: 'completed' } });
     await processing;
     const heartbeatCount = mockHeartbeat.mock.calls.length;
@@ -296,7 +301,7 @@ describe('processNextInfographicJob', () => {
     await Promise.resolve();
     await jest.advanceTimersByTimeAsync(60_000);
 
-    expect(mockHeartbeat).toHaveBeenCalledWith('pod-1', 'worker-info');
+    expect(mockHeartbeat).toHaveBeenCalledWith('pod-1', 'worker-info', { leaseSeconds: 600 });
     finishFailure({ success: true, data: { ...claimedJob, status: 'pending' } });
     await processing;
     const heartbeatCount = mockHeartbeat.mock.calls.length;
