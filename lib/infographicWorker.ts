@@ -59,16 +59,16 @@ function startHeartbeat(podcastId: string, workerId: string, leaseSeconds: numbe
 
     inFlight = (async () => {
       try {
-      const result = await heartbeatInfographicJob(podcastId, workerId, { leaseSeconds });
-      if (!result.success) {
+        const result = await heartbeatInfographicJob(podcastId, workerId, { leaseSeconds });
+        if (!result.success) {
+          leaseLost = true;
+          console.warn('[infographic] lease heartbeat failed', { podcastId });
+        }
+        return result.success;
+      } catch {
         leaseLost = true;
         console.warn('[infographic] lease heartbeat failed', { podcastId });
-      }
-      return result.success;
-    } catch {
-      leaseLost = true;
-      console.warn('[infographic] lease heartbeat failed', { podcastId });
-      return false;
+        return false;
       } finally {
         inFlight = null;
       }
