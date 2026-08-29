@@ -232,6 +232,16 @@ describe('Database Integration Tests', () => {
       expect(upgradeSchema).toContain('ADD COLUMN source_published_at TEXT');
     });
 
+    test('D1 migrations add an optional authoritative podcast duration', () => {
+      const durationSchema = fs.readFileSync(
+        path.resolve(__dirname, '../../migrations/d1/0004_add_duration_sec.sql'),
+        'utf8',
+      );
+
+      expect(durationSchema).toContain('ALTER TABLE podcasts');
+      expect(durationSchema).toContain('ADD COLUMN duration_sec INTEGER');
+    });
+
     test('D1 import and export scripts preserve source_published_at', () => {
       const exportScript = fs.readFileSync(
         path.resolve(__dirname, '../../scripts/export-postgres-to-d1-sql.mjs'),
@@ -247,6 +257,8 @@ describe('Database Integration Tests', () => {
 
       expect(exportScript).toContain("'source_published_at'");
       expect(importScript).toContain("'source_published_at'");
+      expect(exportScript).toContain("'duration_sec'");
+      expect(importScript).toContain("'duration_sec'");
       expect(packageJson.scripts['d1:migrations:apply:prod']).toContain(
         'wrangler d1 migrations apply PODSUM_DB --remote --config output/cutover/wrangler.production.jsonc',
       );

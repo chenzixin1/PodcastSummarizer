@@ -20,6 +20,7 @@ export interface Podcast {
   userId?: string;
   sourceReference?: string | null;
   sourcePublishedAt?: string | null;
+  durationSec?: number | null;
   tags?: string[];
 }
 
@@ -443,6 +444,10 @@ async function ensureSchemaUpgrades(): Promise<void> {
       `;
       await sql`
         ALTER TABLE podcasts
+        ADD COLUMN IF NOT EXISTS duration_sec INTEGER
+      `;
+      await sql`
+        ALTER TABLE podcasts
         ADD COLUMN IF NOT EXISTS tags_json JSONB DEFAULT '[]'::jsonb
       `;
       await sql`
@@ -539,6 +544,7 @@ export async function initDatabase(): Promise<DbResult> {
         blob_url TEXT,
         source_reference TEXT,
         source_published_at TEXT,
+        duration_sec INTEGER,
         tags_json JSONB DEFAULT '[]'::jsonb,
         is_public BOOLEAN DEFAULT FALSE,
         user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
@@ -1109,6 +1115,7 @@ export async function getPodcast(id: string): Promise<DbResult> {
         file_size as "fileSize", blob_url as "blobUrl", 
         source_reference as "sourceReference",
         source_published_at as "sourcePublishedAt",
+        duration_sec as "durationSec",
         tags_json as "tags",
         is_public as "isPublic", user_id as "userId", created_at as "createdAt"
       FROM podcasts 
@@ -1271,11 +1278,14 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           ar.brief_summary as "__briefSummaryRaw",
           COALESCE(ar.summary_zh, ar.summary) as "__summaryRaw",
           ar.word_count as "wordCount",
-          CASE
-            WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
-              THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
-            ELSE NULL
-          END as "durationSec"
+          COALESCE(
+            p.duration_sec,
+            CASE
+              WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
+                THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
+              ELSE NULL
+            END
+          ) as "durationSec"
         FROM podcasts p
         LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
         ORDER BY COALESCE(p.source_published_at, p.created_at) DESC, p.created_at DESC
@@ -1294,11 +1304,14 @@ export async function getAllPodcasts(page = 1, pageSize = 10, includePrivate = f
           ar.brief_summary as "__briefSummaryRaw",
           COALESCE(ar.summary_zh, ar.summary) as "__summaryRaw",
           ar.word_count as "wordCount",
-          CASE
-            WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
-              THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
-            ELSE NULL
-          END as "durationSec"
+          COALESCE(
+            p.duration_sec,
+            CASE
+              WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
+                THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
+              ELSE NULL
+            END
+          ) as "durationSec"
         FROM podcasts p
         LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
         WHERE p.is_public = true
@@ -1344,11 +1357,14 @@ export async function getUserPodcasts(userId: string, page = 1, pageSize = 10): 
         ar.brief_summary as "__briefSummaryRaw",
         COALESCE(ar.summary_zh, ar.summary) as "__summaryRaw",
         ar.word_count as "wordCount",
-        CASE
-          WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
-            THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
-          ELSE NULL
-        END as "durationSec"
+        COALESCE(
+          p.duration_sec,
+          CASE
+            WHEN ar.word_count IS NOT NULL AND ar.word_count > 0
+              THEN GREATEST(60, ROUND((ar.word_count::numeric / 155) * 60)::int)
+            ELSE NULL
+          END
+        ) as "durationSec"
       FROM podcasts p
       LEFT JOIN analysis_results ar ON p.id = ar.podcast_id
       WHERE p.user_id = ${userId}

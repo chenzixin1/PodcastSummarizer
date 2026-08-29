@@ -61,6 +61,7 @@ const tables = [
       'blob_url',
       'source_reference',
       'source_published_at',
+      'duration_sec',
       'tags_json',
       'is_public',
       'user_id',
