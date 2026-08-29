@@ -235,8 +235,7 @@ describe('DashboardPage language modes', () => {
     expect(mockFetch.mock.calls.some(([input]) => String(input) === '/api/files/test.srt')).toBe(false);
   });
 
-  test('defers the YouTube iframe until the video placeholder is activated', async () => {
-    const user = userEvent.setup();
+  test('links the complete YouTube preview directly to the source', async () => {
     const payload = JSON.parse(JSON.stringify(analysisPayload));
     payload.data.podcast.sourceReference = 'https://www.youtube.com/watch?v=I9aGC6Ui3eE';
 
@@ -270,22 +269,20 @@ describe('DashboardPage language modes', () => {
 
     render(<DashboardPage />);
 
-    const playButton = await screen.findByRole('button', {
-      name: 'Try embedded playback',
+    const sourceLink = await screen.findByRole('link', {
+      name: '在 YouTube 打开原视频：Demo Podcast',
     });
-    expect(document.querySelectorAll('iframe')).toHaveLength(0);
-
-    await user.click(playButton);
-
-    const iframe = screen.getByTitle('Original video for Demo Podcast');
-    expect(document.querySelectorAll('iframe')).toHaveLength(1);
-    expect(iframe).toHaveAttribute(
-      'src',
-      'https://www.youtube-nocookie.com/embed/I9aGC6Ui3eE?autoplay=1'
+    expect(sourceLink).toHaveAttribute(
+      'href',
+      'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
     );
+    expect(sourceLink).toHaveAttribute('target', '_blank');
+    expect(document.querySelectorAll('iframe')).toHaveLength(0);
+    expect(screen.queryByText('Try embedded playback')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open on YouTube')).not.toBeInTheDocument();
   });
 
-  test('shows a stable YouTube source card before loading the embed player', async () => {
+  test('shows a stable linked YouTube source card without playback controls', async () => {
     const payload = JSON.parse(JSON.stringify(analysisPayload));
     payload.data.podcast.sourceReference = 'https://www.youtube.com/watch?v=I9aGC6Ui3eE';
 
@@ -326,20 +323,17 @@ describe('DashboardPage language modes', () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => {
-      expect(screen.getByText('Open on YouTube')).toBeInTheDocument();
-      expect(screen.getByText('Try embedded playback')).toBeInTheDocument();
+    const sourceLink = await screen.findByRole('link', {
+      name: '在 YouTube 打开原视频：Demo Podcast',
     });
+    expect(sourceLink).toHaveAttribute(
+      'href',
+      'https://www.youtube.com/watch?v=I9aGC6Ui3eE',
+    );
+    expect(screen.getByText('点击画面前往 YouTube 查看原视频。')).toBeInTheDocument();
     expect(document.querySelector('iframe')).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByText('Try embedded playback'));
-
-    await waitFor(() => {
-      expect(document.querySelector('iframe')).toHaveAttribute(
-        'src',
-        'https://www.youtube-nocookie.com/embed/I9aGC6Ui3eE?autoplay=1',
-      );
-    });
+    expect(screen.queryByText('Try embedded playback')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open on YouTube')).not.toBeInTheDocument();
   });
 
   test('shows four language mode buttons and persists selection', async () => {
