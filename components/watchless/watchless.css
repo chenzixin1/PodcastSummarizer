@@ -1,0 +1,1507 @@
+/* Watchless complete-article reading ------------------------------------------ */
+
+.watchless-surface {
+  --watchless-ink: var(--text-main);
+  --watchless-ink-soft: var(--text-secondary);
+  --watchless-faint: var(--text-muted);
+  --watchless-rule: var(--border-soft);
+  --watchless-paper: var(--paper-base);
+  --watchless-paper-warm: var(--paper-muted);
+  --watchless-sage: var(--btn-primary);
+  --watchless-sage-pale: var(--accent-soft);
+  --watchless-rust: var(--code-text);
+  --watchless-serif: "Iowan Old Style", "Songti SC", "STSong", "Noto Serif CJK SC", Georgia, serif;
+  color: var(--watchless-ink);
+  min-width: 0;
+}
+
+.watchless-preview-main {
+  width: min(100%, 1500px);
+  margin-inline: auto;
+  padding: clamp(1rem, 2vw, 2rem);
+}
+
+.watchless-preview-kicker {
+  margin: 0.1rem 0 0.75rem;
+  color: var(--watchless-faint);
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.watchless-analysis-tabs {
+  display: flex;
+  gap: clamp(0.1rem, 1vw, 0.8rem);
+  overflow-x: auto;
+  margin-bottom: clamp(1rem, 2vw, 1.5rem);
+  border-bottom: 1px solid var(--watchless-rule);
+  scrollbar-width: none;
+}
+
+.watchless-analysis-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.watchless-analysis-tabs button {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 3rem;
+  padding: 0.72rem 0.8rem;
+  border-bottom: 2px solid transparent;
+  color: var(--watchless-faint);
+  font-size: 0.86rem;
+  font-weight: 700;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.watchless-analysis-tabs button:hover,
+.watchless-analysis-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--watchless-sage);
+  color: var(--watchless-ink);
+}
+
+.watchless-analysis-tabs button span {
+  margin-left: 0.4rem;
+  border-radius: 999px;
+  background: var(--watchless-sage-pale);
+  color: var(--watchless-sage);
+  padding: 0.15rem 0.38rem;
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  vertical-align: 0.1rem;
+}
+
+.watchless-analysis-source {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.7fr);
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--watchless-rule);
+  border-radius: 1rem;
+  background: var(--watchless-paper);
+  box-shadow: 0 22px 52px -42px rgba(73, 58, 35, 0.55);
+}
+
+.watchless-analysis-source.is-compact {
+  grid-template-columns: minmax(0, 0.8fr) minmax(320px, 1.2fr);
+}
+
+.watchless-analysis-cover {
+  position: relative;
+  min-height: 260px;
+  overflow: hidden;
+  background: #161b18;
+}
+
+.watchless-analysis-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.watchless-analysis-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 55%, rgba(15, 18, 16, 0.62));
+}
+
+.watchless-analysis-cover span {
+  position: absolute;
+  z-index: 1;
+  right: 1rem;
+  bottom: 0.8rem;
+  border-radius: 999px;
+  background: rgba(18, 22, 19, 0.78);
+  color: #f9f5ec;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.watchless-analysis-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1.3rem, 3vw, 2.4rem);
+}
+
+.watchless-analysis-meta > p {
+  color: var(--watchless-rust);
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.watchless-analysis-meta h1 {
+  margin-top: 0.55rem;
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.45rem, 2.2vw, 2.25rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.13;
+}
+
+.watchless-analysis-meta > span {
+  margin-top: 0.7rem;
+  color: var(--watchless-faint);
+  font-size: 0.78rem;
+}
+
+.watchless-analysis-meta > div {
+  display: flex;
+  gap: 0.65rem;
+  margin-top: 1.25rem;
+}
+
+.watchless-analysis-meta a {
+  border-bottom: 1px solid currentColor;
+  color: var(--watchless-sage);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.watchless-analysis-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.32fr);
+  gap: clamp(1.2rem, 3vw, 3rem);
+  align-items: start;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+  border: 1px solid var(--watchless-rule);
+  border-radius: 1rem;
+  background: var(--watchless-paper);
+}
+
+.watchless-analysis-main {
+  max-width: 830px;
+}
+
+.watchless-section-label {
+  color: var(--watchless-rust);
+  font-size: 0.67rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.watchless-analysis-main h2,
+.watchless-expand-callout h2 {
+  margin-top: 0.5rem;
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.65rem, 2.8vw, 2.8rem);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.16;
+}
+
+.watchless-analysis-main > p:not(.watchless-section-label) {
+  margin-top: 1rem;
+  color: var(--watchless-ink-soft);
+  font-family: var(--watchless-serif);
+  font-size: 1.02rem;
+  line-height: 1.9;
+}
+
+.watchless-analysis-main blockquote {
+  margin: clamp(1.4rem, 3vw, 2.5rem) 0;
+  padding: 0.3rem 0 0.3rem clamp(1rem, 2vw, 1.7rem);
+  border-left: 2px solid var(--watchless-rust);
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.2rem, 2vw, 1.65rem);
+  line-height: 1.6;
+}
+
+.watchless-analysis-main h3 {
+  color: var(--watchless-ink);
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.watchless-analysis-main ul {
+  margin-top: 0.8rem;
+  border-top: 1px solid var(--watchless-rule);
+}
+
+.watchless-analysis-main li {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.85rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--watchless-rule);
+  color: var(--watchless-ink-soft);
+  line-height: 1.7;
+}
+
+.watchless-analysis-main li span {
+  color: var(--watchless-rust);
+  font-family: var(--watchless-serif);
+  font-weight: 700;
+}
+
+.watchless-analysis-side {
+  padding-left: clamp(0rem, 2vw, 1.5rem);
+  border-left: 1px solid var(--watchless-rule);
+}
+
+.watchless-analysis-side > p {
+  color: var(--watchless-faint);
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.watchless-analysis-side dl {
+  margin-top: 0.9rem;
+}
+
+.watchless-analysis-side dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--watchless-rule);
+  font-size: 0.78rem;
+}
+
+.watchless-analysis-side dt {
+  color: var(--watchless-faint);
+}
+
+.watchless-analysis-side dd {
+  color: var(--watchless-ink);
+  font-weight: 700;
+  text-align: right;
+}
+
+.watchless-analysis-side dd span {
+  color: var(--watchless-sage);
+}
+
+.watchless-analysis-side details {
+  margin-top: 1rem;
+  color: var(--watchless-ink-soft);
+  font-size: 0.78rem;
+}
+
+.watchless-analysis-side summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.watchless-analysis-side details p {
+  margin-top: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.watchless-placeholder-analysis {
+  display: flex;
+  min-height: min(58vh, 600px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--watchless-rule);
+  border-radius: 1rem;
+  background: var(--watchless-paper);
+  padding: 2rem;
+  text-align: center;
+}
+
+.watchless-placeholder-analysis > span {
+  display: grid;
+  width: 3.1rem;
+  height: 3.1rem;
+  place-items: center;
+  border: 1px solid var(--watchless-rule);
+  border-radius: 50%;
+  color: var(--watchless-sage);
+}
+
+.watchless-placeholder-analysis > p:first-of-type {
+  margin-top: 1rem;
+  color: var(--watchless-rust);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.watchless-placeholder-analysis h2 {
+  margin-top: 0.4rem;
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.7rem, 3vw, 2.8rem);
+}
+
+.watchless-placeholder-analysis > p:last-of-type {
+  max-width: 560px;
+  margin-top: 0.7rem;
+  color: var(--watchless-ink-soft);
+}
+
+.watchless-placeholder-analysis > div {
+  display: grid;
+  width: min(100%, 580px);
+  gap: 0.55rem;
+  margin-top: 2rem;
+}
+
+.watchless-placeholder-analysis > div span {
+  display: block;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--watchless-rule) 65%, transparent);
+}
+
+.watchless-placeholder-analysis > div span:nth-child(2) { width: 88%; }
+.watchless-placeholder-analysis > div span:nth-child(3) { width: 73%; }
+.watchless-placeholder-analysis > div span:nth-child(4) { width: 91%; }
+
+.watchless-reader {
+  position: relative;
+  min-width: 0;
+  color: var(--watchless-ink);
+}
+
+.watchless-longform-section {
+  min-width: 0;
+}
+
+.watchless-reader-skeleton {
+  display: grid;
+  gap: 0.65rem;
+  padding: clamp(2rem, 5vw, 4rem) 0;
+  color: var(--watchless-faint);
+  font-size: 0.78rem;
+}
+
+.watchless-reader-skeleton span {
+  display: block;
+  height: 0.72rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--watchless-rule) 65%, transparent);
+}
+
+.watchless-reader-skeleton span:nth-child(1) { width: 92%; }
+.watchless-reader-skeleton span:nth-child(2) { width: 76%; }
+.watchless-reader-skeleton span:nth-child(3) { width: 84%; }
+
+.watchless-reader-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--watchless-rule));
+  border-radius: 0.75rem;
+  background: var(--watchless-paper);
+  padding: 1rem;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.watchless-reader-load-error button {
+  flex: 0 0 auto;
+  border-radius: 0.55rem;
+  background: var(--watchless-sage);
+  padding: 0.55rem 0.8rem;
+  color: var(--watchless-paper);
+  font-weight: 800;
+}
+
+.watchless-source-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.72fr) minmax(280px, 0.68fr);
+  overflow: hidden;
+  border: 1px solid var(--watchless-rule);
+  border-radius: clamp(0.75rem, 1.6vw, 1.25rem);
+  background: var(--watchless-paper);
+  box-shadow: 0 28px 70px -52px rgba(61, 50, 32, 0.72);
+}
+
+.watchless-video-wrap {
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--watchless-rule);
+  background: #111612;
+}
+
+.watchless-video-link {
+  position: relative;
+  display: block;
+  min-height: clamp(300px, 42vw, 610px);
+  overflow: hidden;
+  color: var(--watchless-paper);
+  cursor: pointer;
+}
+
+.watchless-video-link::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 58%, rgba(8, 12, 9, 0.62) 100%);
+  content: '';
+  pointer-events: none;
+}
+
+.watchless-video-link img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 300ms ease, filter 300ms ease;
+}
+
+.watchless-video-link-label {
+  position: absolute;
+  right: clamp(0.85rem, 2vw, 1.35rem);
+  bottom: clamp(0.85rem, 2vw, 1.35rem);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 760;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
+}
+
+.watchless-video-link:hover img {
+  filter: brightness(0.92);
+  transform: scale(1.012);
+}
+
+.watchless-video-link:focus-visible {
+  outline: 3px solid var(--watchless-sage);
+  outline-offset: -3px;
+}
+
+.watchless-source-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+}
+
+.watchless-eyebrow {
+  color: var(--watchless-rust);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.watchless-source-meta h2 {
+  margin-top: 0.7rem;
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.7rem, 3.2vw, 3.25rem);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+}
+
+.watchless-original-title {
+  margin-top: 0.65rem;
+  color: var(--watchless-faint);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.watchless-source-meta dl {
+  margin-top: clamp(1.2rem, 3vw, 2rem);
+  border-top: 1px solid var(--watchless-rule);
+}
+
+.watchless-source-meta dl > div {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  gap: 0.8rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--watchless-rule);
+  font-size: 0.75rem;
+}
+
+.watchless-source-meta dt { color: var(--watchless-faint); }
+.watchless-source-meta dd { color: var(--watchless-ink-soft); font-weight: 700; }
+
+.watchless-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1.25rem;
+}
+
+.watchless-source-actions a {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  gap: 0.42rem;
+  border: 1px solid var(--watchless-rule);
+  border-radius: 0.55rem;
+  padding: 0.55rem 0.75rem;
+  color: var(--watchless-ink-soft);
+  font-size: 0.75rem;
+  font-weight: 750;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.watchless-source-actions a:first-child {
+  border-color: transparent;
+  background: var(--watchless-sage);
+  color: var(--watchless-paper);
+}
+
+.watchless-source-actions a:hover {
+  background: var(--watchless-sage-pale);
+  color: var(--watchless-sage);
+}
+
+.watchless-reader-intro {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.45fr) minmax(0, 1fr);
+  gap: clamp(1.2rem, 4vw, 4.5rem);
+  max-width: 1160px;
+  margin: clamp(2.5rem, 6vw, 6.5rem) auto clamp(2.4rem, 5vw, 5rem);
+  padding-inline: clamp(0rem, 3vw, 2rem);
+}
+
+.watchless-reader-intro h2 {
+  margin-top: 0.55rem;
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.7rem, 3vw, 3rem);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1.18;
+}
+
+.watchless-intro-copy {
+  padding-top: 0.15rem;
+  color: var(--watchless-ink-soft);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.02rem, 1.2vw, 1.17rem);
+  line-height: 2;
+}
+
+.watchless-intro-copy strong { color: var(--watchless-ink); }
+
+.watchless-reader-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  max-width: 1160px;
+  margin-inline: auto;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--watchless-rule);
+  border-bottom: 1px solid var(--watchless-rule);
+}
+
+.watchless-reader-toolbar > div:first-child p {
+  color: var(--watchless-ink);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.watchless-reader-toolbar > div:first-child span {
+  display: block;
+  margin-top: 0.1rem;
+  color: var(--watchless-faint);
+  font-size: 0.69rem;
+}
+
+.watchless-language-switch {
+  display: flex;
+  align-items: stretch;
+  gap: 0.18rem;
+  overflow-x: auto;
+  border: 1px solid var(--watchless-rule);
+  border-radius: 0.65rem;
+  background: var(--watchless-paper-warm);
+  padding: 0.2rem;
+  scrollbar-width: none;
+}
+
+.watchless-language-switch::-webkit-scrollbar { display: none; }
+
+.watchless-language-switch button {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 2.4rem;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  border-radius: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  color: var(--watchless-ink-soft);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.15;
+}
+
+.watchless-language-switch button small {
+  margin-top: 0.15rem;
+  color: var(--watchless-faint);
+  font-size: 0.56rem;
+  font-weight: 650;
+}
+
+.watchless-language-switch button.is-active {
+  background: var(--watchless-sage);
+  color: var(--watchless-paper);
+  box-shadow: 0 8px 18px -14px rgba(30, 79, 64, 0.8);
+}
+
+.watchless-language-switch button.is-active small { color: color-mix(in srgb, var(--watchless-paper) 75%, transparent); }
+
+.watchless-language-switch.is-compact {
+  gap: 0.08rem;
+  background: transparent;
+}
+
+.watchless-language-switch.is-compact button {
+  min-height: 2rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.64rem;
+}
+
+.watchless-hint-status {
+  max-width: 1160px;
+  margin: 0.55rem auto 0;
+  color: var(--watchless-faint);
+  font-size: 0.7rem;
+  text-align: right;
+}
+
+.watchless-hint-status.is-error { color: var(--danger); }
+
+.watchless-reader-grid {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 840px);
+  gap: clamp(2rem, 5vw, 5rem);
+  justify-content: center;
+  align-items: start;
+  margin-top: clamp(2rem, 5vw, 4.5rem);
+}
+
+.watchless-toc-column {
+  position: sticky;
+  top: 6rem;
+  max-height: calc(100vh - 7.5rem);
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--watchless-rule) transparent;
+}
+
+.watchless-toc-kicker {
+  margin-bottom: 0.65rem;
+  color: var(--watchless-rust);
+  font-size: 0.65rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.watchless-toc ol {
+  border-top: 1px solid var(--watchless-rule);
+}
+
+.watchless-toc li {
+  border-bottom: 1px solid var(--watchless-rule);
+}
+
+.watchless-toc a {
+  display: grid;
+  grid-template-columns: 1.7rem minmax(0, 1fr);
+  gap: 0.55rem;
+  padding: 0.62rem 0;
+  color: var(--watchless-faint);
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.watchless-toc a:hover,
+.watchless-toc a[aria-current='location'] {
+  color: var(--watchless-sage);
+  transform: translateX(0.18rem);
+}
+
+.watchless-toc a > span:first-child {
+  font-family: var(--watchless-serif);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.watchless-toc strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: currentColor;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.watchless-toc small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--watchless-faint);
+  font-size: 0.58rem;
+}
+
+.watchless-mobile-toc {
+  display: none;
+}
+
+.watchless-article-flow {
+  min-width: 0;
+}
+
+.watchless-scene {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1100px;
+  scroll-margin-top: 8rem;
+  padding-bottom: clamp(3.8rem, 9vw, 8rem);
+}
+
+.watchless-scene + .watchless-scene {
+  padding-top: clamp(3rem, 7vw, 6.5rem);
+  border-top: 1px solid var(--watchless-rule);
+}
+
+.watchless-scene-header {
+  display: grid;
+  grid-template-columns: clamp(3.5rem, 8vw, 6.5rem) minmax(0, 1fr);
+  gap: clamp(0.8rem, 2vw, 1.5rem);
+  align-items: start;
+  margin-bottom: clamp(1.2rem, 3vw, 2.2rem);
+}
+
+.watchless-scene-number {
+  color: color-mix(in srgb, var(--watchless-rust) 77%, var(--watchless-rule));
+  font-family: var(--watchless-serif);
+  font-size: clamp(2.8rem, 7vw, 5.8rem);
+  font-weight: 500;
+  letter-spacing: -0.08em;
+  line-height: 0.86;
+}
+
+.watchless-scene-header p {
+  margin-bottom: 0.35rem;
+  color: var(--watchless-faint);
+  font-size: 0.69rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.watchless-scene-header h2 {
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.65rem, 3.4vw, 3.05rem);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1.16;
+}
+
+.watchless-scene-figure {
+  margin: 0 0 clamp(1.5rem, 4vw, 3rem);
+}
+
+.watchless-scene-figure > a {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: clamp(0.6rem, 1.2vw, 0.9rem);
+  background: #121713;
+}
+
+.watchless-scene-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 1;
+  object-fit: cover;
+  transition: transform 500ms cubic-bezier(0.16, 1, 0.3, 1), filter 300ms ease;
+}
+
+.watchless-scene-figure > a:hover img {
+  transform: scale(1.012);
+  filter: saturate(1.04) contrast(1.02);
+}
+
+.watchless-frame-time {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(20, 24, 21, 0.78);
+  color: #f9f5ec;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.watchless-scene-figure figcaption {
+  max-width: 720px;
+  margin-top: 0.65rem;
+  color: var(--watchless-faint);
+  font-size: 0.68rem;
+  line-height: 1.6;
+}
+
+.watchless-scene-copy.is-bilingual {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1.2rem, 3vw, 2.4rem);
+}
+
+.watchless-copy-column + .watchless-copy-column {
+  padding-left: clamp(1.2rem, 3vw, 2.4rem);
+  border-left: 1px solid var(--watchless-rule);
+}
+
+.watchless-copy-label {
+  margin-bottom: 1rem;
+  color: var(--watchless-rust);
+  font-size: 0.65rem;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.watchless-prose {
+  color: var(--watchless-ink-soft);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.02rem, 1.25vw, 1.13rem);
+  line-height: 2;
+  overflow-wrap: anywhere;
+}
+
+.watchless-prose > :first-child { margin-top: 0; }
+.watchless-prose > :last-child { margin-bottom: 0; }
+
+.watchless-prose p {
+  margin: 0 0 1.15em;
+}
+
+.watchless-prose strong {
+  color: var(--watchless-ink);
+  font-weight: 700;
+}
+
+.watchless-prose-en {
+  color: color-mix(in srgb, var(--watchless-ink-soft) 92%, var(--watchless-paper));
+  font-family: var(--watchless-serif);
+  font-size: clamp(0.98rem, 1.15vw, 1.08rem);
+  line-height: 1.9;
+}
+
+.watchless-boundary-note {
+  margin-top: 1.7rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--watchless-rule);
+  color: var(--watchless-faint);
+  font-size: 0.68rem;
+  line-height: 1.6;
+}
+
+.watchless-boundary-note span {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--watchless-sage);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.watchless-hint-word {
+  position: relative;
+  display: inline;
+  border-bottom: 1px dashed var(--watchless-rust);
+  color: var(--watchless-ink);
+  font: inherit;
+  font-weight: 700;
+}
+
+.watchless-hint-tooltip {
+  position: absolute;
+  z-index: 15;
+  left: 50%;
+  bottom: calc(100% + 0.55rem);
+  display: none;
+  width: min(260px, 78vw);
+  transform: translateX(-50%);
+  border: 1px solid var(--watchless-rule);
+  border-radius: 0.65rem;
+  background: var(--watchless-paper);
+  box-shadow: 0 20px 48px -28px rgba(34, 29, 19, 0.72);
+  padding: 0.75rem;
+  color: var(--watchless-ink-soft);
+  font-family: var(--font-geist-sans), sans-serif;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.watchless-hint-word:hover .watchless-hint-tooltip,
+.watchless-hint-word:focus-visible .watchless-hint-tooltip {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.watchless-hint-headword {
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: 1rem;
+  font-weight: 750;
+}
+
+.watchless-hint-level {
+  color: var(--watchless-rust);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.watchless-hint-sense > span { color: var(--watchless-sage); font-weight: 800; }
+
+.watchless-source-dock {
+  position: fixed;
+  z-index: 25;
+  top: 4.65rem;
+  left: 50%;
+  display: grid;
+  width: min(calc(100% - 2rem), 1180px);
+  min-height: 3.4rem;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.65rem;
+  align-items: center;
+  transform: translateX(-50%);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--watchless-rule) 84%, transparent);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--watchless-paper) 91%, transparent);
+  box-shadow: 0 18px 44px -28px rgba(48, 39, 24, 0.72);
+  padding: 0.42rem 0.55rem;
+  backdrop-filter: blur(16px);
+  animation: watchless-dock-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.watchless-source-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  transform-origin: left center;
+  background: var(--watchless-rust);
+  transition: transform 80ms linear;
+}
+
+.watchless-source-dock > div:first-of-type {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.watchless-dock-mark {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--watchless-sage);
+  color: var(--watchless-paper);
+  font-family: var(--watchless-serif);
+  font-weight: 800;
+}
+
+.watchless-dock-title {
+  min-width: 0;
+}
+
+.watchless-dock-title small,
+.watchless-dock-title strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watchless-dock-title small {
+  color: var(--watchless-faint);
+  font-size: 0.56rem;
+}
+
+.watchless-dock-title strong {
+  color: var(--watchless-ink);
+  font-size: 0.72rem;
+}
+
+.watchless-dock-source {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.3rem;
+  border-left: 1px solid var(--watchless-rule);
+  padding-inline: 0.6rem 0.35rem;
+  color: var(--watchless-sage);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+@keyframes watchless-dock-in {
+  from { opacity: 0; transform: translate(-50%, -0.5rem); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.watchless-article-footer {
+  margin-top: 1rem;
+  padding: clamp(2rem, 5vw, 4rem) 0;
+  border-top: 2px solid var(--watchless-ink);
+}
+
+.watchless-article-footer h2 {
+  margin-top: 0.5rem;
+  color: var(--watchless-ink);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.8rem, 3.5vw, 3.1rem);
+  font-weight: 650;
+  line-height: 1.15;
+}
+
+.watchless-article-footer > p:not(.watchless-section-label) {
+  max-width: 650px;
+  margin-top: 1rem;
+  color: var(--watchless-ink-soft);
+  font-family: var(--watchless-serif);
+  line-height: 1.8;
+}
+
+.watchless-article-footer > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.watchless-article-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-bottom: 1px solid currentColor;
+  color: var(--watchless-sage);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.watchless-qa {
+  position: fixed;
+  z-index: 28;
+  right: clamp(0.8rem, 2vw, 1.5rem);
+  bottom: clamp(0.8rem, 2vw, 1.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+
+.watchless-qa-trigger {
+  display: inline-flex;
+  min-height: 2.8rem;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--watchless-rule);
+  border-radius: 999px;
+  background: var(--watchless-sage);
+  box-shadow: 0 16px 36px -22px rgba(27, 67, 54, 0.8);
+  padding: 0.62rem 0.9rem;
+  color: var(--watchless-paper);
+  font-size: 0.73rem;
+  font-weight: 800;
+}
+
+.watchless-qa-panel {
+  width: min(360px, calc(100vw - 1.6rem));
+  border: 1px solid var(--watchless-rule);
+  border-radius: 0.85rem;
+  background: var(--watchless-paper);
+  box-shadow: 0 24px 60px -30px rgba(37, 30, 18, 0.75);
+  padding: 1rem;
+}
+
+.watchless-qa-panel > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--watchless-ink);
+  font-weight: 800;
+}
+
+.watchless-qa-panel > div:first-child button {
+  display: grid;
+  width: 1.8rem;
+  height: 1.8rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--watchless-faint);
+  font-size: 1.15rem;
+}
+
+.watchless-qa-intro {
+  margin-top: 0.3rem;
+  color: var(--watchless-faint);
+  font-size: 0.7rem;
+}
+
+.watchless-qa-panel form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.watchless-qa-panel textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--watchless-rule);
+  border-radius: 0.55rem;
+  background: var(--watchless-paper-warm);
+  padding: 0.65rem;
+  color: var(--watchless-ink);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.watchless-qa-panel form button {
+  justify-self: end;
+  border-radius: 0.5rem;
+  background: var(--watchless-sage);
+  padding: 0.5rem 0.9rem;
+  color: var(--watchless-paper);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.watchless-qa-panel form button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.watchless-qa-answer {
+  margin-top: 0.7rem;
+  border-left: 2px solid var(--watchless-rust);
+  padding-left: 0.7rem;
+  color: var(--watchless-ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
+.watchless-qa-answer.is-error {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+.watchless-expand-callout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: clamp(1rem, 3vw, 2.2rem);
+  align-items: center;
+  margin-top: 1.25rem;
+  border-top: 2px solid var(--watchless-ink);
+  border-bottom: 1px solid var(--watchless-rule);
+  padding: clamp(1.4rem, 3vw, 2.5rem) 0;
+}
+
+.watchless-expand-index {
+  color: var(--watchless-rust);
+  font-family: var(--watchless-serif);
+  font-size: clamp(1.5rem, 3vw, 2.8rem);
+  letter-spacing: -0.06em;
+}
+
+.watchless-expand-callout h2 {
+  max-width: 720px;
+  font-size: clamp(1.5rem, 2.5vw, 2.35rem);
+}
+
+.watchless-expand-callout div:nth-child(2) > p:last-child {
+  margin-top: 0.55rem;
+  color: var(--watchless-ink-soft);
+  font-size: 0.82rem;
+}
+
+.watchless-expand-callout > button,
+.watchless-collapse-row button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-radius: 0.6rem;
+  background: var(--watchless-sage);
+  padding: 0.65rem 0.9rem;
+  color: var(--watchless-paper);
+  font-size: 0.76rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.watchless-expand-callout > button:hover,
+.watchless-collapse-row button:hover {
+  background: color-mix(in srgb, var(--watchless-sage) 88%, var(--watchless-ink));
+}
+
+.watchless-expand-region {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 420ms cubic-bezier(0.16, 1, 0.3, 1), opacity 240ms ease;
+}
+
+.watchless-expand-region > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.watchless-expand-region.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.watchless-expand-region .watchless-reader {
+  padding-top: clamp(2rem, 5vw, 4rem);
+}
+
+.watchless-collapse-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 1rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--watchless-rule);
+}
+
+.watchless-collapse-row svg { transform: rotate(180deg); }
+
+@media (max-width: 1100px) {
+  .watchless-source-hero {
+    grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  }
+
+  .watchless-reader-grid {
+    grid-template-columns: 210px minmax(0, 780px);
+    gap: 2.2rem;
+  }
+
+}
+
+@media (max-width: 900px) {
+  .watchless-analysis-source,
+  .watchless-analysis-source.is-compact,
+  .watchless-source-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .watchless-video-wrap {
+    border-right: 0;
+    border-bottom: 1px solid var(--watchless-rule);
+  }
+
+  .watchless-analysis-grid,
+  .watchless-reader-intro {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .watchless-analysis-side {
+    padding: 1.2rem 0 0;
+    border-top: 1px solid var(--watchless-rule);
+    border-left: 0;
+  }
+
+  .watchless-toc-column {
+    display: none;
+  }
+
+  .watchless-mobile-toc {
+    position: sticky;
+    z-index: 16;
+    top: 8.2rem;
+    display: block;
+    max-width: 840px;
+    margin: 1rem auto 2.5rem;
+    border: 1px solid var(--watchless-rule);
+    border-radius: 0.7rem;
+    background: color-mix(in srgb, var(--watchless-paper) 94%, transparent);
+    box-shadow: 0 12px 32px -28px rgba(43, 35, 22, 0.75);
+    backdrop-filter: blur(14px);
+  }
+
+  .watchless-mobile-toc > summary {
+    display: flex;
+    min-height: 3.3rem;
+    cursor: pointer;
+    list-style: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 0.8rem;
+    color: var(--watchless-sage);
+  }
+
+  .watchless-mobile-toc > summary::-webkit-details-marker { display: none; }
+  .watchless-mobile-toc > summary small { display: block; color: var(--watchless-faint); font-size: 0.56rem; font-weight: 750; text-transform: uppercase; }
+  .watchless-mobile-toc > summary strong { display: block; overflow: hidden; max-width: 70vw; margin-top: 0.1rem; text-overflow: ellipsis; font-size: 0.69rem; white-space: nowrap; }
+  .watchless-mobile-toc[open] > summary svg { transform: rotate(180deg); }
+  .watchless-mobile-toc .watchless-toc { max-height: 58vh; overflow-y: auto; border-top: 1px solid var(--watchless-rule); padding: 0.55rem 0.8rem 0.8rem; }
+  .watchless-mobile-toc .watchless-toc-kicker { display: none; }
+
+  .watchless-reader-grid {
+    grid-template-columns: minmax(0, 840px);
+    margin-top: 0;
+  }
+
+  .watchless-source-dock {
+    top: 4.4rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .watchless-source-dock .watchless-language-switch { display: none; }
+}
+
+@media (max-width: 640px) {
+  .watchless-preview-main {
+    padding: 0.8rem;
+  }
+
+  .watchless-analysis-tabs button {
+    min-height: 2.7rem;
+    padding-inline: 0.28rem;
+    font-size: 0.67rem;
+  }
+
+  .watchless-analysis-tabs {
+    justify-content: space-between;
+    gap: 0;
+  }
+
+  .watchless-analysis-tabs button span {
+    display: none;
+  }
+
+  .watchless-analysis-cover {
+    min-height: 180px;
+  }
+
+  .watchless-analysis-grid,
+  .watchless-source-meta {
+    padding: 1rem;
+  }
+
+  .watchless-video-link {
+    min-height: 270px;
+  }
+
+  .watchless-reader-intro {
+    gap: 1rem;
+    margin: 2.2rem auto;
+  }
+
+  .watchless-reader-toolbar {
+    display: block;
+    padding: 0.8rem 0;
+  }
+
+  .watchless-reader-toolbar .watchless-language-switch {
+    margin-top: 0.7rem;
+  }
+
+  .watchless-language-switch {
+    width: 100%;
+  }
+
+  .watchless-language-switch button {
+    flex: 1 0 auto;
+    align-items: center;
+    padding-inline: 0.55rem;
+  }
+
+  .watchless-mobile-toc {
+    top: 10.9rem;
+    margin-bottom: 2rem;
+  }
+
+  .watchless-scene {
+    scroll-margin-top: 11rem;
+    padding-bottom: 4rem;
+  }
+
+  .watchless-scene + .watchless-scene {
+    padding-top: 3.5rem;
+  }
+
+  .watchless-scene-header {
+    grid-template-columns: 3rem minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  .watchless-scene-number {
+    font-size: 2.8rem;
+  }
+
+  .watchless-scene-copy.is-bilingual {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .watchless-copy-column + .watchless-copy-column {
+    margin-top: 2.3rem;
+    padding: 2rem 0 0;
+    border-top: 1px solid var(--watchless-rule);
+    border-left: 0;
+  }
+
+  .watchless-source-dock {
+    top: 7.2rem;
+    width: calc(100% - 1rem);
+    min-height: 3.2rem;
+  }
+
+  .watchless-dock-source span { display: none; }
+
+  .watchless-expand-callout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .watchless-expand-callout > button {
+    width: 100%;
+  }
+
+  .watchless-qa-trigger span { display: none; }
+  .watchless-qa-trigger { width: 2.85rem; padding: 0; justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watchless-surface *,
+  .watchless-surface *::before,
+  .watchless-surface *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
