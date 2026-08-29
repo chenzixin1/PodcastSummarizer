@@ -16,6 +16,9 @@ const DEFAULT_ROOT = '/Volumes/1TB/1Tprojects/Watchless/outputs/video-notes';
 const DEFAULT_OUTPUT = path.join(process.cwd(), 'output', 'watchless-library-import');
 const VIDEO_ID_PATTERN = /[A-Za-z0-9_-]{11}/g;
 const SCENE_HEADER_PATTERN = /^##\s+(\d{1,2})\.\s+(.+?)[（(]([^）)]+)[）)]\s*$/gm;
+const EXISTING_PODCAST_IDS = new Map([
+  ['Vv3CEAS_w34', 'watchless-vv3ceas-w34'],
+]);
 
 function readArg(name, fallback = '') {
   const prefix = `--${name}=`;
@@ -165,7 +168,7 @@ function parseEntry(root, directoryName, outputDirectory) {
 
   const sourceTitle = String(info?.title || manifest.source?.title || markdown.match(/^#\s+(.+?)(?:\s+-\s+Visual Explainer)?\s*$/m)?.[1] || directoryName).trim();
   const sourceUrl = String(info?.webpage_url || `https://www.youtube.com/watch?v=${videoId}`);
-  const podcastId = `watchless-${videoId.toLowerCase()}`;
+  const podcastId = EXISTING_PODCAST_IDS.get(videoId) || `watchless-${videoId.toLowerCase()}`;
   const transcriptText = manifest.scenes.map((scene) => String(scene.transcript_text || '')).join('\n\n');
   const hasEnglishTranscript = englishTranscriptRatio(transcriptText) >= 0.72;
   const articleKey = `watchless/${videoId}/article.json`;
@@ -285,7 +288,7 @@ function parseEntry(root, directoryName, outputDirectory) {
 }
 
 function buildSql(entries, ownerId) {
-  const statements = ['PRAGMA foreign_keys = ON;', 'BEGIN TRANSACTION;'];
+  const statements = ['PRAGMA foreign_keys = ON;'];
   for (const entry of entries) {
     const blobUrl = `/api/files/${entry.transcriptKey}`;
     statements.push(`
@@ -343,7 +346,6 @@ ON CONFLICT(podcast_id) DO UPDATE SET
   updated_at = CURRENT_TIMESTAMP;
 `.trim());
   }
-  statements.push('COMMIT;');
   return `${statements.join('\n\n')}\n`;
 }
 
