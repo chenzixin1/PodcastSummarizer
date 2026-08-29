@@ -1,4 +1,5 @@
 export type WatchlessLanguageMode = 'zh' | 'en' | 'bilingual' | 'hint';
+export type WatchlessTranscriptLanguage = 'en' | 'zh' | 'other';
 
 export interface WatchlessScene {
   id: string;
@@ -30,6 +31,8 @@ export interface WatchlessArticle {
   publishedLabel: string;
   summaryZh: string;
   summaryEn: string;
+  transcriptLanguage?: WatchlessTranscriptLanguage;
+  availableLanguageModes?: WatchlessLanguageMode[];
   scenes: WatchlessScene[];
 }
 
@@ -141,6 +144,17 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
   const publishedLabel = readString(article, 'publishedLabel', 240);
   const summaryZh = readString(article, 'summaryZh', 100_000);
   const summaryEn = readString(article, 'summaryEn', 100_000);
+  const transcriptLanguageRaw = readString(article, 'transcriptLanguage', 16);
+  const transcriptLanguage: WatchlessTranscriptLanguage =
+    transcriptLanguageRaw === 'zh' || transcriptLanguageRaw === 'other' ? transcriptLanguageRaw : 'en';
+  const availableLanguageModesRaw = Array.isArray(article.availableLanguageModes)
+    ? article.availableLanguageModes
+    : ['zh', 'en', 'bilingual', 'hint'];
+  const availableLanguageModes = availableLanguageModesRaw.filter(
+    (mode): mode is WatchlessLanguageMode => (
+      mode === 'zh' || mode === 'en' || mode === 'bilingual' || mode === 'hint'
+    ),
+  );
 
   const sceneIds = new Set<string>();
   const sceneNumbers = new Set<number>();
@@ -177,6 +191,8 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
     !publishedLabel ||
     !summaryZh ||
     !summaryEn ||
+    availableLanguageModes.length === 0 ||
+    new Set(availableLanguageModes).size !== availableLanguageModes.length ||
     !isFiniteNumber(article.durationSec) ||
     article.durationSec <= 0 ||
     article.durationSec > MAX_DURATION_SECONDS ||
@@ -201,6 +217,8 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
     publishedLabel,
     summaryZh,
     summaryEn,
+    transcriptLanguage,
+    availableLanguageModes,
     scenes,
   };
 }

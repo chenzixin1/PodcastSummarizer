@@ -16,7 +16,11 @@ import AppHeader from '../../../components/AppHeader';
 import LiteYouTubeEmbed from '../../../components/LiteYouTubeEmbed';
 import InfographicPanel from '../../../components/dashboard/InfographicPanel';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
-import { findWatchlessPublication } from '../../../lib/watchless/publications';
+import {
+  fetchWatchlessPublication,
+  findWatchlessPublication,
+  type WatchlessPublication,
+} from '../../../lib/watchless/publications';
 import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
 import {
   annotateEnglishWithHints,
@@ -593,6 +597,7 @@ export default function DashboardPage() {
   const [sourceSaveError, setSourceSaveError] = useState<string | null>(null);
   const [isSavingVisibility, setIsSavingVisibility] = useState(false);
   const [visibilitySaveError, setVisibilitySaveError] = useState<string | null>(null);
+  const [remoteWatchlessPublication, setRemoteWatchlessPublication] = useState<WatchlessPublication | null>(null);
   
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
@@ -1474,7 +1479,31 @@ export default function DashboardPage() {
   const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
   const youtubeVideoId = getYouTubeVideoId(currentSourceReference);
   const sourceHost = getSourceHost(currentSourceReference);
-  const watchlessPublication = findWatchlessPublication(id, youtubeVideoId);
+  const localWatchlessPublication = findWatchlessPublication(id, youtubeVideoId);
+  const watchlessPublication = localWatchlessPublication || remoteWatchlessPublication;
+
+  useEffect(() => {
+    if (!id || localWatchlessPublication) {
+      setRemoteWatchlessPublication(null);
+      return;
+    }
+
+    let cancelled = false;
+    setRemoteWatchlessPublication(null);
+    void fetchWatchlessPublication(id)
+      .then((publication) => {
+        if (!cancelled) setRemoteWatchlessPublication(publication);
+      })
+      .catch((publicationError: unknown) => {
+        if (DASHBOARD_DEBUG_ENABLED) {
+          console.warn('[watchless publication] metadata lookup failed:', publicationError);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, localWatchlessPublication]);
 
   const toggleVisibility = async () => {
     if (!id || !canEdit || !data || isSavingVisibility) {

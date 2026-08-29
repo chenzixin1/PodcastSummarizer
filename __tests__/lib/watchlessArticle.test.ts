@@ -17,6 +17,17 @@ describe('normalizeWatchlessArticle', () => {
     expect(sampleWatchlessPreview.id).toBe(article?.id);
     expect(sampleWatchlessPreview.sceneCount).toBe(article?.scenes.length);
     expect(sampleWatchlessPreview.firstScene.keyframe).toBe(article?.scenes[0].keyframe);
+    expect(article?.availableLanguageModes).toEqual(['zh', 'en', 'bilingual', 'hint']);
+  });
+
+  it('supports Chinese-only publications without exposing fake English modes', () => {
+    const chineseFixture = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
+    chineseFixture.transcriptLanguage = 'zh';
+    chineseFixture.availableLanguageModes = ['zh'];
+
+    const article = normalizeWatchlessArticle(chineseFixture);
+    expect(article?.transcriptLanguage).toBe('zh');
+    expect(article?.availableLanguageModes).toEqual(['zh']);
   });
 
   it('rejects partial articles instead of rendering broken long-form content', () => {

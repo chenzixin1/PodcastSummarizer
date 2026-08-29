@@ -136,15 +136,17 @@ function HintTranscript({ markdown, dictionary }: { markdown: string; dictionary
 function LanguageSelector({
   value,
   onChange,
+  availableModes,
   compact = false,
 }: {
   value: WatchlessLanguageMode;
   onChange: (next: WatchlessLanguageMode) => void;
+  availableModes: WatchlessLanguageMode[];
   compact?: boolean;
 }) {
   return (
     <div className={`watchless-language-switch ${compact ? 'is-compact' : ''}`} role="group" aria-label="文章语言">
-      {LANGUAGE_OPTIONS.map((option) => (
+      {LANGUAGE_OPTIONS.filter((option) => availableModes.includes(option.value)).map((option) => (
         <button
           key={option.value}
           type="button"
@@ -350,11 +352,13 @@ function CompactSourceDock({
   language,
   onLanguageChange,
   progress,
+  availableModes,
 }: {
   article: WatchlessArticle;
   language: WatchlessLanguageMode;
   onLanguageChange: (value: WatchlessLanguageMode) => void;
   progress: number;
+  availableModes: WatchlessLanguageMode[];
 }) {
   return (
     <div className="watchless-source-dock" aria-label="紧凑来源栏">
@@ -366,7 +370,9 @@ function CompactSourceDock({
           <strong>{article.title}</strong>
         </span>
       </div>
-      <LanguageSelector value={language} onChange={onLanguageChange} compact />
+      {availableModes.length > 1 ? (
+        <LanguageSelector value={language} onChange={onLanguageChange} availableModes={availableModes} compact />
+      ) : null}
       <a href={article.sourceUrl} target="_blank" rel="noreferrer" className="watchless-dock-source">
         <SourceIcon /><span>来源</span>
       </a>
@@ -429,6 +435,10 @@ export default function WatchlessReader({
   const [progress, setProgress] = useState(0);
   const [dictionary, setDictionary] = useState<AdvancedWordDict | null>(null);
   const [dictionaryError, setDictionaryError] = useState('');
+  const availableLanguageModes = article.availableLanguageModes?.length
+    ? article.availableLanguageModes
+    : LANGUAGE_OPTIONS.map((option) => option.value);
+  const hasEnglishTranscript = availableLanguageModes.includes('en');
   const heroRef = useRef<HTMLElement | null>(null);
   const articleRef = useRef<HTMLDivElement | null>(null);
   const dialogueSpeakerLabels = useMemo(
@@ -522,6 +532,7 @@ export default function WatchlessReader({
           language={language}
           onLanguageChange={selectLanguage}
           progress={progress}
+          availableModes={availableLanguageModes}
         />
       ) : null}
 
@@ -538,7 +549,9 @@ export default function WatchlessReader({
           <p>阅读语言</p>
           <span>{language === 'zh' ? 'Watchless 中文编辑稿' : language === 'bilingual' ? '逐场景双栏对照' : '按场景边界整理的原始字幕'}</span>
         </div>
-        <LanguageSelector value={language} onChange={selectLanguage} />
+        {availableLanguageModes.length > 1 ? (
+          <LanguageSelector value={language} onChange={selectLanguage} availableModes={availableLanguageModes} />
+        ) : null}
       </div>
       {language === 'hint' && !dictionary && !dictionaryError ? <p className="watchless-hint-status" aria-live="polite">正在加载现有 PodSum 词表…</p> : null}
       {language === 'hint' && dictionaryError ? <p className="watchless-hint-status is-error">词表加载失败，已显示英文原文：{dictionaryError}</p> : null}
@@ -565,7 +578,9 @@ export default function WatchlessReader({
           <footer className="watchless-article-footer">
             <p className="watchless-section-label">阅读完成</p>
             <h2>从原视频到可复用的知识资产</h2>
-            <p>完整时间线、关键帧、中文编辑稿与英文 Transcript 都保留在同一篇内容中，方便继续回看和引用。</p>
+            <p>{hasEnglishTranscript
+              ? '完整时间线、关键帧、中文编辑稿与英文 Transcript 都保留在同一篇内容中，方便继续回看和引用。'
+              : '完整时间线、关键帧与中文编辑稿都保留在同一篇内容中，方便继续回看和引用。'}</p>
             <div>
               <a href={article.sourceUrl} target="_blank" rel="noreferrer"><SourceIcon />原视频</a>
               <a href={article.pdfUrl} target="_blank" rel="noreferrer"><PdfIcon />PDF</a>

@@ -46,6 +46,7 @@
     "youtube:fetch": "node scripts/utils/youtube-fetch.mjs",
     "youtube:bestpartners:sync": "node scripts/sync-youtube-channel-transcripts.mjs",
     "youtube:bestpartners:submit": "python3 scripts/submit-bestpartners-urls.py",
+    "watchless:library:prepare": "node scripts/import-watchless-library.mjs",
     "summary:bilingual:rebuild": "node scripts/rebuild-bilingual-summary.mjs",
     "summary:en:rebuild": "node scripts/rebuild-summary-en.mjs",
     "fulltext:en:rebuild": "node scripts/rebuild-full-text-en.mjs",
