@@ -215,6 +215,7 @@ function SceneFigure({ article, scene, priority }: { article: WatchlessArticle; 
           height={960}
           sizes="(max-width: 820px) 100vw, 820px"
           priority={priority}
+          unoptimized
         />
         <span className="watchless-frame-time">{formatSceneTimestamp(scene.startSec)} <ArrowIcon direction="right" /></span>
       </a>
@@ -400,6 +401,7 @@ function SourceHero({ article, heroRef }: { article: WatchlessArticle; heroRef: 
             height={960}
             sizes="(max-width: 900px) 100vw, 72vw"
             priority
+            unoptimized
           />
           <span className="watchless-video-link-label" aria-hidden="true">
             在 YouTube 打开 <ArrowIcon direction="right" />
