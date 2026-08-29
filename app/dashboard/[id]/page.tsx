@@ -16,6 +16,7 @@ import AppHeader from '../../../components/AppHeader';
 import LiteYouTubeEmbed from '../../../components/LiteYouTubeEmbed';
 import InfographicPanel from '../../../components/dashboard/InfographicPanel';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
+import { findWatchlessPublication } from '../../../lib/watchless/publications';
 import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
 import {
   annotateEnglishWithHints,
@@ -244,6 +245,11 @@ const MindMapCanvas = dynamic(() => import('../../../components/MindMapCanvas'),
     </div>
   ),
 });
+
+const WatchlessLongformSection = dynamic(
+  () => import('../../../components/watchless/WatchlessLongformSection'),
+  { ssr: false },
+);
 
 const normalizeMindMapNode = (value: unknown, depth: number): MindMapNode | null => {
   if (!value || typeof value !== 'object') {
@@ -1468,6 +1474,7 @@ export default function DashboardPage() {
   const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
   const youtubeVideoId = getYouTubeVideoId(currentSourceReference);
   const sourceHost = getSourceHost(currentSourceReference);
+  const watchlessPublication = findWatchlessPublication(id, youtubeVideoId);
 
   const toggleVisibility = async () => {
     if (!id || !canEdit || !data || isSavingVisibility) {
@@ -2061,6 +2068,13 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
+
+            {watchlessPublication ? (
+              <WatchlessLongformSection
+                articleMeta={watchlessPublication.articleMeta}
+                loadArticle={watchlessPublication.loadArticle}
+              />
+            ) : null}
           </main>
         )}
         

@@ -37,6 +37,7 @@ const MAX_SCENE_COUNT = 80;
 const MAX_DURATION_SECONDS = 24 * 60 * 60;
 const SCENE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
 const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+const BOLD_COLON_LABEL_PATTERN = /\*\*([^*\n]{1,60})[：:]\*\*/g;
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -217,4 +218,40 @@ export function formatSceneTimestamp(seconds: number): string {
 
 export function youtubeAtTimeUrl(videoId: string, seconds: number): string {
   return `https://www.youtube.com/watch?v=${videoId}&t=${Math.max(0, Math.floor(seconds))}s`;
+}
+
+export function extractDialogueSpeakerLabels(markdowns: string[]): string[] {
+  const counts = new Map<string, number>();
+
+  for (const markdown of markdowns) {
+    for (const match of markdown.matchAll(BOLD_COLON_LABEL_PATTERN)) {
+      const label = match[1].trim();
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([label]) => label)
+    .sort((left, right) => right.length - left.length);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function formatDialogueTurns(markdown: string, speakerLabels: string[]): string {
+  if (speakerLabels.length === 0) {
+    return markdown;
+  }
+
+  const labelPattern = speakerLabels.map(escapeRegExp).join('|');
+  const speakerPattern = new RegExp(`\\*\\*(?:${labelPattern})[：:]\\*\\*`, 'g');
+
+  return markdown.replace(speakerPattern, (label, offset: number) => {
+    if (offset === 0 || markdown.slice(0, offset).endsWith('\n\n')) {
+      return label;
+    }
+    return `\n\n${label}`;
+  });
 }

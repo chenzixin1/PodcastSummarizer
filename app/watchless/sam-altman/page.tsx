@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
-import WatchlessPreviewPage from '../../../components/watchless/WatchlessPreviewPage';
+import { redirect } from 'next/navigation';
+import { sampleWatchlessPreview } from '../../../lib/watchless/samplePreview';
 
 export const metadata: Metadata = {
   title: 'Sam Altman：如何创办一家创业公司 | PodSum.cc',
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function SamAltmanWatchlessPage() {
-  return <WatchlessPreviewPage />;
+  redirect(`/dashboard/${sampleWatchlessPreview.id}`);
 }

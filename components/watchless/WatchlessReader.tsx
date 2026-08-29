@@ -17,7 +17,9 @@ import {
   type AdvancedWordDict,
 } from '../../lib/vocabHint';
 import {
+  extractDialogueSpeakerLabels,
   formatSceneTimestamp,
+  formatDialogueTurns,
   youtubeAtTimeUrl,
   type WatchlessArticle,
   type WatchlessLanguageMode,
@@ -226,6 +228,7 @@ function SceneContent({
   hintMarkdown,
   dictionary,
   priority,
+  dialogueSpeakerLabels,
 }: {
   article: WatchlessArticle;
   scene: WatchlessScene;
@@ -233,6 +236,7 @@ function SceneContent({
   hintMarkdown?: string;
   dictionary: AdvancedWordDict | null;
   priority: boolean;
+  dialogueSpeakerLabels: string[];
 }) {
   const showChinese = language === 'zh' || language === 'bilingual';
   const showEnglish = language === 'en' || language === 'bilingual' || language === 'hint';
@@ -252,7 +256,9 @@ function SceneContent({
         {showChinese ? (
           <article className="watchless-copy-column" lang="zh-CN">
             {language === 'bilingual' ? <p className="watchless-copy-label">中文编辑稿</p> : null}
-            <Markdown className="watchless-prose watchless-prose-zh">{scene.articleZh}</Markdown>
+            <Markdown className="watchless-prose watchless-prose-zh">
+              {formatDialogueTurns(scene.articleZh, dialogueSpeakerLabels)}
+            </Markdown>
           </article>
         ) : null}
 
@@ -425,6 +431,10 @@ export default function WatchlessReader({
   const [dictionaryError, setDictionaryError] = useState('');
   const heroRef = useRef<HTMLElement | null>(null);
   const articleRef = useRef<HTMLDivElement | null>(null);
+  const dialogueSpeakerLabels = useMemo(
+    () => extractDialogueSpeakerLabels(article.scenes.map((scene) => scene.articleZh)),
+    [article.scenes],
+  );
 
   useEffect(() => {
     const hero = heroRef.current;
@@ -549,6 +559,7 @@ export default function WatchlessReader({
               hintMarkdown={hintTranscripts.get(scene.id)}
               dictionary={dictionary}
               priority={index === 0}
+              dialogueSpeakerLabels={dialogueSpeakerLabels}
             />
           ))}
           <footer className="watchless-article-footer">
