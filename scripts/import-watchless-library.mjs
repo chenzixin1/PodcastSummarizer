@@ -57,12 +57,29 @@ function cleanInlineMarkup(value) {
     .join('\n');
 }
 
-function normalizeTranscript(value) {
-  return String(value || '')
-    .replace(/说话人\d+:\s*/g, '\n\n')
-    .replace(/\s+([,.?!;:])/g, '$1')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+function originalTurns(value, speakerMap = {}) {
+  const source = String(value || '');
+  const matches = [...source.matchAll(/(说话人\s*\d+|Speaker\s*\d+)[：:]\s*/gi)];
+  if (!matches.length) {
+    const text = source.trim();
+    return text ? [{ speaker: 'Speaker', text }] : [];
+  }
+
+  const turns = [];
+  for (let index = 0; index < matches.length; index += 1) {
+    const sourceLabel = matches[index][1].replace(/\s+/g, '');
+    const speaker = String(speakerMap[sourceLabel] || sourceLabel);
+    const start = (matches[index].index || 0) + matches[index][0].length;
+    const end = matches[index + 1]?.index ?? source.length;
+    const text = source.slice(start, end).trim();
+    if (!text) continue;
+    if (turns.at(-1)?.speaker === speaker) {
+      turns.at(-1).text += ` ${text}`;
+    } else {
+      turns.push({ speaker, text });
+    }
+  }
+  return turns;
 }
 
 function stripMarkdown(value) {
@@ -153,6 +170,11 @@ function parseEntry(root, directoryName, outputDirectory) {
   const infoPath = firstFile(path.join(entryRoot, 'work', 'source'), (name) => name.endsWith('.info.json'));
   const info = infoPath ? JSON.parse(fs.readFileSync(infoPath, 'utf8')) : null;
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const speakerMapPath = path.join(entryRoot, 'work', 'speaker-map.json');
+  const speakerMapPayload = fs.existsSync(speakerMapPath)
+    ? JSON.parse(fs.readFileSync(speakerMapPath, 'utf8'))
+    : {};
+  const speakerMap = speakerMapPayload.speakers || {};
   const videoId = inferVideoId(directoryName, manifest, info);
   if (!videoId) throw new Error(`Could not determine a YouTube video ID for ${directoryName}`);
 
@@ -190,6 +212,8 @@ function parseEntry(root, directoryName, outputDirectory) {
     }
     const sourceFrame = path.join(shareRoot, 'keyframes', imageMatch[1]);
     if (!fs.existsSync(sourceFrame)) throw new Error(`Missing keyframe ${sourceFrame}`);
+    const turns = originalTurns(manifestScene.transcript_text, speakerMap);
+    if (!turns.length) throw new Error(`Scene ${number} has no original transcript turns for ${directoryName}`);
     return {
       id: `scene-${String(number).padStart(2, '0')}`,
       number,
@@ -199,8 +223,8 @@ function parseEntry(root, directoryName, outputDirectory) {
       endSec: Number(manifestScene.end_sec),
       keyframe: `/api/files/watchless/${videoId}/keyframes/${path.basename(sourceFrame)}`,
       keyframeAlt: `第 ${number} 场景关键帧：${header[2].trim()}`,
-      articleZh: cleanInlineMarkup(contentMatch[1]),
-      transcriptEn: normalizeTranscript(manifestScene.transcript_text),
+      articleZh: turns.map((turn) => `**${turn.speaker}：** ${turn.text}`).join('\n\n'),
+      transcriptEn: turns.map((turn) => `${turn.speaker}: ${turn.text}`).join('\n\n'),
       visualDescriptionZh: cleanInlineMarkup(visualMatch[1]),
       boundaryReasonEn: String(manifestScene.boundary_reason || 'Semantic scene boundary.'),
       sourceFrame,
@@ -230,8 +254,9 @@ function parseEntry(root, directoryName, outputDirectory) {
     publishedLabel: `${scenes.length} 个场景 · 完整时间线`,
     summaryZh,
     summaryEn,
-    transcriptLanguage: hasEnglishTranscript ? 'en' : 'zh',
-    availableLanguageModes: hasEnglishTranscript ? ['zh', 'en', 'bilingual', 'hint'] : ['zh'],
+    bodyMode: 'verbatim',
+    transcriptLanguage: 'other',
+    availableLanguageModes: ['zh'],
     scenes: scenes.map((scene) => ({
       id: scene.id,
       number: scene.number,

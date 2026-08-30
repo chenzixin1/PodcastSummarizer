@@ -80,9 +80,7 @@ export default function WatchlessLongformSection({
           <h2 id={`${regionId}-title`}>
             {`沿着 ${articleMeta.sceneCount} 个场景，继续读完这段 ${articleMeta.durationLabel}的完整内容`}
           </h2>
-          <p>{articleMeta.hasEnglishTranscript === false
-            ? '关键帧、中文编辑稿与原视频时间码已经对齐。'
-            : '关键帧、中文编辑稿、英文 Transcript 与原视频时间码已经对齐。'}</p>
+          <p>关键帧、逐场景正文与原视频时间码已经对齐。</p>
         </div>
         <button
           ref={triggerRef}

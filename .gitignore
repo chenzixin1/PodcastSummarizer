@@ -13,6 +13,7 @@
 # generated test and performance output
 /coverage
 /output
+/.playwright-cli
 /.lighthouseci/
 
 # next.js

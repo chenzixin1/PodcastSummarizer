@@ -1,5 +1,6 @@
 export type WatchlessLanguageMode = 'zh' | 'en' | 'bilingual' | 'hint';
 export type WatchlessTranscriptLanguage = 'en' | 'zh' | 'other';
+export type WatchlessBodyMode = 'editorial' | 'verbatim';
 
 export interface WatchlessScene {
   id: string;
@@ -31,6 +32,7 @@ export interface WatchlessArticle {
   publishedLabel: string;
   summaryZh: string;
   summaryEn: string;
+  bodyMode?: WatchlessBodyMode;
   transcriptLanguage?: WatchlessTranscriptLanguage;
   availableLanguageModes?: WatchlessLanguageMode[];
   scenes: WatchlessScene[];
@@ -40,7 +42,10 @@ const MAX_SCENE_COUNT = 80;
 const MAX_DURATION_SECONDS = 24 * 60 * 60;
 const SCENE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
 const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
-const BOLD_COLON_LABEL_PATTERN = /\*\*([^*\n]{1,60})[：:]\*\*/g;
+// Accept both Markdown styles found in Watchless history:
+//   **Speaker：** utterance
+//   **Speaker**：utterance
+const BOLD_COLON_LABEL_PATTERN = /\*\*([^*\n]{1,60}?)(?:[：:]\*\*|\*\*[：:])/g;
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -144,6 +149,8 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
   const publishedLabel = readString(article, 'publishedLabel', 240);
   const summaryZh = readString(article, 'summaryZh', 100_000);
   const summaryEn = readString(article, 'summaryEn', 100_000);
+  const bodyModeRaw = readString(article, 'bodyMode', 16);
+  const bodyMode: WatchlessBodyMode = bodyModeRaw === 'verbatim' ? 'verbatim' : 'editorial';
   const transcriptLanguageRaw = readString(article, 'transcriptLanguage', 16);
   const transcriptLanguage: WatchlessTranscriptLanguage =
     transcriptLanguageRaw === 'zh' || transcriptLanguageRaw === 'other' ? transcriptLanguageRaw : 'en';
@@ -217,6 +224,7 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
     publishedLabel,
     summaryZh,
     summaryEn,
+    bodyMode,
     transcriptLanguage,
     availableLanguageModes,
     scenes,
@@ -264,12 +272,13 @@ export function formatDialogueTurns(markdown: string, speakerLabels: string[]): 
   }
 
   const labelPattern = speakerLabels.map(escapeRegExp).join('|');
-  const speakerPattern = new RegExp(`\\*\\*(?:${labelPattern})[：:]\\*\\*`, 'g');
+  const speakerPattern = new RegExp(`\\*\\*(${labelPattern})(?:[：:]\\*\\*|\\*\\*[：:])`, 'g');
 
-  return markdown.replace(speakerPattern, (label, offset: number) => {
+  return markdown.replace(speakerPattern, (_label, speaker: string, offset: number) => {
+    const canonicalLabel = `**${speaker}：**`;
     if (offset === 0 || markdown.slice(0, offset).endsWith('\n\n')) {
-      return label;
+      return canonicalLabel;
     }
-    return `\n\n${label}`;
+    return `\n\n${canonicalLabel}`;
   });
 }

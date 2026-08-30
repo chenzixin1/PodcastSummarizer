@@ -39,6 +39,13 @@ const LANGUAGE_OPTIONS: Array<{ value: WatchlessLanguageMode; label: string; det
   { value: 'hint', label: '词汇提示', detail: 'English' },
 ];
 
+function languageOptions(article: WatchlessArticle) {
+  if (article.bodyMode !== 'verbatim') return LANGUAGE_OPTIONS;
+  return LANGUAGE_OPTIONS.map((option) => (
+    option.value === 'zh' ? { ...option, label: '原话', detail: '逐字实录' } : option
+  ));
+}
+
 const HINT_HASH_PREFIX = '#pronounce:';
 
 function ArrowIcon({ direction = 'right' }: { direction?: 'left' | 'right' | 'down' }) {
@@ -137,16 +144,19 @@ function LanguageSelector({
   value,
   onChange,
   availableModes,
+  article,
   compact = false,
 }: {
   value: WatchlessLanguageMode;
   onChange: (next: WatchlessLanguageMode) => void;
   availableModes: WatchlessLanguageMode[];
+  article: WatchlessArticle;
   compact?: boolean;
 }) {
+  const options = languageOptions(article);
   return (
     <div className={`watchless-language-switch ${compact ? 'is-compact' : ''}`} role="group" aria-label="文章语言">
-      {LANGUAGE_OPTIONS.filter((option) => availableModes.includes(option.value)).map((option) => (
+      {options.filter((option) => availableModes.includes(option.value)).map((option) => (
         <button
           key={option.value}
           type="button"
@@ -257,8 +267,10 @@ function SceneContent({
 
       <div className={`watchless-scene-copy ${language === 'bilingual' ? 'is-bilingual' : ''}`}>
         {showChinese ? (
-          <article className="watchless-copy-column" lang="zh-CN">
-            {language === 'bilingual' ? <p className="watchless-copy-label">中文编辑稿</p> : null}
+          <article className="watchless-copy-column" lang={article.transcriptLanguage === 'zh' ? 'zh-CN' : undefined}>
+            {language === 'bilingual' || article.bodyMode === 'verbatim' ? (
+              <p className="watchless-copy-label">{article.bodyMode === 'verbatim' ? '原话实录' : '中文编辑稿'}</p>
+            ) : null}
             <Markdown className="watchless-prose watchless-prose-zh">
               {formatDialogueTurns(scene.articleZh, dialogueSpeakerLabels)}
             </Markdown>
@@ -372,7 +384,7 @@ function CompactSourceDock({
         </span>
       </div>
       {availableModes.length > 1 ? (
-        <LanguageSelector value={language} onChange={onLanguageChange} availableModes={availableModes} compact />
+        <LanguageSelector value={language} onChange={onLanguageChange} availableModes={availableModes} article={article} compact />
       ) : null}
       <a href={article.sourceUrl} target="_blank" rel="noreferrer" className="watchless-dock-source">
         <SourceIcon /><span>来源</span>
@@ -439,7 +451,7 @@ export default function WatchlessReader({
   const [dictionaryError, setDictionaryError] = useState('');
   const availableLanguageModes = article.availableLanguageModes?.length
     ? article.availableLanguageModes
-    : LANGUAGE_OPTIONS.map((option) => option.value);
+    : languageOptions(article).map((option) => option.value);
   const hasEnglishTranscript = availableLanguageModes.includes('en');
   const heroRef = useRef<HTMLElement | null>(null);
   const articleRef = useRef<HTMLDivElement | null>(null);
@@ -549,10 +561,10 @@ export default function WatchlessReader({
       <div className="watchless-reader-toolbar">
         <div>
           <p>阅读语言</p>
-          <span>{language === 'zh' ? 'Watchless 中文编辑稿' : language === 'bilingual' ? '逐场景双栏对照' : '按场景边界整理的原始字幕'}</span>
+          <span>{language === 'zh' ? (article.bodyMode === 'verbatim' ? '按说话人分行的原话实录' : 'Watchless 中文编辑稿') : language === 'bilingual' ? '逐场景双栏对照' : '按场景边界整理的原始字幕'}</span>
         </div>
         {availableLanguageModes.length > 1 ? (
-          <LanguageSelector value={language} onChange={selectLanguage} availableModes={availableLanguageModes} />
+          <LanguageSelector value={language} onChange={selectLanguage} availableModes={availableLanguageModes} article={article} />
         ) : null}
       </div>
       {language === 'hint' && !dictionary && !dictionaryError ? <p className="watchless-hint-status" aria-live="polite">正在加载现有 PodSum 词表…</p> : null}
@@ -580,9 +592,11 @@ export default function WatchlessReader({
           <footer className="watchless-article-footer">
             <p className="watchless-section-label">阅读完成</p>
             <h2>从原视频到可复用的知识资产</h2>
-            <p>{hasEnglishTranscript
-              ? '完整时间线、关键帧、中文编辑稿与英文 Transcript 都保留在同一篇内容中，方便继续回看和引用。'
-              : '完整时间线、关键帧与中文编辑稿都保留在同一篇内容中，方便继续回看和引用。'}</p>
+            <p>{article.bodyMode === 'verbatim'
+              ? '完整时间线、关键帧与原话实录都保留在同一篇内容中，方便继续回看和引用。'
+              : hasEnglishTranscript
+                ? '完整时间线、关键帧、中文编辑稿与英文 Transcript 都保留在同一篇内容中，方便继续回看和引用。'
+                : '完整时间线、关键帧与中文编辑稿都保留在同一篇内容中，方便继续回看和引用。'}</p>
             <div>
               <a href={article.sourceUrl} target="_blank" rel="noreferrer"><SourceIcon />原视频</a>
               <a href={article.pdfUrl} target="_blank" rel="noreferrer"><PdfIcon />PDF</a>

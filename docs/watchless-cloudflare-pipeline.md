@@ -14,7 +14,9 @@ The PodSum Upload page, `podsum_submit_watchless_url`, or `POST /api/watchless/j
 4. reserves 1,000 credits in the D1 ledger; and
 5. starts one durable Cloudflare Workflow.
 
-The Workflow starts a job-named Container. The Container downloads at most one public YouTube video, enforces a two-hour and 1 GiB limit, extracts audio, calls Volcengine ASR, calls `openai/gpt-5.6-luna` through OpenRouter for structured scene/article output, extracts keyframes, creates a PDF, and uploads checksummed assets through the internal callback API.
+The Workflow starts a job-named Container. The Container downloads at most one public YouTube video, enforces a two-hour and 1 GiB limit, extracts audio, calls Volcengine ASR, calls `openai/gpt-5.6-luna` through OpenRouter only for titles, summaries, speaker mapping, scene boundaries, and visual descriptions, extracts keyframes, creates a PDF, and uploads checksummed assets through the internal callback API.
+
+Scene bodies never come from Luna. PodSum copies the original ASR utterance text deterministically, groups only adjacent segments attributed to the same displayed speaker, and renders every contiguous speaker turn as its own paragraph. It does not translate, polish, rewrite, condense, or summarize spoken words. A scene with no source utterance fails validation instead of receiving placeholder content.
 
 The reservation becomes a charge only when D1 atomically commits the podcast, analysis, Watchless publication, asset records, and completed job state. Workflow/platform failure or a safe pre-commit cancellation refunds it exactly once.
 

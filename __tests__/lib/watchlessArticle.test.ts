@@ -30,6 +30,18 @@ describe('normalizeWatchlessArticle', () => {
     expect(article?.availableLanguageModes).toEqual(['zh']);
   });
 
+  it('preserves the verbatim body contract for original-word publications', () => {
+    const verbatimFixture = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
+    verbatimFixture.bodyMode = 'verbatim';
+    verbatimFixture.transcriptLanguage = 'other';
+    verbatimFixture.availableLanguageModes = ['zh'];
+
+    const article = normalizeWatchlessArticle(verbatimFixture);
+    expect(article?.bodyMode).toBe('verbatim');
+    expect(article?.transcriptLanguage).toBe('other');
+    expect(article?.availableLanguageModes).toEqual(['zh']);
+  });
+
   it('rejects partial articles instead of rendering broken long-form content', () => {
     expect(normalizeWatchlessArticle({ title: 'Incomplete article', scenes: [] })).toBeNull();
   });
@@ -72,5 +84,18 @@ describe('normalizeWatchlessArticle', () => {
     const formatted = formatDialogueTurns(markdown, speakers);
 
     expect(formatted).toContain('回答。\n\n**关键是：** 保持上下文。');
+  });
+
+  it('normalizes legacy bold-name dialogue labels and separates turns', () => {
+    const markdown = '**曹卿云**：问题。**林杰屏**：回答。';
+    const speakers = extractDialogueSpeakerLabels([
+      markdown,
+      '**曹卿云**：追问。**林杰屏**：继续回答。',
+    ]);
+
+    expect(speakers).toEqual(['曹卿云', '林杰屏']);
+    expect(formatDialogueTurns(markdown, speakers)).toBe(
+      '**曹卿云：**问题。\n\n**林杰屏：**回答。',
+    );
   });
 });

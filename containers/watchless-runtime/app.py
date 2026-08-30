@@ -149,6 +149,32 @@ def transcript_lines(asr: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     return "\n".join(lines), normalized
 
 
+def collapse_original_turns(
+    utterances: list[dict[str, Any]],
+    display_speaker: Any,
+) -> list[dict[str, str]]:
+    """Group adjacent ASR segments without rewriting any spoken words."""
+    turns: list[dict[str, str]] = []
+    for item in utterances:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        speaker = str(display_speaker(item)).strip()
+        if turns and turns[-1]["speaker"] == speaker:
+            turns[-1]["text"] += f" {text}"
+        else:
+            turns.append({"speaker": speaker, "text": text})
+    return turns
+
+
+def verbatim_markdown(turns: list[dict[str, str]]) -> str:
+    return "\n\n".join(f"**{turn['speaker']}：** {turn['text']}" for turn in turns)
+
+
+def verbatim_transcript(turns: list[dict[str, str]]) -> str:
+    return "\n\n".join(f"{turn['speaker']}: {turn['text']}" for turn in turns)
+
+
 def openrouter_article(metadata: dict[str, Any], utterances: list[dict[str, Any]], duration: float) -> dict[str, Any]:
     key = os.getenv("OPENROUTER_API_KEY", "")
     if not key:
@@ -163,18 +189,17 @@ def openrouter_article(metadata: dict[str, Any], utterances: list[dict[str, Any]
                 "required": ["id", "name"], "additionalProperties": False}},
             "scenes": {"type": "array", "minItems": 3, "maxItems": 30, "items": {"type": "object", "properties": {
                 "titleZh": {"type": "string"}, "startSec": {"type": "number"}, "endSec": {"type": "number"},
-                "articleZh": {"type": "string"}, "transcriptEn": {"type": "string"},
                 "visualDescriptionZh": {"type": "string"}, "boundaryReasonEn": {"type": "string"}},
-                "required": ["titleZh", "startSec", "endSec", "articleZh", "transcriptEn", "visualDescriptionZh", "boundaryReasonEn"],
+                "required": ["titleZh", "startSec", "endSec", "visualDescriptionZh", "boundaryReasonEn"],
                 "additionalProperties": False}},
         },
         "required": ["titleZh", "summaryZh", "summaryEn", "speakers", "scenes"], "additionalProperties": False,
     }
     prompt = (
-        "Turn this speaker-labelled transcript into an editorial Chinese illustrated article. "
-        "Preserve the full timeline, use coherent topic/visual scene boundaries, and never merge different speakers onto one line. "
+        "Analyze this speaker-labelled transcript and return only metadata for an illustrated transcript. "
+        "The summary belongs only in summaryZh. Never output, translate, rewrite, polish, condense, or summarize the scene body; the application will copy every scene body verbatim from ASR. "
+        "Choose scene boundaries that preserve the full chronological timeline and keep each range meaningful. "
         "Return a speakers mapping from every ASR speaker id to a real participant name only when the transcript or metadata supports it; otherwise use Speaker 1, Speaker 2, and so on. "
-        "Every transcriptEn line must be exactly 'Speaker: utterance' with one speaker turn per line. "
         "Do not invent claims. Scene ranges must be ordered, non-overlapping and cover 0 through duration.\n"
         + json.dumps({"metadata": metadata, "durationSec": duration, "utterances": compact}, ensure_ascii=False)
     )
@@ -204,9 +229,31 @@ def build_pdf(article: dict[str, Any], path: Path) -> None:
     styles = getSampleStyleSheet()
     for style in styles.byName.values():
         style.fontName = "STSong-Light"
-    story = [Paragraph(html.escape(article["titleZh"]), styles["Title"]), Spacer(1, 14), Paragraph(html.escape(article["summaryZh"]), styles["BodyText"])]
+    styles["BodyText"].leading = 18
+    story = [
+        Paragraph(html.escape(article["titleZh"]), styles["Title"]),
+        Spacer(1, 8),
+        Paragraph(f"来源：{html.escape(article['sourceUrl'])}", styles["BodyText"]),
+        Spacer(1, 14),
+        Paragraph("内容摘要", styles["Heading2"]),
+        Paragraph(html.escape(re.sub(r"\*\*([^*]+)\*\*", r"\1", article["summaryZh"])), styles["BodyText"]),
+    ]
     for scene in article["scenes"]:
-        story.extend([Spacer(1, 16), Paragraph(html.escape(scene["titleZh"]), styles["Heading2"]), Paragraph(html.escape(scene["articleZh"]).replace("\n", "<br/>"), styles["BodyText"])])
+        story.extend([
+            Spacer(1, 16),
+            Paragraph(f"{scene['number']:02d}. {html.escape(scene['titleZh'])}", styles["Heading2"]),
+            Paragraph(html.escape(scene["timeLabel"]), styles["BodyText"]),
+            Spacer(1, 6),
+        ])
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", scene["articleZh"]) if part.strip()]
+        for paragraph in paragraphs:
+            match = re.match(r"^\*\*([^*\n]{1,80})[：:]\*\*\s*(.*)$", paragraph, re.S)
+            if match:
+                speaker = html.escape(match.group(1).strip())
+                spoken_text = html.escape(match.group(2).strip()).replace("\n", "<br/>")
+                story.extend([Paragraph(f"<b>{speaker}：</b> {spoken_text}", styles["BodyText"]), Spacer(1, 7)])
+            else:
+                story.extend([Paragraph(html.escape(paragraph).replace("\n", "<br/>"), styles["BodyText"]), Spacer(1, 7)])
     SimpleDocTemplate(str(path), pagesize=A4, title=article["titleZh"]).build(story)
 
 
@@ -272,10 +319,11 @@ async def process(job_id: str) -> None:
                 if item["startSec"] >= scene["startSec"]
                 and (item["startSec"] < scene["endSec"] or index == len(scenes) - 1)
             ]
-            scene["transcriptEn"] = "\n".join(
-                f"{display_speaker(item)}: {item['text']}"
-                for item in turns
-            ) or "Speaker: [No speech in this scene]"
+            original_turns = collapse_original_turns(turns, display_speaker)
+            if not original_turns:
+                raise RuntimeError(f"Scene {index + 1} contains no source utterance")
+            scene["articleZh"] = verbatim_markdown(original_turns)
+            scene["transcriptEn"] = verbatim_transcript(original_turns)
             scene["id"] = f"scene-{index + 1}"
             scene["number"] = index + 1
             scene["timeLabel"] = time_label(scene["startSec"], scene["endSec"])
@@ -292,7 +340,7 @@ async def process(job_id: str) -> None:
             "pdfUrl": f"/api/files/watchless/{video_id}/article.pdf", "durationSec": duration,
             "durationLabel": time_label(0, duration).split("–")[1], "publishedLabel": str(metadata.get("upload_date") or ""),
             "summaryZh": generated["summaryZh"], "summaryEn": generated["summaryEn"],
-            "transcriptLanguage": "en", "availableLanguageModes": ["zh", "en", "bilingual", "hint"], "scenes": scenes,
+            "bodyMode": "verbatim", "transcriptLanguage": "other", "availableLanguageModes": ["zh"], "scenes": scenes,
         }
         article_path = work / "article.json"
         article_path.write_text(json.dumps(article, ensure_ascii=False, indent=2), encoding="utf-8")
