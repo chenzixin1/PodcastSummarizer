@@ -18,6 +18,24 @@ import {
 import { resolveYoutubePodcastTitle } from '../../lib/podcastTitle';
 import { createPodcastFromSrt, PodcastUploadError } from '../../lib/podcastUploadPipeline';
 import { triggerWorkerProcessing } from '../../lib/workerTrigger';
+import {
+  createWatchlessBundleJob,
+  cancelWatchlessJob,
+  createWatchlessUrlJob,
+  failWatchlessJob,
+  getOwnedWatchlessJob,
+  listWatchlessJobAssets,
+  rollbackWatchlessJob,
+  uploadWatchlessJobAsset,
+  validateWatchlessBundle,
+  updateWatchlessJobStatus,
+  WATCHLESS_MAX_ASSET_BYTES,
+  WATCHLESS_ONLINE_MODEL,
+  WATCHLESS_URL_CREDIT_COST,
+  WatchlessJobError,
+  type WatchlessAssetRole,
+} from '../../lib/watchless/jobs';
+import { startWatchlessWorkflow, terminateWatchlessWorkflow } from '../../lib/watchless/workflow';
 
 type JsonRpcId = string | number | null;
 
@@ -302,6 +320,86 @@ function availableTools(context: McpAccessAuthContext): McpTool[] {
           idempotentHint: false,
           openWorldHint: true,
         },
+      ),
+    );
+  }
+
+  if (hasMcpScope(context, 'watchless:submit')) {
+    tools.push(
+      toolDefinition(
+        'podsum_submit_watchless_url',
+        'Submit Watchless URL',
+        `Run the full Cloudflare Watchless pipeline for one authorized YouTube URL. Requires and reserves ${WATCHLESS_URL_CREDIT_COST} credits. Uses ${WATCHLESS_ONLINE_MODEL} through OpenRouter.`,
+        {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: 'Public YouTube watch, shorts, or youtu.be URL.' },
+            preferredLanguage: { type: 'string', default: 'en-US' },
+            isPublic: { type: 'boolean', default: false },
+            rightsConfirmed: { type: 'boolean', description: 'Must be true. Confirms authorization to process and publish the source.' },
+            idempotencyKey: { type: 'string', description: 'Optional retry-safe caller key.' },
+          },
+          required: ['url', 'rightsConfirmed'],
+          additionalProperties: false,
+        },
+        { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
+      ),
+    );
+  }
+
+  if (hasMcpScope(context, 'watchless:publish')) {
+    tools.push(
+      toolDefinition(
+        'podsum_begin_watchless_publish',
+        'Begin Watchless publish',
+        'Create a no-video-compute upload session for a Watchless article already produced by Codex.',
+        {
+          type: 'object',
+          properties: {
+            videoId: { type: 'string' }, title: { type: 'string' }, isPublic: { type: 'boolean', default: false },
+            rightsConfirmed: { type: 'boolean' }, idempotencyKey: { type: 'string' },
+          },
+          required: ['videoId', 'rightsConfirmed'], additionalProperties: false,
+        },
+        { readOnlyHint: false, idempotentHint: true },
+      ),
+      toolDefinition(
+        'podsum_upload_watchless_asset',
+        'Upload Watchless asset',
+        'Upload a small base64 article, PDF, transcript, or keyframe into a Watchless publish session. Use the returned HTTP PUT endpoint for larger files.',
+        {
+          type: 'object', properties: {
+            jobId: { type: 'string' }, path: { type: 'string' },
+            role: { type: 'string', enum: ['article', 'pdf', 'keyframe', 'transcript', 'html', 'manifest', 'other'] },
+            contentType: { type: 'string' }, sha256: { type: 'string' }, base64: { type: 'string', maxLength: 6000000 },
+          }, required: ['jobId', 'path', 'role', 'contentType', 'sha256', 'base64'], additionalProperties: false,
+        },
+        { readOnlyHint: false, idempotentHint: true },
+      ),
+      toolDefinition(
+        'podsum_commit_watchless_publish',
+        'Commit Watchless publish',
+        'Validate the complete uploaded bundle and publish it as the same podcast record type used elsewhere in PodSum.',
+        { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'], additionalProperties: false },
+        { readOnlyHint: false, idempotentHint: true },
+      ),
+      toolDefinition(
+        'podsum_rollback_watchless_publication',
+        'Rollback Watchless publication',
+        'Remove a staged or published Watchless job owned by this PodSum account.',
+        { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'], additionalProperties: false },
+        { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      ),
+    );
+  }
+
+  if (hasMcpScope(context, 'watchless:submit') || hasMcpScope(context, 'watchless:publish')) {
+    tools.push(
+      toolDefinition(
+        'podsum_get_watchless_publish_status',
+        'Get Watchless status',
+        'Read progress, assets and errors for an owned Watchless job.',
+        { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'], additionalProperties: false },
       ),
     );
   }
@@ -609,6 +707,146 @@ async function handleSubmitYoutubeUrl(
   });
 }
 
+async function handleSubmitWatchlessUrl(context: McpAccessAuthContext, args: Record<string, unknown>) {
+  if (!hasMcpScope(context, 'watchless:submit')) return forbiddenToolResult('Missing scope: watchless:submit');
+  try {
+    const job = await createWatchlessUrlJob({
+      userId: context.userId,
+      sourceUrl: stringArg(args, 'url'),
+      rightsConfirmed: booleanArg(args, 'rightsConfirmed'),
+      preferredLanguage: stringArg(args, 'preferredLanguage') || undefined,
+      isPublic: booleanArg(args, 'isPublic'),
+      idempotencyKey: stringArg(args, 'idempotencyKey') || undefined,
+    });
+    if (job.workflowInstanceId) return textContent({ job, status: 'already_started' });
+    let workflowInstanceId: string;
+    try {
+      workflowInstanceId = await startWatchlessWorkflow(job.id, 'url');
+    } catch (error) {
+      await failWatchlessJob(job.id, 'WORKFLOW_START_FAILED', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    return textContent({
+      job: { ...job, workflowInstanceId },
+      creditPolicy: { required: WATCHLESS_URL_CREDIT_COST, state: 'reserved', refunds: 'platform failure or pre-completion rollback' },
+      runtime: { model: WATCHLESS_ONLINE_MODEL, provider: 'OpenRouter', execution: 'Cloudflare Workflow + Container' },
+    });
+  } catch (error) {
+    if (error instanceof WatchlessJobError) return errorToolResult({ code: error.code, status: error.status, error: error.message });
+    throw error;
+  }
+}
+
+async function handleBeginWatchlessPublish(context: McpAccessAuthContext, args: Record<string, unknown>, request: NextRequest) {
+  if (!hasMcpScope(context, 'watchless:publish')) return forbiddenToolResult('Missing scope: watchless:publish');
+  try {
+    const job = await createWatchlessBundleJob({
+      userId: context.userId,
+      videoId: stringArg(args, 'videoId'),
+      title: stringArg(args, 'title') || undefined,
+      rightsConfirmed: booleanArg(args, 'rightsConfirmed'),
+      isPublic: booleanArg(args, 'isPublic'),
+      idempotencyKey: stringArg(args, 'idempotencyKey') || undefined,
+    });
+    return textContent({
+      job,
+      creditCost: 0,
+      upload: {
+        method: 'PUT',
+        endpointTemplate: `${getAppBaseUrl(request)}/api/watchless/jobs/${job.id}/assets?path={path}&role={role}`,
+        headers: { Authorization: 'Bearer <same MCP token>', 'Content-Type': '<asset content type>', 'X-Content-SHA256': '<lowercase sha256>' },
+        maxAssetBytes: WATCHLESS_MAX_ASSET_BYTES,
+      },
+    });
+  } catch (error) {
+    if (error instanceof WatchlessJobError) return errorToolResult({ code: error.code, status: error.status, error: error.message });
+    throw error;
+  }
+}
+
+async function handleUploadWatchlessAsset(context: McpAccessAuthContext, args: Record<string, unknown>) {
+  if (!hasMcpScope(context, 'watchless:publish')) return forbiddenToolResult('Missing scope: watchless:publish');
+  const encoded = stringArg(args, 'base64');
+  if (!encoded || encoded.length > 6_000_000) return errorToolResult({ code: 'INLINE_ASSET_TOO_LARGE', error: 'Use the HTTP PUT endpoint returned by begin for larger assets.' });
+  try {
+    const asset = await uploadWatchlessJobAsset({
+      jobId: stringArg(args, 'jobId'), userId: context.userId, assetPath: stringArg(args, 'path'),
+      role: stringArg(args, 'role') as WatchlessAssetRole, contentType: stringArg(args, 'contentType'),
+      expectedSha256: stringArg(args, 'sha256'), bytes: new Uint8Array(Buffer.from(encoded, 'base64')),
+    });
+    return textContent({ asset });
+  } catch (error) {
+    if (error instanceof WatchlessJobError) return errorToolResult({ code: error.code, status: error.status, error: error.message });
+    throw error;
+  }
+}
+
+async function handleCommitWatchlessPublish(context: McpAccessAuthContext, args: Record<string, unknown>) {
+  if (!hasMcpScope(context, 'watchless:publish')) return forbiddenToolResult('Missing scope: watchless:publish');
+  const jobId = stringArg(args, 'jobId');
+  const owned = await getOwnedWatchlessJob(jobId, context.userId);
+  if (!owned) return forbiddenToolResult('Watchless job not found or not owned by this account.');
+  if (owned.status === 'completed' || (owned.status === 'queued' && owned.workflowInstanceId)) {
+    return textContent({ job: owned, status: 'already_committed' });
+  }
+  if (owned.status !== 'awaiting_upload') return errorToolResult({ code: 'JOB_NOT_COMMITTABLE', error: `Job is ${owned.status}.` });
+  try {
+    const validation = await validateWatchlessBundle(jobId);
+    await updateWatchlessJobStatus({ jobId, status: 'queued', stage: 'queued', progressCurrent: 5, progressTotal: 100 });
+    let workflowInstanceId: string;
+    try {
+      workflowInstanceId = await startWatchlessWorkflow(jobId, 'publish');
+    } catch (error) {
+      await updateWatchlessJobStatus({
+        jobId,
+        status: 'awaiting_upload',
+        stage: 'awaiting_upload',
+        progressCurrent: 0,
+        progressTotal: 100,
+        errorCode: 'WORKFLOW_START_FAILED',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+    return textContent({ jobId, workflowInstanceId, scenes: validation.article.scenes.length, status: 'queued' });
+  } catch (error) {
+    if (error instanceof WatchlessJobError) return errorToolResult({ code: error.code, status: error.status, error: error.message });
+    throw error;
+  }
+}
+
+async function handleGetWatchlessStatus(context: McpAccessAuthContext, args: Record<string, unknown>) {
+  if (!hasMcpScope(context, 'watchless:publish') && !hasMcpScope(context, 'watchless:submit')) {
+    return forbiddenToolResult('Missing scope: watchless:publish or watchless:submit');
+  }
+  const jobId = stringArg(args, 'jobId');
+  const job = await getOwnedWatchlessJob(jobId, context.userId);
+  if (!job) return forbiddenToolResult('Watchless job not found or not owned by this account.');
+  return textContent({ job, assets: await listWatchlessJobAssets(jobId) });
+}
+
+async function handleRollbackWatchless(context: McpAccessAuthContext, args: Record<string, unknown>) {
+  if (!hasMcpScope(context, 'watchless:publish')) return forbiddenToolResult('Missing scope: watchless:publish');
+  try {
+    const jobId = stringArg(args, 'jobId');
+    const job = await getOwnedWatchlessJob(jobId, context.userId);
+    if (!job) return forbiddenToolResult('Watchless job not found or not owned by this account.');
+    if (['created', 'queued', 'preparing', 'transcribing', 'segmenting', 'rendering', 'validating', 'publishing'].includes(job.status)) {
+      const cancelled = await cancelWatchlessJob(jobId, context.userId);
+      if (['created', 'queued', 'preparing', 'transcribing', 'segmenting', 'rendering'].includes(job.status) && job.workflowInstanceId) {
+        await terminateWatchlessWorkflow(job.workflowInstanceId).catch((error) => {
+          console.error('[MCP] Watchless Workflow termination failed after cancellation:', error);
+        });
+      }
+      return textContent({ job: cancelled });
+    }
+    return textContent({ job: await rollbackWatchlessJob(jobId, context.userId) });
+  } catch (error) {
+    if (error instanceof WatchlessJobError) return errorToolResult({ code: error.code, status: error.status, error: error.message });
+    throw error;
+  }
+}
+
 function isToolError(result: unknown): boolean {
   return Boolean(result && typeof result === 'object' && 'isError' in result);
 }
@@ -633,20 +871,27 @@ function toolResultCode(result: unknown): string | null {
 }
 
 function toolResourceId(name: string, args: Record<string, unknown>, result: unknown): string | null {
-  if (name === 'podsum_submit_youtube_url') {
+  if (name === 'podsum_submit_youtube_url' || name === 'podsum_submit_watchless_url' || name === 'podsum_begin_watchless_publish') {
     if (!isToolError(result)) {
       try {
-        const payload = JSON.parse(textPayload(result)) as { podcast?: { id?: unknown } };
+        const payload = JSON.parse(textPayload(result)) as { podcast?: { id?: unknown }; job?: { id?: unknown } };
         if (typeof payload.podcast?.id === 'string' && payload.podcast.id) {
           return payload.podcast.id;
         }
+        if (typeof payload.job?.id === 'string' && payload.job.id) return payload.job.id;
       } catch {
         // Fall back to the submitted URL below.
       }
     }
-    return stringArg(args, 'url') || stringArg(args, 'youtubeUrl') || null;
+    return stringArg(args, 'url') || stringArg(args, 'youtubeUrl') || stringArg(args, 'videoId') || null;
   }
-  return stringArg(args, 'podcastId') || null;
+  return stringArg(args, 'podcastId') || stringArg(args, 'jobId') || null;
+}
+
+function toolResourceType(name: string): string | null {
+  if (name.startsWith('podsum_') && name.includes('watchless')) return 'watchless_job';
+  if (name === 'podsum_submit_youtube_url') return 'podcast';
+  return null;
 }
 async function handleToolCall(
   context: McpAccessAuthContext,
@@ -670,6 +915,18 @@ async function handleToolCall(
       result = await handleGetCredits(context);
     } else if (name === 'podsum_submit_youtube_url') {
       result = await handleSubmitYoutubeUrl(context, args, request);
+    } else if (name === 'podsum_submit_watchless_url') {
+      result = await handleSubmitWatchlessUrl(context, args);
+    } else if (name === 'podsum_begin_watchless_publish') {
+      result = await handleBeginWatchlessPublish(context, args, request);
+    } else if (name === 'podsum_upload_watchless_asset') {
+      result = await handleUploadWatchlessAsset(context, args);
+    } else if (name === 'podsum_commit_watchless_publish') {
+      result = await handleCommitWatchlessPublish(context, args);
+    } else if (name === 'podsum_get_watchless_publish_status') {
+      result = await handleGetWatchlessStatus(context, args);
+    } else if (name === 'podsum_rollback_watchless_publication') {
+      result = await handleRollbackWatchless(context, args);
     } else {
       throw new Error(`Unknown tool: ${name || '(missing)'}`);
     }
@@ -677,7 +934,7 @@ async function handleToolCall(
     await recordMcpAccessLog({
       context,
       tool: name || 'unknown',
-      resourceType: name === 'podsum_submit_youtube_url' ? 'podcast' : null,
+      resourceType: toolResourceType(name),
       resourceId: toolResourceId(name, args, result),
       ok: !isToolError(result),
       errorCode: toolResultCode(result),
@@ -689,7 +946,7 @@ async function handleToolCall(
     await recordMcpAccessLog({
       context,
       tool: name || 'unknown',
-      resourceType: name === 'podsum_submit_youtube_url' ? 'podcast' : null,
+      resourceType: toolResourceType(name),
       resourceId: stringArg(args, 'podcastId') || stringArg(args, 'url') || stringArg(args, 'youtubeUrl') || null,
       ok: false,
       errorCode: error instanceof Error ? error.message : 'tool_error',

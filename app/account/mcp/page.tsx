@@ -34,6 +34,8 @@ const scopeLabels: Record<string, string> = {
   'podcasts:upload': 'Submit URL',
   'podcasts:write_metadata': 'Edit metadata',
   'jobs:enqueue': 'Retry processing',
+  'watchless:submit': 'Watchless URL conversion (1000 credits)',
+  'watchless:publish': 'Publish Codex Watchless bundle',
 };
 
 function formatDate(value: string | null | undefined): string {
@@ -207,6 +209,8 @@ Optional read-only scope:
 
 Optional write scope:
 - podcasts:upload
+- watchless:submit (full URL-to-article conversion; reserves 1000 credits)
+- watchless:publish (upload an already-generated Codex bundle; no video compute charge)
 
 Available tools:
 - podsum_list_podcasts: input { "limit": 10, "query": "" }
@@ -214,10 +218,17 @@ Available tools:
 - podsum_export_markdown: input { "podcastId": "<podcast_id>", "language": "auto" }
 - podsum_get_credits: input {}
 - podsum_submit_youtube_url: input { "url": "https://www.youtube.com/watch?v=...", "preferredLanguage": "en", "isPublic": false }
+- podsum_submit_watchless_url: input { "url": "https://www.youtube.com/watch?v=...", "rightsConfirmed": true, "isPublic": false }
+- podsum_begin_watchless_publish: input { "videoId": "<11-char id>", "rightsConfirmed": true }
+- podsum_upload_watchless_asset: upload small base64 assets; begin also returns a PUT endpoint for large assets
+- podsum_commit_watchless_publish / podsum_get_watchless_publish_status / podsum_rollback_watchless_publication
 
 Safety rules:
 - Use read-only scopes unless the agent needs to submit YouTube URLs.
 - Treat podsum_submit_youtube_url as a write action that consumes credits and queues analysis.
+- Treat podsum_submit_watchless_url as a high-cost action: it atomically reserves 1000 credits, requires explicit source-rights confirmation, permits one active job and at most three starts per 24 hours.
+- Finished-bundle publishing allows at most three active upload sessions, 100 assets and 350 MiB per session.
+- Grant watchless:publish separately from watchless:submit so an agent that only uploads finished Codex output cannot start video compute.
 - Prefer podsum_export_markdown when writing podcast notes into Obsidian.
 - Never expose the bearer token in a note, prompt, screenshot, or shared log.
 - If authentication fails, ask the user to create a new token from ${typeof window === 'undefined' ? 'https://podsum.cc/account/mcp' : window.location.origin + '/account/mcp'}.`;

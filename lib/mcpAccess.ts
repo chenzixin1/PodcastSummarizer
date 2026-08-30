@@ -12,6 +12,8 @@ export const MCP_SCOPES = [
   'podcasts:upload',
   'podcasts:write_metadata',
   'jobs:enqueue',
+  'watchless:submit',
+  'watchless:publish',
 ] as const;
 
 export const DEFAULT_MCP_SCOPES = [

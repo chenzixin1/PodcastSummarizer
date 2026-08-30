@@ -34,11 +34,30 @@
       "service": "podcast-summarizer"
     }
   ],
+  "workflows": [
+    {
+      "name": "podsum-watchless",
+      "binding": "WATCHLESS_WORKFLOW",
+      "class_name": "WatchlessWorkflow"
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "WatchlessContainer",
+      "image": "./containers/watchless-runtime/Dockerfile",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
         "name": "NEXT_CACHE_DO_QUEUE",
         "class_name": "DOQueueHandler"
+      },
+      {
+        "name": "WATCHLESS_CONTAINER",
+        "class_name": "WatchlessContainer"
       }
     ]
   },
@@ -46,6 +65,10 @@
     {
       "tag": "cache-v1",
       "new_sqlite_classes": ["DOQueueHandler"]
+    },
+    {
+      "tag": "watchless-container-v1",
+      "new_sqlite_classes": ["WatchlessContainer"]
     }
   ],
   "d1_databases": [
@@ -67,6 +90,8 @@
     "OPENROUTER_MODEL": "openai/gpt-4o-mini",
     "OPENROUTER_MINDMAP_MODEL": "openai/gpt-4o-mini",
     "OPENROUTER_INFOGRAPHIC_MODEL": "google/gemini-3-pro-image",
+    "WATCHLESS_MODEL": "openai/gpt-5.6-luna",
+    "WATCHLESS_URL_CREDIT_COST": "1000",
     "INFOGRAPHIC_AUTOMATION_STARTED_AT": "2026-07-11T09:15:46.000Z",
     "INFOGRAPHIC_WORKER_CONCURRENCY": "1",
     "INFOGRAPHIC_JOB_LEASE_SECONDS": "600",

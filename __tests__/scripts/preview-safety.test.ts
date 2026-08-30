@@ -276,12 +276,20 @@ describe('preview deployment safety', () => {
           name: 'NEXT_CACHE_DO_QUEUE',
           class_name: 'DOQueueHandler',
         },
+        {
+          name: 'WATCHLESS_CONTAINER',
+          class_name: 'WatchlessContainer',
+        },
       ],
     });
     expect(production?.migrations).toEqual([
       {
         tag: 'cache-v1',
         new_sqlite_classes: ['DOQueueHandler'],
+      },
+      {
+        tag: 'watchless-container-v1',
+        new_sqlite_classes: ['WatchlessContainer'],
       },
     ]);
 
@@ -291,6 +299,7 @@ describe('preview deployment safety', () => {
     expect(openNextConfig).toContain('do-queue');
     expect(openNextConfig).toContain('queue: doQueue');
     expect(worker).toContain("export { DOQueueHandler } from './.open-next/worker.js'");
+    expect(worker).toContain("export { WatchlessContainer, WatchlessWorkflow } from './workers/watchlessRuntime'");
   });
 
   test('package scripts expose explicit preview deployment and performance commands', () => {

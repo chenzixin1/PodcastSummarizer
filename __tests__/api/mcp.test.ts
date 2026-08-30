@@ -80,7 +80,7 @@ jest.mock('../../lib/workerTrigger', () => ({
 import { POST } from '../../app/mcp/route';
 import { fetchYoutubeSrtViaApify } from '../../lib/apifyTranscript';
 import { authenticateMcpAccessToken, recordMcpAccessLog } from '../../lib/mcpAccess';
-import { createPodcastFromSrt } from '../../lib/podcastUploadPipeline';
+import { createPodcastFromSrt, PodcastUploadError } from '../../lib/podcastUploadPipeline';
 import { triggerWorkerProcessing } from '../../lib/workerTrigger';
 import { nanoid } from 'nanoid';
 
@@ -215,6 +215,34 @@ describe('PodSum MCP API', () => {
     );
   });
 
+  it('separates expensive Watchless conversion from bundle publishing scopes', async () => {
+    mockAuthenticateMcpAccessToken.mockResolvedValueOnce({
+      success: true,
+      data: { tokenId: 'token-123', userId: 'user-123', scopes: ['watchless:publish'] },
+    });
+    const publishResponse = await POST(buildMcpRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+    const publishData = await publishResponse.json();
+    const publishNames = publishData.result.tools.map((tool: { name: string }) => tool.name);
+    expect(publishNames).toEqual(expect.arrayContaining([
+      'podsum_begin_watchless_publish',
+      'podsum_upload_watchless_asset',
+      'podsum_commit_watchless_publish',
+      'podsum_get_watchless_publish_status',
+      'podsum_rollback_watchless_publication',
+    ]));
+    expect(publishNames).not.toContain('podsum_submit_watchless_url');
+
+    mockAuthenticateMcpAccessToken.mockResolvedValueOnce({
+      success: true,
+      data: { tokenId: 'token-456', userId: 'user-123', scopes: ['watchless:submit'] },
+    });
+    const submitResponse = await POST(buildMcpRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' }));
+    const submitData = await submitResponse.json();
+    const submitNames = submitData.result.tools.map((tool: { name: string }) => tool.name);
+    expect(submitNames).toEqual(expect.arrayContaining(['podsum_submit_watchless_url', 'podsum_get_watchless_publish_status']));
+    expect(submitNames).not.toContain('podsum_begin_watchless_publish');
+  });
+
   it('submits a youtube URL through the shared upload pipeline and queues processing', async () => {
     const response = await POST(buildMcpRequest(submitMessage()));
     const data = await response.json();
@@ -336,7 +364,6 @@ describe('PodSum MCP API', () => {
   });
 
   it('maps PodcastUploadError to a structured MCP tool error', async () => {
-    const { PodcastUploadError } = require('../../lib/podcastUploadPipeline');
     mockCreatePodcastFromSrt.mockRejectedValueOnce(
       new PodcastUploadError('INSUFFICIENT_CREDITS', 402, '积分不足，无法继续转换 SRT。', 'Insufficient credits.'),
     );

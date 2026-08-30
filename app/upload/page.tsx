@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, ChangeEvent, FormEvent, useEffect } from 'react';
+import { useState, ChangeEvent, FormEvent, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import AppFrame from '../../components/AppFrame';
@@ -24,8 +24,10 @@ export default function UploadPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isPublic, setIsPublic] = useState(false);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [remainingCredits, setRemainingCredits] = useState<number | null>(null);
   const [creditsLoading, setCreditsLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -87,6 +89,8 @@ export default function UploadPage() {
     const nextFile = event.target.files?.[0] || null;
     setFile(nextFile);
     if (nextFile) {
+      setYoutubeUrl('');
+      setRightsConfirmed(false);
       setError(null);
     }
   };
@@ -100,6 +104,21 @@ export default function UploadPage() {
       return;
     }
 
+    if (file && normalizedYoutubeUrl) {
+      setError('Please submit either an SRT file or a YouTube URL, not both.');
+      return;
+    }
+
+    if (normalizedYoutubeUrl && !rightsConfirmed) {
+      setError('Please confirm that you are authorized to process this video.');
+      return;
+    }
+
+    if (normalizedYoutubeUrl && remainingCredits !== null && remainingCredits < 1000) {
+      setError('Watchless video conversion requires at least 1000 credits.');
+      return;
+    }
+
     if (!session?.user?.id) {
       setError('User session not found. Please sign in again.');
       return;
@@ -109,18 +128,42 @@ export default function UploadPage() {
     setUploadProgress(0);
     setError(null);
 
-    const formData = new FormData();
-    if (file) {
-      formData.append('file', file);
-    }
-    if (normalizedYoutubeUrl) {
-      formData.append('youtubeUrl', normalizedYoutubeUrl);
-      formData.append('sourceReference', normalizedYoutubeUrl);
-    }
-    formData.append('isPublic', isPublic.toString());
-    formData.append('userId', session.user.id);
-
     try {
+      if (normalizedYoutubeUrl) {
+        const response = await fetch('/api/watchless/jobs', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            url: normalizedYoutubeUrl,
+            isPublic,
+            rightsConfirmed,
+            preferredLanguage: 'en-US',
+            idempotencyKey: crypto.randomUUID(),
+          }),
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Watchless conversion could not be started.');
+        }
+
+        const jobId = result?.data?.id as string | undefined;
+        if (!jobId) {
+          throw new Error('Watchless conversion started but the job id is missing.');
+        }
+
+        setUploadProgress(100);
+        router.push(`/watchless/jobs/${jobId}`);
+        return;
+      }
+
+      const formData = new FormData();
+      if (file) {
+        formData.append('file', file);
+      }
+      formData.append('isPublic', isPublic.toString());
+      formData.append('userId', session.user.id);
+
       const response = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
@@ -153,8 +196,10 @@ export default function UploadPage() {
     setUploading(false);
   };
 
+  const hasYoutubeUrl = Boolean(youtubeUrl.trim());
+  const insufficientCredits = remainingCredits !== null && (hasYoutubeUrl ? remainingCredits < 1000 : remainingCredits <= 0);
   const isSubmitDisabled =
-    uploading || (!file && !youtubeUrl.trim()) || (remainingCredits !== null && remainingCredits <= 0);
+    uploading || (!file && !hasYoutubeUrl) || (file !== null && hasYoutubeUrl) || insufficientCredits || (hasYoutubeUrl && !rightsConfirmed);
 
   return (
     <AppFrame currentLabel="Upload" showViewTabs={false} mainClassName="mx-auto w-full max-w-[1400px] flex-grow p-4 sm:p-6 lg:p-8">
@@ -167,10 +212,12 @@ export default function UploadPage() {
               <span className="font-semibold text-[var(--heading)]">
                 {creditsLoading ? 'Loading...' : remainingCredits ?? '--'}
               </span>
-              <span className="ml-2 text-[var(--text-muted)]">(1 credit = 1 SRT conversion)</span>
+              <span className="ml-2 text-[var(--text-muted)]">(SRT: 1 · Watchless video: 1000)</span>
             </p>
-            {!creditsLoading && remainingCredits === 0 && (
-              <p className="text-sm text-[var(--danger)]">No credits left. Please contact support to add credits.</p>
+            {!creditsLoading && insufficientCredits && (
+              <p className="text-sm text-[var(--danger)]">
+                {hasYoutubeUrl ? 'Watchless video conversion requires at least 1000 credits.' : 'No credits left. Please contact support to add credits.'}
+              </p>
             )}
           </div>
 
@@ -181,6 +228,7 @@ export default function UploadPage() {
               </label>
               <input
                 id="srtFile"
+                ref={fileInputRef}
                 name="srtFile"
                 type="file"
                 accept=".srt,application/x-subrip"
@@ -205,11 +253,38 @@ export default function UploadPage() {
                 type="url"
                 placeholder="https://www.youtube.com/watch?v=..."
                 value={youtubeUrl}
-                onChange={(event) => setYoutubeUrl(event.target.value)}
+                onChange={(event) => {
+                  setYoutubeUrl(event.target.value);
+                  if (event.target.value.trim()) {
+                    setFile(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }
+                  setRightsConfirmed(false);
+                  setError(null);
+                }}
                 className="w-full rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-3 py-2.5 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--border-medium)]"
                 disabled={uploading}
               />
             </div>
+
+            {hasYoutubeUrl && (
+              <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--paper-subtle)] p-4 space-y-3">
+                <p className="text-sm font-semibold text-[var(--heading)]">Full Watchless conversion</p>
+                <p className="text-xs leading-5 text-[var(--text-muted)]">
+                  This generates the transcript, speaker-separated article, scenes, keyframes and PDF. 1000 credits are reserved now and refunded automatically if processing fails or is cancelled.
+                </p>
+                <label className="flex cursor-pointer items-start gap-3 text-sm text-[var(--text-secondary)]">
+                  <input
+                    type="checkbox"
+                    checked={rightsConfirmed}
+                    onChange={(event) => setRightsConfirmed(event.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-[var(--border-medium)] accent-[var(--btn-primary)]"
+                    disabled={uploading}
+                  />
+                  <span>I confirm that I am authorized to process this video and publish the generated result.</span>
+                </label>
+              </div>
+            )}
 
             <div className="space-y-2">
               <label className="inline-flex items-center cursor-pointer">
@@ -235,7 +310,9 @@ export default function UploadPage() {
                     style={{ width: `${uploadProgress}%` }}
                   ></div>
                 </div>
-                <p className="text-xs text-[var(--text-muted)] text-center">Uploading and queueing analysis...</p>
+                <p className="text-xs text-[var(--text-muted)] text-center">
+                  {hasYoutubeUrl ? 'Starting the Watchless workflow…' : 'Uploading and queueing analysis…'}
+                </p>
               </div>
             )}
 
@@ -250,7 +327,7 @@ export default function UploadPage() {
               disabled={isSubmitDisabled}
               className="w-full rounded-lg bg-[var(--btn-primary)] hover:bg-[var(--btn-primary-hover)] disabled:bg-[var(--paper-subtle)] disabled:text-[var(--text-muted)] text-[var(--btn-primary-text)] font-semibold py-3 px-4 transition-colors disabled:cursor-not-allowed"
             >
-              {uploading ? 'Uploading...' : 'Upload & Process'}
+              {uploading ? 'Starting…' : hasYoutubeUrl ? 'Convert with Watchless · 1000 credits' : 'Upload & Process'}
             </button>
           </form>
         </section>
