@@ -96,7 +96,7 @@
 
   本地镜像构建与健康检查通过。
 
-- [ ] **Task 7: 注册发布**
+- [x] **Task 7: 注册发布**
 
   **Files:**
   - Deploy: `migrations/d1/*.sql`
