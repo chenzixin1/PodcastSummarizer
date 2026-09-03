@@ -60,7 +60,7 @@ const ASSET_CONTENT_TYPES: Record<WatchlessAssetRole, ReadonlySet<string>> = {
   transcript: new Set(['text/plain', 'application/x-subrip']),
   html: new Set(['text/html']),
   manifest: new Set(['application/json']),
-  other: new Set(['application/octet-stream']),
+  other: new Set(['application/octet-stream', 'audio/mpeg']),
 };
 
 type D1Result<T = Record<string, unknown>> = { results?: T[]; meta?: { changes?: number } };
@@ -121,6 +121,8 @@ export interface WatchlessJobAsset {
   sizeBytes: number;
   sha256: string;
   status: 'uploaded' | 'published' | 'deleted';
+  createdAt: string;
+  updatedAt: string;
 }
 
 export class WatchlessJobError extends Error {
@@ -205,6 +207,8 @@ function mapAsset(row: Record<string, unknown>): WatchlessJobAsset {
     sizeBytes: Number(row.sizeBytes ?? row.size_bytes ?? 0),
     sha256: String(row.sha256 || ''),
     status: String(row.status || 'uploaded') as WatchlessJobAsset['status'],
+    createdAt: asDateString(row.createdAt || row.created_at),
+    updatedAt: asDateString(row.updatedAt || row.updated_at),
   };
 }
 
@@ -657,7 +661,7 @@ export async function recordInternalWatchlessAsset(input: {
   if (currentBytes - replacedBytes + bytes.byteLength > WATCHLESS_MAX_TOTAL_ASSET_BYTES) {
     throw new WatchlessJobError('TOTAL_ASSET_SIZE_LIMIT', 'Watchless upload exceeds the total asset size limit.', 413);
   }
-  const objectKey = `watchless-staging/${job.id}/${assetPath}`;
+  const objectKey = `watchless-runs/${job.id}/${assetPath}`;
   await uploadObject(objectKey, bytes, { contentType });
   const id = `wla_${nanoid(16)}`;
   try {
@@ -946,9 +950,9 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
       WHERE id = ?
     `).bind(entry.key, entry.asset.id)),
       database.prepare(`
-        UPDATE watchless_job_assets SET status = 'deleted', updated_at = CURRENT_TIMESTAMP
+        UPDATE watchless_job_assets SET object_key = ?, status = 'published', updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).bind(articleAsset.id),
+      `).bind(articleKey, articleAsset.id),
       database.prepare(`
       UPDATE watchless_jobs SET
         status = 'completed', stage = 'completed', progress_current = 100, progress_total = 100,
@@ -990,7 +994,6 @@ export async function failWatchlessJob(jobId: string, code: string, message: str
     message: `Failed during ${current.stage || current.status}.`,
   });
   if (job.creditStatus === 'reserved') await refundWatchlessJobCredits(jobId, `${code}: ${message}`);
-  await cleanupWatchlessStagingAssets(jobId);
   return (await getWatchlessJob(jobId)) || job;
 }
 

@@ -25,6 +25,7 @@ interface RuntimeStatus {
   errorCode?: string;
   stage?: string;
   progress?: number;
+  pollUnavailable?: boolean;
 }
 
 export class WatchlessContainer extends Container<WatchlessRuntimeEnv> {
@@ -98,15 +99,36 @@ export class WatchlessWorkflow extends WorkflowEntrypoint<WatchlessRuntimeEnv, W
         if (!response.ok) throw new Error(`Container rejected job (${response.status}): ${await response.text()}`);
       });
 
+      let unavailablePolls = 0;
       for (let poll = 1; poll <= 240; poll += 1) {
         const status = await step.do(`poll runtime ${poll}`, async () => {
-          const response = await container.fetch(`http://container/jobs/${encodeURIComponent(jobId)}`, {
-            headers: { 'x-runtime-secret': this.env.WATCHLESS_INTERNAL_SECRET },
-          });
-          if (!response.ok) throw new Error(`Container status failed (${response.status})`);
-          return await response.json<RuntimeStatus>();
+          try {
+            const response = await container.fetch(`http://container/jobs/${encodeURIComponent(jobId)}`, {
+              headers: { 'x-runtime-secret': this.env.WATCHLESS_INTERNAL_SECRET },
+            });
+            if (!response.ok) {
+              return {
+                status: 'running',
+                error: `Container status temporarily unavailable (${response.status})`,
+                errorCode: 'WATCHLESS_CONTAINER_STATUS_UNAVAILABLE',
+                pollUnavailable: true,
+              } satisfies RuntimeStatus;
+            }
+            return await response.json<RuntimeStatus>();
+          } catch (error) {
+            return {
+              status: 'running',
+              error: error instanceof Error ? error.message : String(error),
+              errorCode: 'WATCHLESS_CONTAINER_STATUS_UNAVAILABLE',
+              pollUnavailable: true,
+            } satisfies RuntimeStatus;
+          }
         });
         runtimeStatus = status;
+        unavailablePolls = status.pollUnavailable ? unavailablePolls + 1 : 0;
+        if (unavailablePolls >= 20) {
+          throw new Error(status.error || 'Container status remained unavailable for ten minutes.');
+        }
         if (status.status === 'completed') break;
         if (status.status === 'failed') throw new Error(status.error || 'Watchless container failed.');
         if (poll === 240) throw new Error('Watchless runtime timed out after two hours.');

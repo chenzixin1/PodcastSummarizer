@@ -1,8 +1,8 @@
 'use client';
 
-import { AlertTriangle, Check, ChevronRight, Circle, Clock3, Coins, Copy, ExternalLink, FileText, LoaderCircle } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Circle, Clock3, Coins, Copy, Download, ExternalLink, FileText, LoaderCircle } from 'lucide-react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppFrame from '../../../../components/AppFrame';
 import {
@@ -19,7 +19,10 @@ type WatchlessJobEvent = {
   message: string | null; createdAt: string;
 };
 
-type WatchlessJobAsset = { id: string; role: string; assetPath: string; sizeBytes: number; status: string };
+type WatchlessJobAsset = {
+  id: string; role: string; assetPath: string; contentType: string; sizeBytes: number;
+  sha256: string; status: string; createdAt: string; updatedAt: string; downloadUrl: string;
+};
 
 type WatchlessJob = {
   id: string; sourceKind: 'url' | 'mcp_bundle'; sourceUrl: string | null; videoId: string | null;
@@ -81,9 +84,27 @@ function modelLabel(model: string | null): string {
   return model === 'openai/gpt-5.6-luna' ? 'GPT-5.6 Luna · OpenRouter' : model || '—';
 }
 
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 1) return '0 B';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function artifactLabel(path: string, role: string): string {
+  if (path.endsWith('source-metadata.json')) return '视频来源元数据';
+  if (path.endsWith('audio.mp3')) return '压缩语音轨道';
+  if (path.endsWith('asr-raw.json')) return 'ASR 原始识别结果';
+  if (path.endsWith('scene-structure.json')) return '场景与说话人结构';
+  if (path.endsWith('transcript.txt')) return '原话转录文本';
+  if (role === 'keyframe') return '场景关键帧';
+  if (role === 'article') return '完整图文数据';
+  if (role === 'pdf') return '完整图文 PDF';
+  return path.split('/').filter(Boolean).pop() || '过程产物';
+}
+
 export default function WatchlessJobPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const [job, setJob] = useState<WatchlessJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -117,13 +138,6 @@ export default function WatchlessJobPage() {
     void poll();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [loadJob]);
-
-  useEffect(() => {
-    if (job?.status === 'completed' && job.outputPodcastId) {
-      const timer = setTimeout(() => router.replace(`/dashboard/${job.outputPodcastId}`), 1200);
-      return () => clearTimeout(timer);
-    }
-  }, [job?.outputPodcastId, job?.status, router]);
 
   const progress = useMemo(() => job ? watchlessProgress(job.status, job.progressCurrent, job.progressTotal) : 0, [job]);
   const stageDefinitions = job?.sourceKind === 'mcp_bundle' ? MCP_STAGE_DEFINITIONS : WATCHLESS_STAGE_DEFINITIONS;
@@ -215,6 +229,31 @@ export default function WatchlessJobPage() {
                 <div className="flex gap-3"><AlertTriangle className="mt-0.5 shrink-0 text-[var(--danger)]" size={20} aria-hidden="true" /><div><h2 className="font-bold text-[var(--heading)]">{failure.title}</h2><p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">{failure.detail}</p></div></div>
                 <details className="mt-4 border-t border-[#ead1cd] pt-3 text-sm"><summary className="cursor-pointer font-semibold text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--btn-primary)]">查看技术信息</summary><dl className="mt-3 grid gap-2 text-xs leading-5 text-[var(--text-muted)]"><div><dt className="inline font-semibold">错误代码：</dt><dd className="inline break-all">{job?.errorCode || 'UNKNOWN'}</dd></div><div><dt className="inline font-semibold">原始信息：</dt><dd className="inline break-words">{job?.errorMessage || 'No error message was recorded.'}</dd></div></dl></details>
               </div>
+            ) : null}
+
+            {job?.assets?.length ? (
+              <section className="mt-7 border-t border-[var(--border-soft)] pt-5" aria-labelledby="saved-artifacts-title">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <h2 id="saved-artifacts-title" className="text-sm font-bold text-[var(--heading)]">已保存的过程产物</h2>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">阶段完成后立即写入对象存储；即使转换失败也会保留，便于诊断和复用。</p>
+                  </div>
+                  <span className="text-xs text-[var(--text-muted)]">{job.assets.length} 个</span>
+                </div>
+                <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {job.assets.map((asset) => (
+                    <li key={asset.id}>
+                      <a href={asset.downloadUrl} className="group flex min-h-16 items-center justify-between gap-3 rounded-xl border border-[var(--border-soft)] bg-[var(--paper-subtle)] px-3.5 py-3 hover:border-[var(--border-medium)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--btn-primary)]">
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold text-[var(--heading)]">{artifactLabel(asset.assetPath, asset.role)}</span>
+                          <span className="mt-1 block truncate text-xs text-[var(--text-muted)]">{asset.assetPath} · {formatBytes(asset.sizeBytes)}</span>
+                        </span>
+                        <Download size={16} className="shrink-0 text-[var(--text-muted)] group-hover:text-[var(--heading)]" aria-hidden="true" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             ) : null}
 
             {job?.events?.length ? (

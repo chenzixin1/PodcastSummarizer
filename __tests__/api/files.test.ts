@@ -19,6 +19,14 @@ describe('public object route', () => {
     expect(mockGetObject).not.toHaveBeenCalled();
   });
 
+  test('never exposes retained Watchless run artifacts without owner authentication', async () => {
+    const response = await GET({} as NextRequest, {
+      params: Promise.resolve({ key: ['watchless-runs', 'wl_secret', 'intermediate', 'asr-raw.json'] }),
+    });
+    expect(response.status).toBe(404);
+    expect(mockGetObject).not.toHaveBeenCalled();
+  });
+
   test('continues serving published object paths', async () => {
     const response = await GET({} as NextRequest, {
       params: Promise.resolve({ key: ['watchless', 'video123456', 'article.json'] }),

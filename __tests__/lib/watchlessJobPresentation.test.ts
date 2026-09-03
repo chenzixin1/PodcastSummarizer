@@ -44,4 +44,16 @@ describe('Watchless job presentation', () => {
       detail: '任务在第一个图文产物上传前停止。这是一条旧任务，当时尚未记录子阶段，因此无法进一步区分语音识别或内容分段请求。',
     });
   });
+
+  test('explains a persistent runtime status outage and retained artifacts', () => {
+    expect(explainWatchlessFailure({
+      errorCode: 'WATCHLESS_CONTAINER_STATUS_UNAVAILABLE',
+      errorMessage: 'Container status remained unavailable for ten minutes.',
+      assetCount: 3,
+      hasDetailedEvents: true,
+    })).toEqual({
+      title: '运行环境状态连续不可用',
+      detail: '系统无法持续读取独立运行环境的状态，已安全停止任务并退回积分。已保存的过程产物仍可在下方下载。',
+    });
+  });
 });

@@ -90,6 +90,9 @@ export function explainWatchlessFailure(input: {
   if (input.errorCode === 'WATCHLESS_MEDIA_TIMEOUT') {
     return { title: '视频下载或媒体处理超时', detail: '视频下载、音轨提取或关键帧处理超过了运行时限。积分已自动退回。' };
   }
+  if (input.errorCode === 'WATCHLESS_CONTAINER_STATUS_UNAVAILABLE') {
+    return { title: '运行环境状态连续不可用', detail: '系统无法持续读取独立运行环境的状态，已安全停止任务并退回积分。已保存的过程产物仍可在下方下载。' };
+  }
   return {
     title: '转换流程未能完成',
     detail: input.hasDetailedEvents

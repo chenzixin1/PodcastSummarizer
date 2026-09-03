@@ -20,7 +20,20 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       listWatchlessJobAssets(id),
       listWatchlessJobEvents(id),
     ]);
-    return NextResponse.json({ success: true, data: { ...job, assets, events } });
+    const safeAssets = assets.map((asset) => ({
+      id: asset.id,
+      jobId: asset.jobId,
+      assetPath: asset.assetPath,
+      role: asset.role,
+      contentType: asset.contentType,
+      sizeBytes: asset.sizeBytes,
+      sha256: asset.sha256,
+      status: asset.status,
+      createdAt: asset.createdAt,
+      updatedAt: asset.updatedAt,
+      downloadUrl: `/api/watchless/jobs/${encodeURIComponent(id)}/assets/${encodeURIComponent(asset.id)}`,
+    }));
+    return NextResponse.json({ success: true, data: { ...job, assets: safeAssets, events } });
   } catch (error) {
     return watchlessErrorResponse(error);
   }

@@ -54,10 +54,23 @@ async def callback(path: str, method: str = "POST", **kwargs: Any) -> httpx.Resp
     headers = kwargs.pop("headers", {})
     headers["x-watchless-internal-secret"] = os.environ["WATCHLESS_INTERNAL_SECRET"]
     timeout = httpx.Timeout(connect=30, read=180, write=300, pool=30)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.request(method, f"{base}{path}", headers=headers, **kwargs)
-        response.raise_for_status()
-        return response
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.request(method, f"{base}{path}", headers=headers, **kwargs)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            if exc.response.status_code < 500 or attempt == 2:
+                raise
+        except httpx.TransportError as exc:
+            last_error = exc
+            if attempt == 2:
+                raise
+        await asyncio.sleep(2 ** attempt)
+    raise last_error or RuntimeError("PodSum callback failed")
 
 
 async def status(
@@ -95,7 +108,7 @@ def failure_code(exc: Exception) -> str:
 
 
 async def upload(job_id: str, path: str, role: str, file: Path, content_type: str) -> None:
-    data = file.read_bytes()
+    data = await asyncio.to_thread(file.read_bytes)
     digest = hashlib.sha256(data).hexdigest()
     await callback(
         f"/api/watchless/jobs/internal/{quote(job_id)}/assets?path={quote(path)}&role={quote(role)}",
@@ -295,27 +308,54 @@ async def process(job_id: str) -> None:
         source = str(job.get("sourceUrl") or "")
         video_id = video_id_from_url(source)
         await status(job_id, "preparing", "preparing_metadata", 5, "正在读取视频信息")
-        metadata = json.loads(run(["yt-dlp", "--no-playlist", "--no-warnings", "--dump-single-json", source], 180))
+        metadata = json.loads(await asyncio.to_thread(
+            run,
+            ["yt-dlp", "--no-playlist", "--no-warnings", "--dump-single-json", source],
+            180,
+        ))
         duration = float(metadata.get("duration") or 0)
         if duration <= 0 or duration > 7200:
             raise RuntimeError("Video duration must be between 1 second and 2 hours")
+        metadata_path = work / "source-metadata.json"
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        await upload(job_id, "intermediate/source-metadata.json", "manifest", metadata_path, "application/json")
+        await status(job_id, "preparing", "preparing_metadata", 8, "视频来源元数据已保存", metadata.get("title"))
         video = work / "video.mp4"
         await status(job_id, "preparing", "preparing_download", 10, "正在下载授权视频", metadata.get("title"))
-        run(["yt-dlp", "--no-playlist", "--max-filesize", "1G", "-f", "bv*[height<=1080]+ba/b[height<=1080]", "--merge-output-format", "mp4", "-o", str(video), source], 2400)
+        await asyncio.to_thread(
+            run,
+            ["yt-dlp", "--no-playlist", "--max-filesize", "1G", "-f", "bv*[height<=1080]+ba/b[height<=1080]", "--merge-output-format", "mp4", "-o", str(video), source],
+            2400,
+        )
         if not video.exists() or video.stat().st_size > 1024 * 1024 * 1024:
             raise RuntimeError("Video download missing or exceeds 1 GiB")
         audio = work / "audio.mp3"
         await status(job_id, "preparing", "preparing_audio", 18, "正在提取语音轨道", metadata.get("title"))
-        run(["ffmpeg", "-nostdin", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", str(audio)], 1800)
+        await asyncio.to_thread(
+            run,
+            ["ffmpeg", "-nostdin", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", str(audio)],
+            1800,
+        )
+        await upload(job_id, "intermediate/audio.mp3", "other", audio, "audio/mpeg")
+        await status(job_id, "preparing", "preparing_audio", 22, "压缩语音轨道已保存", metadata.get("title"))
         await status(job_id, "transcribing", "transcribing_upload", 25, "正在上传音频并识别原话", metadata.get("title"))
         asr = await asyncio.to_thread(transcribe, audio, job.get("preferredLanguage") or "en-US")
+        asr_path = work / "asr-raw.json"
+        asr_path.write_text(json.dumps(asr, ensure_ascii=False, indent=2), encoding="utf-8")
+        await upload(job_id, "intermediate/asr-raw.json", "manifest", asr_path, "application/json")
         transcript, utterances = transcript_lines(asr)
         if not utterances:
             raise RuntimeError("Transcript is empty")
         transcript_path = work / "transcript.txt"
         transcript_path.write_text(transcript, encoding="utf-8")
+        await upload(job_id, "transcript.txt", "transcript", transcript_path, "text/plain; charset=utf-8")
+        await status(job_id, "transcribing", "transcribing_upload", 45, "ASR 原始结果和原话转录已保存", metadata.get("title"))
         await status(job_id, "segmenting", "segmenting_structure", 50, "正在识别说话人并划分场景")
         generated = await asyncio.to_thread(openrouter_article, {"title": metadata.get("title"), "author": metadata.get("uploader")}, utterances, duration)
+        structure_path = work / "scene-structure.json"
+        structure_path.write_text(json.dumps(generated, ensure_ascii=False, indent=2), encoding="utf-8")
+        await upload(job_id, "intermediate/scene-structure.json", "manifest", structure_path, "application/json")
+        await status(job_id, "segmenting", "segmenting_structure", 60, "说话人与场景结构已保存", metadata.get("title"))
         def clean_speaker_name(value: Any) -> str:
             return re.sub(r"[\r\n:]+", " ", str(value or "")).strip()[:80]
 
@@ -333,6 +373,7 @@ async def process(job_id: str) -> None:
             for item in utterances
         )
         transcript_path.write_text(transcript, encoding="utf-8")
+        await upload(job_id, "transcript.txt", "transcript", transcript_path, "text/plain; charset=utf-8")
         scenes = sorted(generated["scenes"], key=lambda item: float(item.get("startSec", 0)))
         max_scene_count = max(1, min(30, int(duration)))
         if len(scenes) > max_scene_count:
@@ -362,7 +403,11 @@ async def process(job_id: str) -> None:
             scene["keyframeAlt"] = scene.get("visualDescriptionZh") or scene["titleZh"]
             frame = work / f"scene_{index + 1:03d}.jpg"
             midpoint = min(duration, (scene["startSec"] + scene["endSec"]) / 2)
-            run(["ffmpeg", "-nostdin", "-y", "-ss", str(midpoint), "-i", str(video), "-frames:v", "1", "-q:v", "3", str(frame)], 120)
+            await asyncio.to_thread(
+                run,
+                ["ffmpeg", "-nostdin", "-y", "-ss", str(midpoint), "-i", str(video), "-frames:v", "1", "-q:v", "3", str(frame)],
+                120,
+            )
             await upload(job_id, f"keyframes/{frame.name}", "keyframe", frame, "image/jpeg")
             frame_progress = 65 + round(((index + 1) / max(1, len(scenes))) * 10)
             states[job_id] = {"status": "running", "stage": "rendering_keyframes", "progress": frame_progress}
@@ -422,7 +467,7 @@ async def create_job(body: JobRequest, tasks: BackgroundTasks, x_runtime_secret:
 
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str, x_runtime_secret: str | None = Header(default=None)) -> dict[str, str]:
+def get_job(job_id: str, x_runtime_secret: str | None = Header(default=None)) -> dict[str, Any]:
     if not secret_ok(x_runtime_secret):
         raise HTTPException(403, "Forbidden")
     if job_id not in states:
