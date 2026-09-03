@@ -13,7 +13,11 @@ type WatchlessWorkflowEnv = {
   WATCHLESS_WORKFLOW?: WorkflowBinding;
 };
 
-export async function startWatchlessWorkflow(jobId: string, mode: WatchlessWorkflowMode): Promise<string> {
+export async function startWatchlessWorkflow(
+  jobId: string,
+  mode: WatchlessWorkflowMode,
+  options: { uniqueAttempt?: boolean } = {},
+): Promise<string> {
   let env: WatchlessWorkflowEnv;
   try {
     const context = await getCloudflareContext({ async: true });
@@ -26,7 +30,8 @@ export async function startWatchlessWorkflow(jobId: string, mode: WatchlessWorkf
     throw new Error('WATCHLESS_WORKFLOW binding is not configured.');
   }
 
-  const instanceId = `watchless-${jobId}`;
+  const attemptSuffix = options.uniqueAttempt ? `-${crypto.randomUUID()}` : '';
+  const instanceId = `watchless-${jobId}${attemptSuffix}`;
   const instance = await env.WATCHLESS_WORKFLOW.create({
     id: instanceId,
     params: { jobId, mode },

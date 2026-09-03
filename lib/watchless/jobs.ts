@@ -481,6 +481,79 @@ export async function createWatchlessUrlJob(input: {
   }
 }
 
+export async function retryWatchlessUrlJob(jobId: string, userId: string): Promise<WatchlessJob> {
+  const current = await getOwnedWatchlessJob(jobId, userId);
+  if (!current) throw new WatchlessJobError('JOB_NOT_FOUND', 'Watchless job not found.', 404);
+  if (current.sourceKind !== 'url') {
+    throw new WatchlessJobError('RETRY_NOT_SUPPORTED', 'Only URL conversion jobs can be retried.', 409);
+  }
+  if (current.status !== 'failed' || current.creditStatus !== 'refunded') {
+    throw new WatchlessJobError('JOB_NOT_RETRYABLE', 'Only failed, refunded URL jobs can be retried.', 409);
+  }
+  const publication = await sql`
+    SELECT podcast_id FROM watchless_publications WHERE video_id = ${current.videoId} LIMIT 1
+  `;
+  if (publication.rows[0]) {
+    throw new WatchlessJobError('VIDEO_ALREADY_PUBLISHED', 'This video already has a PodSum publication.', 409);
+  }
+
+  const database = d1();
+  const transactionId = nanoid();
+  const model = modelForOnlineWatchless();
+  const results = await database.batch([
+    database.prepare(`
+      UPDATE users SET credits = credits - ?
+      WHERE id = ? AND credits >= ?
+        AND EXISTS (
+          SELECT 1 FROM watchless_jobs
+          WHERE id = ? AND user_id = ? AND source_kind = 'url'
+            AND status = 'failed' AND credit_status = 'refunded'
+        )
+        AND (
+          SELECT COUNT(*) FROM watchless_jobs
+          WHERE user_id = ?
+            AND status IN ('created', 'queued', 'preparing', 'transcribing', 'segmenting', 'rendering', 'validating', 'publishing')
+        ) < ?
+      RETURNING id, credits
+    `).bind(
+      WATCHLESS_URL_CREDIT_COST, userId, WATCHLESS_URL_CREDIT_COST,
+      jobId, userId, userId, WATCHLESS_MAX_ACTIVE_JOBS_PER_USER,
+    ),
+    database.prepare(`
+      UPDATE watchless_jobs SET
+        status = 'queued', stage = 'queued', progress_current = 0, progress_total = 100,
+        workflow_instance_id = NULL, container_instance_name = NULL, model = ?,
+        credit_status = 'reserved', error_code = NULL, error_message = NULL,
+        started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ? AND status = 'failed' AND credit_status = 'refunded'
+        AND changes() = 1
+      RETURNING *
+    `).bind(model, jobId, userId),
+    database.prepare(`
+      INSERT INTO credit_transactions (
+        id, user_id, delta, balance_after, reason, source, ref_type, ref_id, note
+      )
+      SELECT ?, ?, ?, credits, 'watchless_credit_reservation', 'watchless_retry', 'watchless_job', ?, ?
+      FROM users
+      WHERE id = ? AND changes() = 1
+    `).bind(
+      transactionId, userId, -WATCHLESS_URL_CREDIT_COST, jobId,
+      `Reserved ${WATCHLESS_URL_CREDIT_COST} credits for Watchless retry`, userId,
+    ),
+  ]);
+  const retried = results[1]?.results?.[0];
+  if (!retried) {
+    throw new WatchlessJobError(
+      'WATCHLESS_RETRY_LIMIT_OR_CREDITS',
+      `At least ${WATCHLESS_URL_CREDIT_COST} available credits and no other active Watchless job are required.`,
+      402,
+    );
+  }
+  const job = mapJob(retried);
+  await recordWatchlessJobEvent(job, 'Retry accepted; retained artifacts remain available until replaced.');
+  return job;
+}
+
 export async function createWatchlessBundleJob(input: {
   userId: string;
   videoId: string;
@@ -896,7 +969,10 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
     };
     const finalArticle = normalizeWatchlessArticle(finalArticleInput);
     if (!finalArticle) throw new WatchlessJobError('FINAL_ARTICLE_VALIDATION_FAILED', 'Final article URL rewrite failed validation.', 500);
-    await uploadObject(articleKey, `${JSON.stringify(finalArticle, null, 2)}\n`, { contentType: 'application/json; charset=utf-8' });
+    const finalArticleJson = `${JSON.stringify(finalArticle, null, 2)}\n`;
+    const finalArticleBytes = new TextEncoder().encode(finalArticleJson);
+    const finalArticleSha256 = createHash('sha256').update(finalArticleBytes).digest('hex');
+    await uploadObject(articleKey, finalArticleBytes, { contentType: 'application/json; charset=utf-8' });
 
     const fullText = finalArticle.scenes.map((scene) => scene.articleZh).join('\n\n');
     const tags = JSON.stringify(highConfidenceTags(finalArticle));
@@ -950,9 +1026,11 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
       WHERE id = ?
     `).bind(entry.key, entry.asset.id)),
       database.prepare(`
-        UPDATE watchless_job_assets SET object_key = ?, status = 'published', updated_at = CURRENT_TIMESTAMP
+        UPDATE watchless_job_assets SET
+          object_key = ?, content_type = 'application/json; charset=utf-8',
+          size_bytes = ?, sha256 = ?, status = 'published', updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).bind(articleKey, articleAsset.id),
+      `).bind(articleKey, finalArticleBytes.byteLength, finalArticleSha256, articleAsset.id),
       database.prepare(`
       UPDATE watchless_jobs SET
         status = 'completed', stage = 'completed', progress_current = 100, progress_total = 100,

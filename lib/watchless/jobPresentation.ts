@@ -93,6 +93,9 @@ export function explainWatchlessFailure(input: {
   if (input.errorCode === 'WATCHLESS_CONTAINER_STATUS_UNAVAILABLE') {
     return { title: '运行环境状态连续不可用', detail: '系统无法持续读取独立运行环境的状态，已安全停止任务并退回积分。已保存的过程产物仍可在下方下载。' };
   }
+  if (input.errorCode?.startsWith('WATCHLESS_OPENROUTER_HTTP_')) {
+    return { title: '内容分段模型调用失败', detail: '原话转录等已完成产物仍然保留。可查看技术信息确认模型服务返回原因，修复后直接重新运行同一任务。' };
+  }
   return {
     title: '转换流程未能完成',
     detail: input.hasDetailedEvents

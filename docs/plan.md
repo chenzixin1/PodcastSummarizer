@@ -68,7 +68,23 @@
 
   桌面和手机视口通过真实浏览器回读，页面与接口一致。
 
-- [ ] **Task 6: Dockerfile 检查/生成**
+- [x] **Task 5.5: 生产失败任务可恢复重跑**
+
+  **Files:**
+  - Modify: `containers/watchless-runtime/app.py`
+  - Modify: `lib/watchless/jobs.ts`
+  - Create: `app/api/watchless/jobs/[id]/retry/route.ts`
+  - Modify: `app/watchless/jobs/[id]/page.tsx`
+
+  **Step 1:** 根据 OpenRouter 官方模型目录校验 Luna 参数能力，移除不兼容的 `temperature`，并记录脱敏错误摘要。
+
+  **Step 2:** 同一失败 URL 任务可重新运行，不占用新的每日提交名额；重新校验 1000 积分，保留现有过程产物，并启动唯一 Workflow 尝试。
+
+  **Step 3: 验证**
+
+  部署后在原 3 分钟任务上完成重跑。
+
+- [x] **Task 6: Dockerfile 检查/生成**
 
   **Files:**
   - Verify/Modify: `containers/watchless-runtime/Dockerfile`

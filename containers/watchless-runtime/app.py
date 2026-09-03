@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,12 @@ if MODEL != "openai/gpt-5.6-luna":
 
 class JobRequest(BaseModel):
     jobId: str
+
+
+class OpenRouterError(RuntimeError):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(f"OpenRouter HTTP {status_code}: {message}")
+        self.status_code = status_code
 
 
 def secret_ok(value: str | None) -> bool:
@@ -96,6 +103,8 @@ async def status(
 
 
 def failure_code(exc: Exception) -> str:
+    if isinstance(exc, OpenRouterError):
+        return f"WATCHLESS_OPENROUTER_HTTP_{exc.status_code}"
     if isinstance(exc, httpx.WriteTimeout):
         return "WATCHLESS_UPSTREAM_WRITE_TIMEOUT"
     if isinstance(exc, httpx.ReadTimeout):
@@ -225,13 +234,15 @@ def openrouter_article(metadata: dict[str, Any], utterances: list[dict[str, Any]
     schema = {
         "type": "object",
         "properties": {
-            "titleZh": {"type": "string"}, "summaryZh": {"type": "string"}, "summaryEn": {"type": "string"},
+            "titleZh": {"type": "string", "minLength": 1},
+            "summaryZh": {"type": "string", "minLength": 1},
+            "summaryEn": {"type": "string", "minLength": 1},
             "speakers": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object", "properties": {
-                "id": {"type": "string"}, "name": {"type": "string"}},
+                "id": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1}},
                 "required": ["id", "name"], "additionalProperties": False}},
             "scenes": {"type": "array", "minItems": 3, "maxItems": 30, "items": {"type": "object", "properties": {
-                "titleZh": {"type": "string"}, "startSec": {"type": "number"}, "endSec": {"type": "number"},
-                "visualDescriptionZh": {"type": "string"}, "boundaryReasonEn": {"type": "string"}},
+                "titleZh": {"type": "string", "minLength": 1}, "startSec": {"type": "number"}, "endSec": {"type": "number"},
+                "visualDescriptionZh": {"type": "string", "minLength": 1}, "boundaryReasonEn": {"type": "string", "minLength": 1}},
                 "required": ["titleZh", "startSec", "endSec", "visualDescriptionZh", "boundaryReasonEn"],
                 "additionalProperties": False}},
         },
@@ -249,13 +260,42 @@ def openrouter_article(metadata: dict[str, Any], utterances: list[dict[str, Any]
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "response_format": {"type": "json_schema", "json_schema": {"name": "watchless_article", "strict": True, "schema": schema}},
-        "temperature": 0.2,
         "max_tokens": 65536,
         "provider": {"require_parameters": True},
     }
+    response: httpx.Response | None = None
     with httpx.Client(timeout=1200) as client:
-        response = client.post("https://openrouter.ai/api/v1/chat/completions", headers={"authorization": f"Bearer {key}", "content-type": "application/json"}, json=payload)
-    response.raise_for_status()
+        for attempt in range(3):
+            try:
+                response = client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={"authorization": f"Bearer {key}", "content-type": "application/json"},
+                    json=payload,
+                )
+            except httpx.TransportError:
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
+                continue
+            if response.status_code not in {408, 429} and response.status_code < 500:
+                break
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    if response is None:
+        raise RuntimeError("OpenRouter returned no response")
+    if response.status_code >= 400:
+        detail = "request failed"
+        try:
+            body = response.json()
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(error, dict):
+                detail = str(error.get("message") or error.get("code") or detail)
+            elif error:
+                detail = str(error)
+        except (ValueError, TypeError):
+            detail = response.text or detail
+        detail = re.sub(r"(?:sk-or-v1-|Bearer\s+)[A-Za-z0-9._-]+", "[redacted]", detail)[:1000]
+        raise OpenRouterError(response.status_code, detail)
     content = response.json()["choices"][0]["message"]["content"]
     return json.loads(content)
 
@@ -425,7 +465,8 @@ async def process(job_id: str) -> None:
             "author": metadata.get("uploader") or "YouTube", "sourceName": "YouTube", "sourceUrl": f"https://www.youtube.com/watch?v={video_id}",
             "pdfUrl": f"/api/files/watchless/{video_id}/article.pdf", "durationSec": duration,
             "durationLabel": time_label(0, duration).split("–")[1], "publishedLabel": str(metadata.get("upload_date") or ""),
-            "summaryZh": generated["summaryZh"], "summaryEn": generated["summaryEn"],
+            "summaryZh": str(generated.get("summaryZh") or generated.get("titleZh") or metadata.get("title") or video_id).strip(),
+            "summaryEn": str(generated.get("summaryEn") or metadata.get("description") or metadata.get("title") or video_id).strip()[:100000],
             "bodyMode": "verbatim", "transcriptLanguage": "other", "availableLanguageModes": ["zh"], "scenes": scenes,
         }
         article_path = work / "article.json"

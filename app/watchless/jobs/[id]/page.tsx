@@ -109,6 +109,7 @@ export default function WatchlessJobPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const loadJob = useCallback(async (): Promise<WatchlessJob> => {
@@ -165,6 +166,20 @@ export default function WatchlessJobPage() {
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : '无法取消任务。');
     } finally { setCancelling(false); }
+  };
+
+  const retryJob = async () => {
+    if (!job || job.status !== 'failed' || job.sourceKind !== 'url') return;
+    setRetrying(true); setError(null);
+    try {
+      const response = await fetch(`/api/watchless/jobs/${encodeURIComponent(job.id)}/retry`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '无法重新运行任务。');
+      setJob((current) => current ? { ...current, ...result.data } : result.data as WatchlessJob);
+      await loadJob();
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : '无法重新运行任务。');
+    } finally { setRetrying(false); }
   };
 
   const copyJobId = async () => {
@@ -282,10 +297,11 @@ export default function WatchlessJobPage() {
             <div className="mt-6 space-y-2">
               {job?.sourceUrl ? <a href={job.sourceUrl} target="_blank" rel="noreferrer" className="flex w-full items-center justify-between rounded-lg border border-[var(--border-medium)] bg-[var(--paper)] px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:text-[var(--heading)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--btn-primary)]">打开 YouTube 来源 <ExternalLink size={15} aria-hidden="true" /></a> : null}
               {job?.status === 'completed' && job.outputPodcastId ? <Link href={`/dashboard/${job.outputPodcastId}`} className="flex w-full items-center justify-between rounded-lg bg-[var(--btn-primary)] px-4 py-2.5 text-sm font-semibold text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)]">查看播客记录 <ChevronRight size={16} aria-hidden="true" /></Link> : null}
+              {job?.status === 'failed' && job.sourceKind === 'url' ? <button type="button" onClick={retryJob} disabled={retrying} className="flex w-full items-center justify-between rounded-lg bg-[var(--btn-primary)] px-4 py-2.5 text-sm font-semibold text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)] disabled:opacity-50"><span>{retrying ? '正在重新启动…' : '重新运行这条任务'}</span><ChevronRight size={16} aria-hidden="true" /></button> : null}
               {canCancel ? <button type="button" onClick={cancelJob} disabled={cancelling} className="w-full rounded-lg border border-[var(--border-medium)] bg-[var(--paper)] px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--paper-subtle)] disabled:opacity-50">{cancelling ? '正在取消…' : '取消任务并退回积分'}</button> : null}
-              {job && TERMINAL_STATUSES.has(job.status) && job.status !== 'completed' ? <Link href="/upload" className="flex w-full items-center justify-between rounded-lg bg-[var(--btn-primary)] px-4 py-2.5 text-sm font-semibold text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)]">返回上传页 <ChevronRight size={16} aria-hidden="true" /></Link> : null}
+              {job && TERMINAL_STATUSES.has(job.status) && job.status !== 'completed' ? <Link href="/upload" className="flex w-full items-center justify-between rounded-lg border border-[var(--border-medium)] bg-[var(--paper)] px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:text-[var(--heading)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--btn-primary)]">返回上传页 <ChevronRight size={16} aria-hidden="true" /></Link> : null}
             </div>
-            {job?.status === 'failed' ? <p className="mt-3 text-xs leading-5 text-[var(--text-muted)]">重新提交会创建新任务，并再次检查 1000 积分门槛；本页不会自动重试。</p> : null}
+            {job?.status === 'failed' ? <p className="mt-3 text-xs leading-5 text-[var(--text-muted)]">重新运行不会占用新的每日提交名额；系统会重新检查 1000 积分门槛，现有过程产物会保留到新版产物写入。</p> : null}
           </aside>
         </div>
         {error ? <p className="border-t border-[var(--border-soft)] px-5 py-4 text-sm text-[var(--danger)] sm:px-7" role="alert">{error}</p> : null}
