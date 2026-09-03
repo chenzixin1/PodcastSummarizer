@@ -31,6 +31,9 @@
 *.pem
 tmp/
 .superpowers/
+.deploy-state.json
+__pycache__/
+*.py[cod]
 
 # debug
 npm-debug.log*

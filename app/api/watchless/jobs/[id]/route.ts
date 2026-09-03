@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cancelWatchlessJob, getOwnedWatchlessJob, listWatchlessJobAssets, rollbackWatchlessJob } from '../../../../../lib/watchless/jobs';
+import {
+  cancelWatchlessJob,
+  getOwnedWatchlessJob,
+  listWatchlessJobAssets,
+  listWatchlessJobEvents,
+  rollbackWatchlessJob,
+} from '../../../../../lib/watchless/jobs';
 import { requireWatchlessUser, watchlessErrorResponse } from '../../../../../lib/watchless/api';
 import { terminateWatchlessWorkflow } from '../../../../../lib/watchless/workflow';
 
@@ -10,7 +16,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params;
     const job = await getOwnedWatchlessJob(id, auth.userId);
     if (!job) return NextResponse.json({ success: false, error: 'Job not found.' }, { status: 404 });
-    return NextResponse.json({ success: true, data: { ...job, assets: await listWatchlessJobAssets(id) } });
+    const [assets, events] = await Promise.all([
+      listWatchlessJobAssets(id),
+      listWatchlessJobEvents(id),
+    ]);
+    return NextResponse.json({ success: true, data: { ...job, assets, events } });
   } catch (error) {
     return watchlessErrorResponse(error);
   }

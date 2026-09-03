@@ -26,7 +26,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
 app = FastAPI(docs_url=None, redoc_url=None)
-states: dict[str, dict[str, str]] = {}
+states: dict[str, dict[str, Any]] = {}
 YOUTUBE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 MODEL = os.getenv("WATCHLESS_MODEL", "openai/gpt-5.6-luna")
 if MODEL != "openai/gpt-5.6-luna":
@@ -53,17 +53,45 @@ async def callback(path: str, method: str = "POST", **kwargs: Any) -> httpx.Resp
     base = os.environ["PODSUM_CALLBACK_BASE"].rstrip("/")
     headers = kwargs.pop("headers", {})
     headers["x-watchless-internal-secret"] = os.environ["WATCHLESS_INTERNAL_SECRET"]
-    async with httpx.AsyncClient(timeout=180) as client:
+    timeout = httpx.Timeout(connect=30, read=180, write=300, pool=30)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.request(method, f"{base}{path}", headers=headers, **kwargs)
         response.raise_for_status()
         return response
 
 
-async def status(job_id: str, stage: str, progress: int, title: str | None = None) -> None:
+async def status(
+    job_id: str,
+    job_status: str,
+    stage: str,
+    progress: int,
+    message: str,
+    title: str | None = None,
+) -> None:
+    states[job_id] = {"status": "running", "stage": stage, "progress": progress}
     await callback(
         f"/api/watchless/jobs/internal/{quote(job_id)}/status",
-        json={"status": stage, "stage": stage, "progressCurrent": progress, "progressTotal": 100, "title": title},
+        json={
+            "status": job_status,
+            "stage": stage,
+            "progressCurrent": progress,
+            "progressTotal": 100,
+            "title": title,
+            "message": message,
+        },
     )
+
+
+def failure_code(exc: Exception) -> str:
+    if isinstance(exc, httpx.WriteTimeout):
+        return "WATCHLESS_UPSTREAM_WRITE_TIMEOUT"
+    if isinstance(exc, httpx.ReadTimeout):
+        return "WATCHLESS_UPSTREAM_READ_TIMEOUT"
+    if isinstance(exc, httpx.TimeoutException):
+        return "WATCHLESS_UPSTREAM_TIMEOUT"
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return "WATCHLESS_MEDIA_TIMEOUT"
+    return "WATCHLESS_RUNTIME_FAILED"
 
 
 async def upload(job_id: str, path: str, role: str, file: Path, content_type: str) -> None:
@@ -115,7 +143,8 @@ def transcribe(audio: Path, language: str) -> dict[str, Any]:
             "show_utterances": True, "vad_segment": True, "sensitive_words_filter": "",
         },
     }
-    with httpx.Client(timeout=900) as client:
+    timeout = httpx.Timeout(connect=30, read=900, write=1800, pool=30)
+    with httpx.Client(timeout=timeout) as client:
         response = client.post("https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash", headers=headers, json=payload)
     if response.status_code != 200 or response.headers.get("X-Api-Status-Code") != "20000000":
         raise RuntimeError(f"Volcengine ASR failed: HTTP {response.status_code}, code {response.headers.get('X-Api-Status-Code', 'missing')}")
@@ -265,25 +294,27 @@ async def process(job_id: str) -> None:
         job = info_response.json()["data"]
         source = str(job.get("sourceUrl") or "")
         video_id = video_id_from_url(source)
-        await status(job_id, "preparing", 8)
+        await status(job_id, "preparing", "preparing_metadata", 5, "正在读取视频信息")
         metadata = json.loads(run(["yt-dlp", "--no-playlist", "--no-warnings", "--dump-single-json", source], 180))
         duration = float(metadata.get("duration") or 0)
         if duration <= 0 or duration > 7200:
             raise RuntimeError("Video duration must be between 1 second and 2 hours")
         video = work / "video.mp4"
+        await status(job_id, "preparing", "preparing_download", 10, "正在下载授权视频", metadata.get("title"))
         run(["yt-dlp", "--no-playlist", "--max-filesize", "1G", "-f", "bv*[height<=1080]+ba/b[height<=1080]", "--merge-output-format", "mp4", "-o", str(video), source], 2400)
         if not video.exists() or video.stat().st_size > 1024 * 1024 * 1024:
             raise RuntimeError("Video download missing or exceeds 1 GiB")
         audio = work / "audio.mp3"
-        run(["ffmpeg", "-nostdin", "-y", "-i", str(video), "-vn", "-ac", "1", "-b:a", "64k", str(audio)], 1800)
-        await status(job_id, "transcribing", 25, metadata.get("title"))
+        await status(job_id, "preparing", "preparing_audio", 18, "正在提取语音轨道", metadata.get("title"))
+        run(["ffmpeg", "-nostdin", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", str(audio)], 1800)
+        await status(job_id, "transcribing", "transcribing_upload", 25, "正在上传音频并识别原话", metadata.get("title"))
         asr = await asyncio.to_thread(transcribe, audio, job.get("preferredLanguage") or "en-US")
         transcript, utterances = transcript_lines(asr)
         if not utterances:
             raise RuntimeError("Transcript is empty")
         transcript_path = work / "transcript.txt"
         transcript_path.write_text(transcript, encoding="utf-8")
-        await status(job_id, "segmenting", 50)
+        await status(job_id, "segmenting", "segmenting_structure", 50, "正在识别说话人并划分场景")
         generated = await asyncio.to_thread(openrouter_article, {"title": metadata.get("title"), "author": metadata.get("uploader")}, utterances, duration)
         def clean_speaker_name(value: Any) -> str:
             return re.sub(r"[\r\n:]+", " ", str(value or "")).strip()[:80]
@@ -310,7 +341,7 @@ async def process(job_id: str) -> None:
         for index in range(1, len(scenes)):
             proposed = max(starts[-1] + 1, float(scenes[index].get("startSec", starts[-1] + 1)))
             starts.append(min(proposed, max(starts[-1] + 1, duration - (len(scenes) - index))))
-        await status(job_id, "rendering", 65)
+        await status(job_id, "rendering", "rendering_keyframes", 65, "正在生成场景关键帧")
         for index, scene in enumerate(scenes):
             scene["startSec"] = starts[index]
             scene["endSec"] = starts[index + 1] if index + 1 < len(starts) else duration
@@ -333,6 +364,16 @@ async def process(job_id: str) -> None:
             midpoint = min(duration, (scene["startSec"] + scene["endSec"]) / 2)
             run(["ffmpeg", "-nostdin", "-y", "-ss", str(midpoint), "-i", str(video), "-frames:v", "1", "-q:v", "3", str(frame)], 120)
             await upload(job_id, f"keyframes/{frame.name}", "keyframe", frame, "image/jpeg")
+            frame_progress = 65 + round(((index + 1) / max(1, len(scenes))) * 10)
+            states[job_id] = {"status": "running", "stage": "rendering_keyframes", "progress": frame_progress}
+            if index + 1 == len(scenes) or (index + 1) % 4 == 0:
+                await status(
+                    job_id,
+                    "rendering",
+                    "rendering_keyframes",
+                    frame_progress,
+                    f"已生成 {index + 1}/{len(scenes)} 个关键帧",
+                )
         article = {
             "id": f"watchless-{video_id.lower().replace('_', '-')}", "videoId": video_id,
             "title": metadata.get("title") or video_id, "titleZh": generated["titleZh"], "eyebrow": "Watchless",
@@ -349,10 +390,17 @@ async def process(job_id: str) -> None:
         await upload(job_id, "article.json", "article", article_path, "application/json")
         await upload(job_id, "article.pdf", "pdf", pdf_path, "application/pdf")
         await upload(job_id, "transcript.txt", "transcript", transcript_path, "text/plain; charset=utf-8")
-        await status(job_id, "validating", 78)
+        await status(job_id, "validating", "validating_assets", 78, "正在核对文章、原话实录和附件")
         states[job_id] = {"status": "completed"}
     except Exception as exc:
-        states[job_id] = {"status": "failed", "error": str(exc)[:1800]}
+        previous = states.get(job_id, {})
+        states[job_id] = {
+            "status": "failed",
+            "error": str(exc)[:1800],
+            "errorCode": failure_code(exc),
+            "stage": previous.get("stage", "preparing"),
+            "progress": previous.get("progress", 0),
+        }
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

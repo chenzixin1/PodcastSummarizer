@@ -22,6 +22,9 @@ interface WatchlessWorkflowParams {
 interface RuntimeStatus {
   status: 'queued' | 'running' | 'completed' | 'failed';
   error?: string;
+  errorCode?: string;
+  stage?: string;
+  progress?: number;
 }
 
 export class WatchlessContainer extends Container<WatchlessRuntimeEnv> {
@@ -42,11 +45,21 @@ async function internalFetch(env: WatchlessRuntimeEnv, path: string, init: Reque
   return env.WORKER_SELF_REFERENCE.fetch(`${appOrigin(env)}${path}`, { ...init, headers });
 }
 
-async function failJob(env: WatchlessRuntimeEnv, jobId: string, error: unknown): Promise<void> {
+async function failJob(
+  env: WatchlessRuntimeEnv,
+  jobId: string,
+  error: unknown,
+  runtimeStatus?: RuntimeStatus,
+): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await internalFetch(env, `/api/watchless/jobs/internal/${encodeURIComponent(jobId)}/fail`, {
     method: 'POST',
-    body: JSON.stringify({ code: 'WATCHLESS_WORKFLOW_FAILED', message: message.slice(0, 1800) }),
+    body: JSON.stringify({
+      code: runtimeStatus?.errorCode || 'WATCHLESS_WORKFLOW_FAILED',
+      message: message.slice(0, 1800),
+      stage: runtimeStatus?.stage,
+      progressCurrent: runtimeStatus?.progress,
+    }),
   });
 }
 
@@ -54,6 +67,7 @@ export class WatchlessWorkflow extends WorkflowEntrypoint<WatchlessRuntimeEnv, W
   async run(event: WorkflowEvent<WatchlessWorkflowParams>, step: WorkflowStep): Promise<{ jobId: string; status: string }> {
     const { jobId, mode } = event.payload;
     let container: ReturnType<typeof getContainer<WatchlessContainer>> | null = null;
+    let runtimeStatus: RuntimeStatus | undefined;
     try {
       if (mode === 'publish') {
         await step.do('publish uploaded Watchless bundle', async () => {
@@ -92,6 +106,7 @@ export class WatchlessWorkflow extends WorkflowEntrypoint<WatchlessRuntimeEnv, W
           if (!response.ok) throw new Error(`Container status failed (${response.status})`);
           return await response.json<RuntimeStatus>();
         });
+        runtimeStatus = status;
         if (status.status === 'completed') break;
         if (status.status === 'failed') throw new Error(status.error || 'Watchless container failed.');
         if (poll === 240) throw new Error('Watchless runtime timed out after two hours.');
@@ -112,7 +127,7 @@ export class WatchlessWorkflow extends WorkflowEntrypoint<WatchlessRuntimeEnv, W
           async () => container?.stop(),
         ).catch(() => undefined);
       }
-      await step.do('record failure and refund reservation', async () => failJob(this.env, jobId, error));
+      await step.do('record failure and refund reservation', async () => failJob(this.env, jobId, error, runtimeStatus));
       throw error;
     }
   }

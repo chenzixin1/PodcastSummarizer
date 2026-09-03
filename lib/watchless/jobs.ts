@@ -95,8 +95,20 @@ export interface WatchlessJob {
   errorCode: string | null;
   errorMessage: string | null;
   createdAt: string;
+  startedAt: string | null;
   updatedAt: string;
   completedAt: string | null;
+}
+
+export interface WatchlessJobEvent {
+  id: number;
+  jobId: string;
+  status: WatchlessJobStatus;
+  stage: string;
+  progressCurrent: number;
+  progressTotal: number;
+  message: string | null;
+  createdAt: string;
 }
 
 export interface WatchlessJobAsset {
@@ -158,8 +170,22 @@ function mapJob(row: Record<string, unknown>): WatchlessJob {
     errorCode: asString(row.errorCode || row.error_code) || null,
     errorMessage: asString(row.errorMessage || row.error_message) || null,
     createdAt: String(row.createdAt || row.created_at || ''),
+    startedAt: asString(row.startedAt || row.started_at) || null,
     updatedAt: String(row.updatedAt || row.updated_at || ''),
     completedAt: asString(row.completedAt || row.completed_at) || null,
+  };
+}
+
+function mapJobEvent(row: Record<string, unknown>): WatchlessJobEvent {
+  return {
+    id: Number(row.id || 0),
+    jobId: String(row.jobId || row.job_id || ''),
+    status: String(row.status || 'created') as WatchlessJobStatus,
+    stage: asString(row.stage) || String(row.status || 'created'),
+    progressCurrent: Number(row.progressCurrent ?? row.progress_current ?? 0),
+    progressTotal: Number(row.progressTotal ?? row.progress_total ?? 100),
+    message: asString(row.message) || null,
+    createdAt: String(row.createdAt || row.created_at || ''),
   };
 }
 
@@ -282,6 +308,37 @@ export async function listWatchlessJobAssets(jobId: string): Promise<WatchlessJo
   return result.rows.map(mapAsset);
 }
 
+export async function listWatchlessJobEvents(jobId: string): Promise<WatchlessJobEvent[]> {
+  try {
+    const result = await sql`
+      SELECT * FROM watchless_job_events
+      WHERE job_id = ${jobId}
+      ORDER BY created_at ASC, id ASC
+      LIMIT 200
+    `;
+    return result.rows.map(mapJobEvent);
+  } catch (error) {
+    console.error('[Watchless] Could not load job events:', error);
+    return [];
+  }
+}
+
+async function recordWatchlessJobEvent(job: WatchlessJob, message?: string | null): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO watchless_job_events (
+        job_id, status, stage, progress_current, progress_total, message
+      ) VALUES (
+        ${job.id}, ${job.status}, ${job.stage || job.status},
+        ${job.progressCurrent}, ${job.progressTotal}, ${asString(message).slice(0, 500) || null}
+      )
+    `;
+  } catch (error) {
+    // Diagnostics must never be able to break the conversion itself.
+    console.error('[Watchless] Could not record job event:', error);
+  }
+}
+
 export async function createWatchlessUrlJob(input: {
   userId: string;
   sourceUrl: string;
@@ -388,7 +445,11 @@ export async function createWatchlessUrlJob(input: {
   try {
     const results = await db.batch(statements);
     const inserted = results[1]?.results?.[0];
-    if (inserted) return mapJob(inserted);
+    if (inserted) {
+      const job = mapJob(inserted);
+      await recordWatchlessJobEvent(job, 'URL conversion accepted.');
+      return job;
+    }
     const userExists = Boolean(results[3]?.results?.[0]);
     if (!userExists) throw new WatchlessJobError('USER_NOT_FOUND', 'User not found.', 404);
     throw new WatchlessJobError(
@@ -478,7 +539,9 @@ export async function createWatchlessBundleJob(input: {
       429,
     );
   }
-  return mapJob(result.rows[0]);
+  const job = mapJob(result.rows[0]);
+  await recordWatchlessJobEvent(job, 'Waiting for the Watchless bundle upload.');
+  return job;
 }
 
 export async function uploadWatchlessJobAsset(input: {
@@ -621,6 +684,7 @@ export async function updateWatchlessJobStatus(input: {
   title?: string;
   errorCode?: string | null;
   errorMessage?: string | null;
+  message?: string | null;
 }): Promise<WatchlessJob> {
   if (!WATCHLESS_JOB_STATUSES.includes(input.status)) throw new WatchlessJobError('INVALID_STATUS', 'Invalid Watchless job status.');
   const progressCurrent = Math.max(0, Math.min(1000, Math.floor(input.progressCurrent ?? 0)));
@@ -646,7 +710,9 @@ export async function updateWatchlessJobStatus(input: {
     if (current) throw new WatchlessJobError('INVALID_STATE_TRANSITION', `Cannot change terminal job ${current.status} to ${input.status}.`, 409);
     throw new WatchlessJobError('JOB_NOT_FOUND', 'Watchless job not found.', 404);
   }
-  return mapJob(result.rows[0]);
+  const job = mapJob(result.rows[0]);
+  await recordWatchlessJobEvent(job, input.message);
+  return job;
 }
 
 export async function refundWatchlessJobCredits(jobId: string, reason: string): Promise<boolean> {
@@ -887,6 +953,8 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
     `).bind(podcastId, jobId),
     ];
     await database.batch(publicationStatements);
+    const completedForEvent = await getWatchlessJob(jobId);
+    if (completedForEvent) await recordWatchlessJobEvent(completedForEvent, 'PodSum publication completed.');
     await cleanupWatchlessStagingAssets(jobId, assets);
     const completed = await getWatchlessJob(jobId);
     if (!completed) throw new WatchlessJobError('JOB_NOT_FOUND', 'Watchless job disappeared after publication.', 500);
@@ -909,11 +977,12 @@ export async function failWatchlessJob(jobId: string, code: string, message: str
   const job = await updateWatchlessJobStatus({
     jobId,
     status: 'failed',
-    stage: 'failed',
-    progressCurrent: 0,
-    progressTotal: 100,
+    stage: current.stage || current.status,
+    progressCurrent: current.progressCurrent,
+    progressTotal: current.progressTotal,
     errorCode: code,
     errorMessage: message,
+    message: `Failed during ${current.stage || current.status}.`,
   });
   if (job.creditStatus === 'reserved') await refundWatchlessJobCredits(jobId, `${code}: ${message}`);
   await cleanupWatchlessStagingAssets(jobId);
@@ -943,6 +1012,7 @@ export async function rollbackWatchlessJob(jobId: string, userId: string): Promi
   `;
   const rolledBack = await getWatchlessJob(jobId);
   if (!rolledBack) throw new WatchlessJobError('JOB_NOT_FOUND', 'Watchless job not found.', 404);
+  await recordWatchlessJobEvent(rolledBack, 'Publication removed.');
   return rolledBack;
 }
 

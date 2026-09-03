@@ -19,6 +19,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       progressCurrent: Number(body.progressCurrent || 0),
       progressTotal: Number(body.progressTotal || 100),
       title: typeof body.title === 'string' ? body.title : undefined,
+      message: typeof body.message === 'string' ? body.message : undefined,
     });
     return NextResponse.json({ success: true, data });
   } catch (error) {
