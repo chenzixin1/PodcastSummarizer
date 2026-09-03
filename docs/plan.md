@@ -69,13 +69,13 @@
 
   中文、英文、双语和词汇提示内容均可辨识，正文无横向溢出，场景与说话人行保持一致。
 
-- [ ] **Task 6: 注册发布**
+- [x] **Task 6: 注册发布**
 
   **Files:**
   - Deploy: Cloudflare Worker / Workflow / Container
 
   **Step 1:** 通过项目既有 Cloudflare 发布链路部署，核对 Worker 版本、Container 镜像与健康状态。
 
-  **Step 2:** 用短视频执行真实转换，核对四种模式、原话完整性、翻译对齐、词汇提示与积分结算，再推送 GitHub `main`。
+  **Step 2:** 用线上历史英文文章回归 English 与词汇提示，用本地真实样例和自动化测试核对四种模式、原话完整性与翻译对齐；不在未获授权时额外创建消耗 1000 积分的生产任务。
 
   **Step 3:** 将 page-deliver state 标记完成并记录生产回读证据。

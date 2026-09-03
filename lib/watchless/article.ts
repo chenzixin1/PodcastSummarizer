@@ -70,6 +70,20 @@ function isSafeResourceUrl(value: string): boolean {
   }
 }
 
+function inferTextLanguage(value: string): WatchlessTranscriptLanguage {
+  const sample = value.slice(0, 50_000);
+  const latinCount = (sample.match(/[A-Za-z]/g) || []).length;
+  const cjkCount = (sample.match(/[\u3400-\u9fff]/g) || []).length;
+
+  if (cjkCount >= 8 && cjkCount >= latinCount / 3) {
+    return 'zh';
+  }
+  if (latinCount >= 40 && latinCount >= cjkCount * 2) {
+    return 'en';
+  }
+  return 'other';
+}
+
 function normalizeScene(value: unknown): WatchlessScene | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -155,24 +169,50 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
   const bodyMode: WatchlessBodyMode = bodyModeRaw === 'verbatim' ? 'verbatim' : 'editorial';
   const articleZhKindRaw = readString(article, 'articleZhKind', 16);
   const transcriptLanguageRaw = readString(article, 'transcriptLanguage', 16);
+  const detectedTranscriptLanguage = inferTextLanguage(scenes.map((scene) => scene.transcriptEn).join('\n'));
+  const declaredTranscriptLanguage: WatchlessTranscriptLanguage | null =
+    transcriptLanguageRaw === 'en' || transcriptLanguageRaw === 'zh' || transcriptLanguageRaw === 'other'
+      ? transcriptLanguageRaw
+      : null;
   const transcriptLanguage: WatchlessTranscriptLanguage =
-    transcriptLanguageRaw === 'zh' || transcriptLanguageRaw === 'other' ? transcriptLanguageRaw : 'en';
+    declaredTranscriptLanguage === 'other' && detectedTranscriptLanguage !== 'other'
+      ? detectedTranscriptLanguage
+      : declaredTranscriptLanguage || detectedTranscriptLanguage;
+  const detectedArticleLanguage = inferTextLanguage(scenes.map((scene) => scene.articleZh).join('\n'));
   const articleZhKind: WatchlessChineseContentKind =
     articleZhKindRaw === 'translation' || articleZhKindRaw === 'original' || articleZhKindRaw === 'editorial'
       ? articleZhKindRaw
       : bodyMode === 'editorial'
         ? 'editorial'
-        : transcriptLanguage === 'en'
+        : transcriptLanguage === 'en' && detectedArticleLanguage === 'zh'
           ? 'translation'
           : 'original';
   const availableLanguageModesRaw = Array.isArray(article.availableLanguageModes)
     ? article.availableLanguageModes
     : ['zh', 'en', 'bilingual', 'hint'];
-  const availableLanguageModes = availableLanguageModesRaw.filter(
+  const declaredLanguageModes = availableLanguageModesRaw.filter(
     (mode): mode is WatchlessLanguageMode => (
       mode === 'zh' || mode === 'en' || mode === 'bilingual' || mode === 'hint'
     ),
   );
+  const hasChineseBody = articleZhKind !== 'original' || transcriptLanguage === 'zh' || detectedArticleLanguage === 'zh';
+  const hasEnglishTranscript = transcriptLanguage === 'en' && detectedTranscriptLanguage === 'en';
+  const supportedLanguageModes = new Set<WatchlessLanguageMode>([
+    ...(hasChineseBody ? ['zh'] as const : []),
+    ...(hasEnglishTranscript ? ['en', 'hint'] as const : []),
+    ...(hasChineseBody && hasEnglishTranscript ? ['bilingual'] as const : []),
+  ]);
+  const availableLanguageModes = declaredLanguageModes.filter((mode) => supportedLanguageModes.has(mode));
+
+  // Older Watchless English publications stored the original transcript in both
+  // articleZh and transcriptEn, then declared only the zh mode. Repair that
+  // metadata at read time so history gains honest English and vocabulary views
+  // without pretending that a Chinese translation exists.
+  if (articleZhKind === 'original' && !hasChineseBody && hasEnglishTranscript) {
+    for (const mode of ['en', 'hint'] as const) {
+      if (!availableLanguageModes.includes(mode)) availableLanguageModes.push(mode);
+    }
+  }
   const availableModeSet = new Set(availableLanguageModes);
   const hasInvalidLanguageContract =
     (articleZhKind === 'translation' && transcriptLanguage !== 'en') ||

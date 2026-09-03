@@ -35,14 +35,33 @@ describe('normalizeWatchlessArticle', () => {
   it('preserves the verbatim body contract for original-word publications', () => {
     const verbatimFixture = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
     verbatimFixture.bodyMode = 'verbatim';
-    verbatimFixture.transcriptLanguage = 'other';
+    verbatimFixture.transcriptLanguage = 'zh';
     verbatimFixture.articleZhKind = 'original';
     verbatimFixture.availableLanguageModes = ['zh'];
+    (verbatimFixture.scenes as Array<Record<string, unknown>>).forEach((scene) => {
+      scene.transcriptEn = scene.articleZh;
+    });
 
     const article = normalizeWatchlessArticle(verbatimFixture);
     expect(article?.bodyMode).toBe('verbatim');
-    expect(article?.transcriptLanguage).toBe('other');
+    expect(article?.transcriptLanguage).toBe('zh');
     expect(article?.availableLanguageModes).toEqual(['zh']);
+    expect(article?.articleZhKind).toBe('original');
+  });
+
+  it('repairs legacy English originals that were mislabeled as Chinese-only', () => {
+    const legacyFixture = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
+    legacyFixture.bodyMode = 'verbatim';
+    delete legacyFixture.transcriptLanguage;
+    delete legacyFixture.articleZhKind;
+    delete legacyFixture.availableLanguageModes;
+    (legacyFixture.scenes as Array<Record<string, unknown>>).forEach((scene) => {
+      scene.articleZh = scene.transcriptEn;
+    });
+
+    const article = normalizeWatchlessArticle(legacyFixture);
+    expect(article?.transcriptLanguage).toBe('en');
+    expect(article?.availableLanguageModes).toEqual(['en', 'hint']);
     expect(article?.articleZhKind).toBe('original');
   });
 
