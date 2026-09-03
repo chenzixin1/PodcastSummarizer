@@ -25,6 +25,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from watchless_translation import translated_markdown, translation_batches, validate_translation_batch
 
 app = FastAPI(docs_url=None, redoc_url=None)
 states: dict[str, dict[str, Any]] = {}
@@ -218,49 +219,19 @@ def collapse_original_turns(
     return turns
 
 
-def verbatim_markdown(turns: list[dict[str, str]]) -> str:
-    return "\n\n".join(f"**{turn['speaker']}：** {turn['text']}" for turn in turns)
-
-
 def verbatim_transcript(turns: list[dict[str, str]]) -> str:
     return "\n\n".join(f"{turn['speaker']}: {turn['text']}" for turn in turns)
 
 
-def openrouter_article(metadata: dict[str, Any], utterances: list[dict[str, Any]], duration: float) -> dict[str, Any]:
+def request_openrouter_json(prompt: str, schema: dict[str, Any], name: str, max_tokens: int = 65536) -> dict[str, Any]:
     key = os.getenv("OPENROUTER_API_KEY", "")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY is not configured")
-    compact = utterances[:8000]
-    schema = {
-        "type": "object",
-        "properties": {
-            "titleZh": {"type": "string", "minLength": 1},
-            "summaryZh": {"type": "string", "minLength": 1},
-            "summaryEn": {"type": "string", "minLength": 1},
-            "speakers": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object", "properties": {
-                "id": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1}},
-                "required": ["id", "name"], "additionalProperties": False}},
-            "scenes": {"type": "array", "minItems": 3, "maxItems": 30, "items": {"type": "object", "properties": {
-                "titleZh": {"type": "string", "minLength": 1}, "startSec": {"type": "number"}, "endSec": {"type": "number"},
-                "visualDescriptionZh": {"type": "string", "minLength": 1}, "boundaryReasonEn": {"type": "string", "minLength": 1}},
-                "required": ["titleZh", "startSec", "endSec", "visualDescriptionZh", "boundaryReasonEn"],
-                "additionalProperties": False}},
-        },
-        "required": ["titleZh", "summaryZh", "summaryEn", "speakers", "scenes"], "additionalProperties": False,
-    }
-    prompt = (
-        "Analyze this speaker-labelled transcript and return only metadata for an illustrated transcript. "
-        "The summary belongs only in summaryZh. Never output, translate, rewrite, polish, condense, or summarize the scene body; the application will copy every scene body verbatim from ASR. "
-        "Choose scene boundaries that preserve the full chronological timeline and keep each range meaningful. "
-        "Return a speakers mapping from every ASR speaker id to a real participant name only when the transcript or metadata supports it; otherwise use Speaker 1, Speaker 2, and so on. "
-        "Do not invent claims. Scene ranges must be ordered, non-overlapping and cover 0 through duration.\n"
-        + json.dumps({"metadata": metadata, "durationSec": duration, "utterances": compact}, ensure_ascii=False)
-    )
     payload = {
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_schema", "json_schema": {"name": "watchless_article", "strict": True, "schema": schema}},
-        "max_tokens": 65536,
+        "response_format": {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}},
+        "max_tokens": max_tokens,
         "provider": {"require_parameters": True},
     }
     response: httpx.Response | None = None
@@ -298,6 +269,87 @@ def openrouter_article(metadata: dict[str, Any], utterances: list[dict[str, Any]
         raise OpenRouterError(response.status_code, detail)
     content = response.json()["choices"][0]["message"]["content"]
     return json.loads(content)
+
+
+def openrouter_article(metadata: dict[str, Any], utterances: list[dict[str, Any]], duration: float) -> dict[str, Any]:
+    compact = utterances[:8000]
+    schema = {
+        "type": "object",
+        "properties": {
+            "titleZh": {"type": "string", "minLength": 1},
+            "summaryZh": {"type": "string", "minLength": 1},
+            "summaryEn": {"type": "string", "minLength": 1},
+            "speakers": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object", "properties": {
+                "id": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1}},
+                "required": ["id", "name"], "additionalProperties": False}},
+            "scenes": {"type": "array", "minItems": 3, "maxItems": 30, "items": {"type": "object", "properties": {
+                "titleZh": {"type": "string", "minLength": 1}, "startSec": {"type": "number"}, "endSec": {"type": "number"},
+                "visualDescriptionZh": {"type": "string", "minLength": 1}, "boundaryReasonEn": {"type": "string", "minLength": 1}},
+                "required": ["titleZh", "startSec", "endSec", "visualDescriptionZh", "boundaryReasonEn"],
+                "additionalProperties": False}},
+        },
+        "required": ["titleZh", "summaryZh", "summaryEn", "speakers", "scenes"], "additionalProperties": False,
+    }
+    prompt = (
+        "Analyze this speaker-labelled transcript and return only metadata for an illustrated transcript. "
+        "The summary belongs only in summaryZh. Never output, translate, rewrite, polish, condense, or summarize the scene body; the application will copy every scene body verbatim from ASR. "
+        "Choose scene boundaries that preserve the full chronological timeline and keep each range meaningful. "
+        "Return a speakers mapping from every ASR speaker id to a real participant name only when the transcript or metadata supports it; otherwise use Speaker 1, Speaker 2, and so on. "
+        "Do not invent claims. Scene ranges must be ordered, non-overlapping and cover 0 through duration.\n"
+        + json.dumps({"metadata": metadata, "durationSec": duration, "utterances": compact}, ensure_ascii=False)
+    )
+    return request_openrouter_json(prompt, schema, "watchless_article")
+
+
+def openrouter_translations_zh(utterances: list[dict[str, Any]]) -> dict[int, str]:
+    translations: dict[int, str] = {}
+    for batch in translation_batches(utterances):
+        source_rows = [
+            {
+                "id": int(item["translationId"]),
+                "speaker": str(item.get("speaker") or "unknown"),
+                "text": str(item.get("text") or ""),
+            }
+            for item in batch
+        ]
+        schema = {
+            "type": "object",
+            "properties": {
+                "translations": {
+                    "type": "array",
+                    "minItems": len(source_rows),
+                    "maxItems": len(source_rows),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "textZh": {"type": "string", "minLength": 1},
+                        },
+                        "required": ["id", "textZh"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["translations"],
+            "additionalProperties": False,
+        }
+        prompt = (
+            "Translate every transcript utterance faithfully into natural Simplified Chinese. "
+            "Return exactly one translation for every input id, with the same ids and order. "
+            "Translate only the spoken text: do not summarize, omit, merge, split, explain, add facts, add Markdown, or add speaker labels. "
+            "Preserve names, numbers, product names, code, and uncertainty in the source.\n"
+            + json.dumps({"utterances": source_rows}, ensure_ascii=False)
+        )
+        result = request_openrouter_json(prompt, schema, "watchless_translations_zh")
+        batch_translations = validate_translation_batch(result, [row["id"] for row in source_rows])
+        overlap = set(translations).intersection(batch_translations)
+        if overlap:
+            raise RuntimeError(f"Chinese translation repeats source ids across batches: {sorted(overlap)[:8]}")
+        translations.update(batch_translations)
+    expected_ids = [int(item["translationId"]) for item in utterances]
+    if set(translations) != set(expected_ids):
+        raise RuntimeError("Chinese translation did not cover the full transcript")
+    return translations
 
 
 def time_label(start: float, end: float) -> str:
@@ -386,6 +438,8 @@ async def process(job_id: str) -> None:
         transcript, utterances = transcript_lines(asr)
         if not utterances:
             raise RuntimeError("Transcript is empty")
+        for translation_id, utterance in enumerate(utterances):
+            utterance["translationId"] = translation_id
         transcript_path = work / "transcript.txt"
         transcript_path.write_text(transcript, encoding="utf-8")
         await upload(job_id, "transcript.txt", "transcript", transcript_path, "text/plain; charset=utf-8")
@@ -407,6 +461,28 @@ async def process(job_id: str) -> None:
         def display_speaker(item: dict[str, Any]) -> str:
             speaker_id = str(item["speaker"])
             return speaker_map.get(speaker_id) or ("Speaker" if speaker_id == "unknown" else f"Speaker {speaker_id}")
+
+        await status(job_id, "segmenting", "segmenting_translation", 62, "正在逐条生成中文忠实翻译", metadata.get("title"))
+        translations_zh = await asyncio.to_thread(openrouter_translations_zh, utterances)
+        translations_path = work / "translations-zh.json"
+        translations_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "sourceLanguage": "en",
+                    "targetLanguage": "zh-Hans",
+                    "translations": [
+                        {"id": int(item["translationId"]), "textZh": translations_zh[int(item["translationId"])]}
+                        for item in utterances
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        await upload(job_id, "intermediate/translations-zh.json", "manifest", translations_path, "application/json")
+        await status(job_id, "segmenting", "segmenting_translation", 64, "中文翻译已逐条对齐并保存", metadata.get("title"))
 
         transcript = "\n".join(
             f"{display_speaker(item)}: {item['text']}"
@@ -434,7 +510,7 @@ async def process(job_id: str) -> None:
             original_turns = collapse_original_turns(turns, display_speaker)
             if not original_turns:
                 raise RuntimeError(f"Scene {index + 1} contains no source utterance")
-            scene["articleZh"] = verbatim_markdown(original_turns)
+            scene["articleZh"] = translated_markdown(turns, display_speaker, translations_zh)
             scene["transcriptEn"] = verbatim_transcript(original_turns)
             scene["id"] = f"scene-{index + 1}"
             scene["number"] = index + 1
@@ -467,7 +543,8 @@ async def process(job_id: str) -> None:
             "durationLabel": time_label(0, duration).split("–")[1], "publishedLabel": str(metadata.get("upload_date") or ""),
             "summaryZh": str(generated.get("summaryZh") or generated.get("titleZh") or metadata.get("title") or video_id).strip(),
             "summaryEn": str(generated.get("summaryEn") or metadata.get("description") or metadata.get("title") or video_id).strip()[:100000],
-            "bodyMode": "verbatim", "transcriptLanguage": "other", "availableLanguageModes": ["zh"], "scenes": scenes,
+            "bodyMode": "verbatim", "articleZhKind": "translation", "transcriptLanguage": "en",
+            "availableLanguageModes": ["zh", "en", "bilingual", "hint"], "scenes": scenes,
         }
         article_path = work / "article.json"
         article_path.write_text(json.dumps(article, ensure_ascii=False, indent=2), encoding="utf-8")

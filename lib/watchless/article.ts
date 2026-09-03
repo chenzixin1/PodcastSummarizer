@@ -1,6 +1,7 @@
 export type WatchlessLanguageMode = 'zh' | 'en' | 'bilingual' | 'hint';
 export type WatchlessTranscriptLanguage = 'en' | 'zh' | 'other';
 export type WatchlessBodyMode = 'editorial' | 'verbatim';
+export type WatchlessChineseContentKind = 'translation' | 'editorial' | 'original';
 
 export interface WatchlessScene {
   id: string;
@@ -33,6 +34,7 @@ export interface WatchlessArticle {
   summaryZh: string;
   summaryEn: string;
   bodyMode?: WatchlessBodyMode;
+  articleZhKind?: WatchlessChineseContentKind;
   transcriptLanguage?: WatchlessTranscriptLanguage;
   availableLanguageModes?: WatchlessLanguageMode[];
   scenes: WatchlessScene[];
@@ -151,9 +153,18 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
   const summaryEn = readString(article, 'summaryEn', 100_000);
   const bodyModeRaw = readString(article, 'bodyMode', 16);
   const bodyMode: WatchlessBodyMode = bodyModeRaw === 'verbatim' ? 'verbatim' : 'editorial';
+  const articleZhKindRaw = readString(article, 'articleZhKind', 16);
   const transcriptLanguageRaw = readString(article, 'transcriptLanguage', 16);
   const transcriptLanguage: WatchlessTranscriptLanguage =
     transcriptLanguageRaw === 'zh' || transcriptLanguageRaw === 'other' ? transcriptLanguageRaw : 'en';
+  const articleZhKind: WatchlessChineseContentKind =
+    articleZhKindRaw === 'translation' || articleZhKindRaw === 'original' || articleZhKindRaw === 'editorial'
+      ? articleZhKindRaw
+      : bodyMode === 'editorial'
+        ? 'editorial'
+        : transcriptLanguage === 'en'
+          ? 'translation'
+          : 'original';
   const availableLanguageModesRaw = Array.isArray(article.availableLanguageModes)
     ? article.availableLanguageModes
     : ['zh', 'en', 'bilingual', 'hint'];
@@ -162,6 +173,11 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
       mode === 'zh' || mode === 'en' || mode === 'bilingual' || mode === 'hint'
     ),
   );
+  const availableModeSet = new Set(availableLanguageModes);
+  const hasInvalidLanguageContract =
+    (articleZhKind === 'translation' && transcriptLanguage !== 'en') ||
+    (availableModeSet.has('bilingual') && (!availableModeSet.has('zh') || !availableModeSet.has('en'))) ||
+    (availableModeSet.has('hint') && !availableModeSet.has('en'));
 
   const sceneIds = new Set<string>();
   const sceneNumbers = new Set<number>();
@@ -200,6 +216,7 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
     !summaryEn ||
     availableLanguageModes.length === 0 ||
     new Set(availableLanguageModes).size !== availableLanguageModes.length ||
+    hasInvalidLanguageContract ||
     !isFiniteNumber(article.durationSec) ||
     article.durationSec <= 0 ||
     article.durationSec > MAX_DURATION_SECONDS ||
@@ -225,6 +242,7 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
     summaryZh,
     summaryEn,
     bodyMode,
+    articleZhKind,
     transcriptLanguage,
     availableLanguageModes,
     scenes,

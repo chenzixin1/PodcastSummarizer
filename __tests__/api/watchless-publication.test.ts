@@ -11,6 +11,7 @@ import {
   loadStoredWatchlessArticle,
 } from '../../lib/watchless/repository';
 import sampleFixture from '../../lib/watchless/sampleArticle.json';
+import type { WatchlessArticle } from '../../lib/watchless/article';
 
 jest.mock('next-auth/next', () => ({
   getServerSession: jest.fn(),
@@ -59,7 +60,7 @@ describe('/api/watchless/[id] API route', () => {
       ...sampleFixture,
       id: publication.podcastId,
       videoId: publication.videoId,
-    });
+    } as WatchlessArticle);
   });
 
   it('returns lightweight metadata without loading the article', async () => {

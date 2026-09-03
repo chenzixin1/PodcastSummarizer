@@ -61,7 +61,8 @@ const MCP_STAGE_DEFINITIONS = [
 const STAGE_LABELS: Record<string, string> = {
   queued: '等待运行环境', preparing_metadata: '读取视频信息', preparing_download: '下载授权视频',
   preparing_audio: '提取语音轨道', transcribing_upload: '上传音频并识别原话',
-  segmenting_structure: '识别说话人并划分场景', rendering_keyframes: '生成场景关键帧',
+  segmenting_structure: '识别说话人并划分场景', segmenting_translation: '逐条生成中文忠实翻译',
+  rendering_keyframes: '生成场景关键帧',
   validating_assets: '检查文章与附件', validating: '检查完整性', publishing: '写入 PodSum',
   completed: '转换完成', cancelled: '任务取消', rolled_back: '发布撤回', failed: '任务失败',
 };

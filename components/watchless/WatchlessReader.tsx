@@ -40,10 +40,21 @@ const LANGUAGE_OPTIONS: Array<{ value: WatchlessLanguageMode; label: string; det
 ];
 
 function languageOptions(article: WatchlessArticle) {
-  if (article.bodyMode !== 'verbatim') return LANGUAGE_OPTIONS;
+  if (article.articleZhKind === 'translation') {
+    return LANGUAGE_OPTIONS.map((option) => (
+      option.value === 'zh' ? { ...option, detail: '忠实翻译' } : option
+    ));
+  }
+  if (article.articleZhKind !== 'original') return LANGUAGE_OPTIONS;
   return LANGUAGE_OPTIONS.map((option) => (
     option.value === 'zh' ? { ...option, label: '原话', detail: '逐字实录' } : option
   ));
+}
+
+function chineseCopyLabel(article: WatchlessArticle): string {
+  if (article.articleZhKind === 'translation') return '中文翻译 · 按原话逐条对齐';
+  if (article.articleZhKind === 'original') return '原话实录';
+  return '中文编辑稿';
 }
 
 const HINT_HASH_PREFIX = '#pronounce:';
@@ -267,10 +278,8 @@ function SceneContent({
 
       <div className={`watchless-scene-copy ${language === 'bilingual' ? 'is-bilingual' : ''}`}>
         {showChinese ? (
-          <article className="watchless-copy-column" lang={article.transcriptLanguage === 'zh' ? 'zh-CN' : undefined}>
-            {language === 'bilingual' || article.bodyMode === 'verbatim' ? (
-              <p className="watchless-copy-label">{article.bodyMode === 'verbatim' ? '原话实录' : '中文编辑稿'}</p>
-            ) : null}
+          <article className="watchless-copy-column" lang={article.articleZhKind === 'original' && article.transcriptLanguage !== 'zh' ? undefined : 'zh-CN'}>
+            <p className="watchless-copy-label">{chineseCopyLabel(article)}</p>
             <Markdown className="watchless-prose watchless-prose-zh">
               {formatDialogueTurns(scene.articleZh, dialogueSpeakerLabels)}
             </Markdown>
@@ -279,7 +288,7 @@ function SceneContent({
 
         {showEnglish ? (
           <article className="watchless-copy-column" lang="en">
-            <p className="watchless-copy-label">Transcript · Original English</p>
+            <p className="watchless-copy-label">English transcript · 英文原话</p>
             <div className="watchless-prose watchless-prose-en">
               {language === 'hint' && dictionary && hintMarkdown ? (
                 <HintTranscript markdown={hintMarkdown} dictionary={dictionary} />
@@ -443,15 +452,17 @@ export default function WatchlessReader({
   askQuestion,
   onCollapse,
 }: WatchlessReaderProps) {
-  const [language, setLanguage] = useState<WatchlessLanguageMode>('zh');
+  const availableLanguageModes = article.availableLanguageModes?.length
+    ? article.availableLanguageModes
+    : languageOptions(article).map((option) => option.value);
+  const [language, setLanguage] = useState<WatchlessLanguageMode>(() => (
+    availableLanguageModes.includes('zh') ? 'zh' : (availableLanguageModes[0] ?? 'zh')
+  ));
   const [activeScene, setActiveScene] = useState(article.scenes[0].id);
   const [compactSource, setCompactSource] = useState(false);
   const [progress, setProgress] = useState(0);
   const [dictionary, setDictionary] = useState<AdvancedWordDict | null>(null);
   const [dictionaryError, setDictionaryError] = useState('');
-  const availableLanguageModes = article.availableLanguageModes?.length
-    ? article.availableLanguageModes
-    : languageOptions(article).map((option) => option.value);
   const hasEnglishTranscript = availableLanguageModes.includes('en');
   const heroRef = useRef<HTMLElement | null>(null);
   const articleRef = useRef<HTMLDivElement | null>(null);
@@ -555,13 +566,36 @@ export default function WatchlessReader({
           <p className="watchless-section-label">编辑导读</p>
           <h2 id="watchless-intro-title">{`先建立一张地图，再进入 ${article.durationLabel}的完整内容`}</h2>
         </div>
-        <Markdown className="watchless-intro-copy">{language === 'en' || language === 'hint' ? article.summaryEn : article.summaryZh}</Markdown>
+        {language === 'bilingual' ? (
+          <div className="watchless-intro-bilingual">
+            <div lang="zh-CN">
+              <p className="watchless-copy-label">中文导读</p>
+              <Markdown className="watchless-intro-copy">{article.summaryZh}</Markdown>
+            </div>
+            <div lang="en">
+              <p className="watchless-copy-label">English overview</p>
+              <Markdown className="watchless-intro-copy">{article.summaryEn}</Markdown>
+            </div>
+          </div>
+        ) : (
+          <Markdown className="watchless-intro-copy">{language === 'en' || language === 'hint' ? article.summaryEn : article.summaryZh}</Markdown>
+        )}
       </section>
 
       <div className="watchless-reader-toolbar">
         <div>
           <p>阅读语言</p>
-          <span>{language === 'zh' ? (article.bodyMode === 'verbatim' ? '按说话人分行的原话实录' : 'Watchless 中文编辑稿') : language === 'bilingual' ? '逐场景双栏对照' : '按场景边界整理的原始字幕'}</span>
+          <span>{language === 'zh'
+            ? article.articleZhKind === 'translation'
+              ? '忠实翻译，和英文原话使用同一场景边界'
+              : article.articleZhKind === 'original'
+                ? '按说话人分行的原话实录'
+                : 'Watchless 中文编辑稿'
+            : language === 'bilingual'
+              ? '同一场景内对照中文翻译与英文原话'
+              : language === 'hint'
+                ? '在英文原话上标注进阶词汇'
+                : '按场景边界整理的英文原话'}</span>
         </div>
         {availableLanguageModes.length > 1 ? (
           <LanguageSelector value={language} onChange={selectLanguage} availableModes={availableLanguageModes} article={article} />
@@ -592,7 +626,9 @@ export default function WatchlessReader({
           <footer className="watchless-article-footer">
             <p className="watchless-section-label">阅读完成</p>
             <h2>从原视频到可复用的知识资产</h2>
-            <p>{article.bodyMode === 'verbatim'
+            <p>{article.articleZhKind === 'translation' && hasEnglishTranscript
+              ? '完整时间线、关键帧、逐条中文翻译与英文原话都保留在同一篇内容中，方便对照、回看和引用。'
+              : article.bodyMode === 'verbatim'
               ? '完整时间线、关键帧与原话实录都保留在同一篇内容中，方便继续回看和引用。'
               : hasEnglishTranscript
                 ? '完整时间线、关键帧、中文编辑稿与英文 Transcript 都保留在同一篇内容中，方便继续回看和引用。'

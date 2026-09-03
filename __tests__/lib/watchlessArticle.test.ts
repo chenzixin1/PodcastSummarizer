@@ -18,11 +18,13 @@ describe('normalizeWatchlessArticle', () => {
     expect(sampleWatchlessPreview.sceneCount).toBe(article?.scenes.length);
     expect(sampleWatchlessPreview.firstScene.keyframe).toBe(article?.scenes[0].keyframe);
     expect(article?.availableLanguageModes).toEqual(['zh', 'en', 'bilingual', 'hint']);
+    expect(article?.articleZhKind).toBe('translation');
   });
 
   it('supports Chinese-only publications without exposing fake English modes', () => {
     const chineseFixture = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
     chineseFixture.transcriptLanguage = 'zh';
+    chineseFixture.articleZhKind = 'original';
     chineseFixture.availableLanguageModes = ['zh'];
 
     const article = normalizeWatchlessArticle(chineseFixture);
@@ -34,12 +36,38 @@ describe('normalizeWatchlessArticle', () => {
     const verbatimFixture = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
     verbatimFixture.bodyMode = 'verbatim';
     verbatimFixture.transcriptLanguage = 'other';
+    verbatimFixture.articleZhKind = 'original';
     verbatimFixture.availableLanguageModes = ['zh'];
 
     const article = normalizeWatchlessArticle(verbatimFixture);
     expect(article?.bodyMode).toBe('verbatim');
     expect(article?.transcriptLanguage).toBe('other');
     expect(article?.availableLanguageModes).toEqual(['zh']);
+    expect(article?.articleZhKind).toBe('original');
+  });
+
+  it('marks generated bilingual publications as faithful Chinese translations plus English originals', () => {
+    const bilingualFixture = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
+    bilingualFixture.bodyMode = 'verbatim';
+    bilingualFixture.articleZhKind = 'translation';
+    bilingualFixture.transcriptLanguage = 'en';
+    bilingualFixture.availableLanguageModes = ['zh', 'en', 'bilingual', 'hint'];
+
+    const article = normalizeWatchlessArticle(bilingualFixture);
+    expect(article?.bodyMode).toBe('verbatim');
+    expect(article?.articleZhKind).toBe('translation');
+    expect(article?.transcriptLanguage).toBe('en');
+    expect(article?.availableLanguageModes).toEqual(['zh', 'en', 'bilingual', 'hint']);
+  });
+
+  it('rejects language controls that claim unavailable source content', () => {
+    const invalidBilingual = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
+    invalidBilingual.availableLanguageModes = ['zh', 'bilingual'];
+    expect(normalizeWatchlessArticle(invalidBilingual)).toBeNull();
+
+    const invalidTranslation = JSON.parse(JSON.stringify(sampleFixture)) as Record<string, unknown>;
+    invalidTranslation.transcriptLanguage = 'zh';
+    expect(normalizeWatchlessArticle(invalidTranslation)).toBeNull();
   });
 
   it('rejects partial articles instead of rendering broken long-form content', () => {

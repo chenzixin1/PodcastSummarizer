@@ -593,6 +593,21 @@
 
 .watchless-intro-copy strong { color: var(--watchless-ink); }
 
+.watchless-intro-bilingual {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1.2rem, 3vw, 2.4rem);
+}
+
+.watchless-intro-bilingual > div + div {
+  padding-left: clamp(1.2rem, 3vw, 2.4rem);
+  border-left: 1px solid var(--watchless-rule);
+}
+
+.watchless-intro-bilingual .watchless-copy-label {
+  margin-bottom: 0.55rem;
+}
+
 .watchless-reader-toolbar {
   display: flex;
   align-items: center;
@@ -1326,6 +1341,16 @@
   .watchless-analysis-grid,
   .watchless-reader-intro {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .watchless-intro-bilingual {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .watchless-intro-bilingual > div + div {
+    padding: 1.4rem 0 0;
+    border-top: 1px solid var(--watchless-rule);
+    border-left: 0;
   }
 
   .watchless-analysis-side {
