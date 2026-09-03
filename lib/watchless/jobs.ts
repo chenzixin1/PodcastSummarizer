@@ -143,6 +143,11 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asDateString(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  return asString(value);
+}
+
 function asBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === '1';
 }
@@ -169,10 +174,10 @@ function mapJob(row: Record<string, unknown>): WatchlessJob {
     outputPodcastId: asString(row.outputPodcastId || row.output_podcast_id) || null,
     errorCode: asString(row.errorCode || row.error_code) || null,
     errorMessage: asString(row.errorMessage || row.error_message) || null,
-    createdAt: String(row.createdAt || row.created_at || ''),
-    startedAt: asString(row.startedAt || row.started_at) || null,
-    updatedAt: String(row.updatedAt || row.updated_at || ''),
-    completedAt: asString(row.completedAt || row.completed_at) || null,
+    createdAt: asDateString(row.createdAt || row.created_at),
+    startedAt: asDateString(row.startedAt || row.started_at) || null,
+    updatedAt: asDateString(row.updatedAt || row.updated_at),
+    completedAt: asDateString(row.completedAt || row.completed_at) || null,
   };
 }
 
@@ -185,7 +190,7 @@ function mapJobEvent(row: Record<string, unknown>): WatchlessJobEvent {
     progressCurrent: Number(row.progressCurrent ?? row.progress_current ?? 0),
     progressTotal: Number(row.progressTotal ?? row.progress_total ?? 100),
     message: asString(row.message) || null,
-    createdAt: String(row.createdAt || row.created_at || ''),
+    createdAt: asDateString(row.createdAt || row.created_at),
   };
 }
 
