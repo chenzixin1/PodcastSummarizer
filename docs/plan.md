@@ -15,6 +15,6 @@
 - [x] 自动化验证：补充状态序列化、阶段事件和错误展示测试，运行类型检查与生产构建。
 - [x] 迭代预览：在本地桌面和手机尺寸检查真实滚动、可访问性、刷新轮询与失败态。
 - [x] Dockerfile 检查/生成：检查现有 Watchless Container Dockerfile 与 Worker 配置，不覆盖已在生产使用的镜像方案。
-- [ ] 注册发布：通过现有 Cloudflare 发布链路部署，并对生产任务 URL 做页面与 API 回读验证。
+- [x] 注册发布：通过现有 Cloudflare 发布链路部署，并对生产任务 URL 做页面与 API 回读验证。
 
 > 本项目已有正式 Cloudflare 架构，因此“注册发布”沿用 Wrangler/Cloudflare，不另行迁移到 AnyDev。
