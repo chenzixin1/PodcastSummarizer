@@ -16,6 +16,7 @@ export interface WatchlessScene {
   transcriptEn: string;
   visualDescriptionZh: string;
   boundaryReasonEn: string;
+  sourceTranscript?: string;
 }
 
 export interface WatchlessArticle {
@@ -35,6 +36,8 @@ export interface WatchlessArticle {
   summaryEn: string;
   bodyMode?: WatchlessBodyMode;
   articleZhKind?: WatchlessChineseContentKind;
+  transcriptEnKind?: 'original' | 'translation';
+  bilingualVersion?: number;
   transcriptLanguage?: WatchlessTranscriptLanguage;
   availableLanguageModes?: WatchlessLanguageMode[];
   scenes: WatchlessScene[];
@@ -70,7 +73,7 @@ function isSafeResourceUrl(value: string): boolean {
   }
 }
 
-function inferTextLanguage(value: string): WatchlessTranscriptLanguage {
+export function inferTextLanguage(value: string): WatchlessTranscriptLanguage {
   const sample = value.slice(0, 50_000);
   const latinCount = (sample.match(/[A-Za-z]/g) || []).length;
   const cjkCount = (sample.match(/[\u3400-\u9fff]/g) || []).length;
@@ -138,6 +141,7 @@ function normalizeScene(value: unknown): WatchlessScene | null {
     transcriptEn,
     visualDescriptionZh,
     boundaryReasonEn,
+    ...(readString(scene, 'sourceTranscript', 240_000) ? { sourceTranscript: readString(scene, 'sourceTranscript', 240_000)! } : {}),
   };
 }
 
@@ -196,7 +200,7 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
     ),
   );
   const hasChineseBody = articleZhKind !== 'original' || transcriptLanguage === 'zh' || detectedArticleLanguage === 'zh';
-  const hasEnglishTranscript = transcriptLanguage === 'en' && detectedTranscriptLanguage === 'en';
+  const hasEnglishTranscript = detectedTranscriptLanguage === 'en' && (transcriptLanguage === 'en' || article.transcriptEnKind === 'translation');
   const supportedLanguageModes = new Set<WatchlessLanguageMode>([
     ...(hasChineseBody ? ['zh'] as const : []),
     ...(hasEnglishTranscript ? ['en', 'hint'] as const : []),
@@ -283,6 +287,8 @@ export function normalizeWatchlessArticle(value: unknown): WatchlessArticle | nu
     summaryEn,
     bodyMode,
     articleZhKind,
+    transcriptEnKind: article.transcriptEnKind === 'translation' ? 'translation' : 'original',
+    ...(article.bilingualVersion === 1 ? { bilingualVersion: 1 } : {}),
     transcriptLanguage,
     availableLanguageModes,
     scenes,

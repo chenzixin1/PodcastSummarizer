@@ -1,4 +1,20 @@
-# PodSum Watchless 四种阅读模式执行计划
+# PodSum Watchless 双语完整性修复执行计划
+
+**Goal:** 补齐历史文章双语内容，修复加载失败，并保证新发布内容具备真实四种阅读模式。
+**模板:** 现有 Next.js / Cloudflare 项目
+**needs_dw:** false
+**needs_db:** true
+
+- [x] Task R1: 备份 31 篇线上文章，定位 Sam Altman 校验失败与单语数据来源。
+- [x] Task R2: 在 lib/watchless 中实现双语完整性检查、原文标识与发布补齐；保留原话。
+- [ ] Task R3: 添加可恢复的历史迁移脚本，逐场景翻译、校验、上传新版本并安全切换。
+- [x] Task R4: 定向测试、类型检查和生产构建。
+- [x] Task R5: 迭代预览，真实检查中英四种模式和代表性历史文章。
+- [x] Task R6: 注册发布，Cloudflare 增量发布、全量 API 回读及 GitHub 同步。
+
+2026-09-05：R3 脚本已完成，2 篇历史双语内容已发布；全站 31 篇 API 均返回 200，其中 13 篇具备四种模式，18 篇仍只有中文。剩余补齐被 Luna 的 HTTP 403 地区限制阻断，等待用户决定是否允许其他低价模型，未擅自切换。Sam Altman 的文章 ID 不一致已修复。Worker 已发布为 `80dc0522-5b44-4648-ba13-f601a7493963`，Container 未改动。详见 `docs/watchless-bilingual-repair-20260905.md`。
+
+## 上轮已完成记录
 
 **Goal:** 让 Watchless 完整图文真实支持中文、English、中英对照和词汇提示，同时保证英文原话逐人逐行、不被模型改写。
 **模板:** 现有 Next.js + Cloudflare Worker / Workflow / Container / D1 / R2 项目

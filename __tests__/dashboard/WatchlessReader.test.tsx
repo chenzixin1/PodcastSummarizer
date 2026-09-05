@@ -94,6 +94,6 @@ describe('WatchlessReader language modes', () => {
     await userEvent.click(screen.getByRole('button', { name: /词汇提示.*English/ }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith('/vocab/advanced-words.json'));
     expect(document.body).toHaveTextContent('Unique original English transcript');
-    expect(document.body).toHaveTextContent('在英文原话上标注进阶词汇');
+    expect(document.body).toHaveTextContent('在英文内容上标注进阶词汇');
   });
 });

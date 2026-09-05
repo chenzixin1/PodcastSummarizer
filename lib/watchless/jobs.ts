@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { getD1DatabaseBinding, sql } from '../sql';
 import { deleteObject, getObject, getObjectText, uploadObject } from '../objectStorage';
 import { normalizeWatchlessArticle, type WatchlessArticle } from './article';
+import { assertBilingualArticle, ensureBilingualArticle, translateWatchlessBlocks } from './bilingual';
 
 export const WATCHLESS_URL_CREDIT_COST = 1000;
 export const WATCHLESS_ONLINE_MODEL = 'openai/gpt-5.6-luna';
@@ -922,7 +923,8 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
   const current = await getWatchlessJob(jobId);
   if (current?.status === 'completed') return current;
   await updateWatchlessJobStatus({ jobId, status: 'validating', stage: 'validating', progressCurrent: 80, progressTotal: 100 });
-  const { job, assets, article } = await validateWatchlessBundle(jobId);
+  const { job, assets, article: uploadedArticle } = await validateWatchlessBundle(jobId);
+  let article = uploadedArticle;
   const videoId = article.videoId;
   const podcastId = podcastIdForVideo(videoId);
   const existing = await sql<{ podcastId: string; userId: string; publishJobId: string | null }>`
@@ -941,6 +943,27 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
   if (podcastCollision.rows[0] && podcastCollision.rows[0].publishJobId !== jobId) {
     throw new WatchlessJobError('PODCAST_ID_COLLISION', 'The canonical PodSum podcast id is already in use.', 409);
   }
+  await updateWatchlessJobStatus({ jobId, status: 'validating', stage: 'validating_languages', progressCurrent: 84, progressTotal: 100 });
+  // URL runtime already produces aligned translations. MCP bundles and older
+  // clients also pass this gate, with resumable per-scene translation caching.
+  let complete = false;
+  if (article.bodyMode === 'verbatim' && article.articleZhKind === 'translation') {
+    try { assertBilingualArticle(article); complete = true; } catch { /* Fill missing languages below. */ }
+  }
+  if (!complete) {
+    article = await ensureBilingualArticle(article, async (blocks, target, sceneId) => {
+      const fingerprint = createHash('sha256').update(JSON.stringify({ blocks, target, version: 1 })).digest('hex');
+      const cacheKey = `watchless-staging/${jobId}/translations/${sceneId}-${fingerprint}.json`;
+      try {
+        const cached = JSON.parse(await getObjectText(cacheKey)) as unknown;
+        if (Array.isArray(cached) && cached.length === blocks.length && cached.every(s => typeof s === 'string' && s.trim())) return cached as string[];
+      } catch { /* Cache miss or invalid cached translation: regenerate. */ }
+      const translated = await translateWatchlessBlocks(blocks, target);
+      await uploadObject(cacheKey, new TextEncoder().encode(JSON.stringify(translated)), { contentType: 'application/json' });
+      return translated;
+    });
+  }
+  assertBilingualArticle(article);
   await updateWatchlessJobStatus({ jobId, status: 'publishing', stage: 'publishing', progressCurrent: 88, progressTotal: 100 });
   const finalPrefix = `watchless/${videoId}`;
   const pdfAsset = requiredAsset(assets, 'pdf');

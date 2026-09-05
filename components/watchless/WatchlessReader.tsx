@@ -40,14 +40,16 @@ const LANGUAGE_OPTIONS: Array<{ value: WatchlessLanguageMode; label: string; det
 ];
 
 function languageOptions(article: WatchlessArticle) {
+  const options = LANGUAGE_OPTIONS.map(option => option.value === 'en' && article.transcriptEnKind === 'translation'
+    ? { ...option, detail: 'Translation' } : option);
   if (article.articleZhKind === 'translation') {
-    return LANGUAGE_OPTIONS.map((option) => (
+    return options.map((option) => (
       option.value === 'zh' ? { ...option, detail: '忠实翻译' } : option
     ));
   }
-  if (article.articleZhKind !== 'original') return LANGUAGE_OPTIONS;
-  return LANGUAGE_OPTIONS.map((option) => (
-    option.value === 'zh' ? { ...option, label: '原话', detail: '逐字实录' } : option
+  if (article.articleZhKind !== 'original') return options;
+  return options.map((option) => (
+    option.value === 'zh' ? { ...option, label: '中文', detail: '原话实录' } : option
   ));
 }
 
@@ -288,7 +290,7 @@ function SceneContent({
 
         {showEnglish ? (
           <article className="watchless-copy-column" lang="en">
-            <p className="watchless-copy-label">English transcript · 英文原话</p>
+            <p className="watchless-copy-label">{article.transcriptEnKind === 'translation' ? 'English translation · 英文译文' : 'English transcript · 英文原话'}</p>
             <div className="watchless-prose watchless-prose-en">
               {language === 'hint' && dictionary && hintMarkdown ? (
                 <HintTranscript markdown={hintMarkdown} dictionary={dictionary} />
@@ -592,10 +594,10 @@ export default function WatchlessReader({
                 ? '按说话人分行的原话实录'
                 : 'Watchless 中文编辑稿'
             : language === 'bilingual'
-              ? '同一场景内对照中文翻译与英文原话'
+              ? '同一场景内对照原话与忠实译文'
               : language === 'hint'
-                ? '在英文原话上标注进阶词汇'
-                : '按场景边界整理的英文原话'}</span>
+                ? '在英文内容上标注进阶词汇'
+                : article.transcriptEnKind === 'translation' ? '按原话顺序逐条翻译的英文' : '按场景边界整理的英文原话'}</span>
         </div>
         {availableLanguageModes.length > 1 ? (
           <LanguageSelector value={language} onChange={selectLanguage} availableModes={availableLanguageModes} article={article} />
