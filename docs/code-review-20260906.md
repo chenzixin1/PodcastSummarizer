@@ -52,7 +52,7 @@
 
 ### Evidence and boundary
 
-- 84 Jest suites / 707 tests / 1 snapshot; TypeScript and changed-file ESLint passed. Six Python unit and five HTTP tests passed in Linux amd64. Production npm and full resolved Python dependency audits have zero reported vulnerabilities.
+- 85 Jest suites / 712 tests / 1 snapshot after the pronunciation follow-up; TypeScript and changed-file ESLint passed. Six Python unit and five HTTP tests passed in Linux amd64. Production npm and full resolved Python dependency audits have zero reported vulnerabilities.
 - Live URL conversion completed: 30 scenes, 38 artifacts, 1000 credits charged once. All four modes and mobile/desktop overflow tested. Real QA response persisted; subsequent readback fixes are included in the final incremental deployment.
 - Three repeated mind-map tab-switch cycles had zero page errors. Public/owner-private read and anonymous denial checks were exercised.
 - Independent security review found no blocker in source/lease/credit boundaries or paid-checkpoint recovery.

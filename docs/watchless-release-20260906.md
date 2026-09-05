@@ -18,7 +18,7 @@
 
 ## Verification before release
 
-- Jest: 84 suites, 707 tests, one snapshot passed.
+- Jest: 85 suites, 712 tests, one snapshot passed (including the pronunciation follow-up).
 - Python: six unit tests and five HTTP tests passed inside the Linux amd64 image. Full resolved dependency audit is clean after upgrading FastAPI/Starlette; the image runs as non-root.
 - TypeScript and changed-file ESLint: passed; nine pre-existing dashboard warnings remain (no errors).
 - Production npm dependency audit: zero vulnerabilities. Ten affected development dependency entries in LHCI are tracked in [issue 16](https://github.com/chenzixin1/PodcastSummarizer/issues/16); no unsafe force-downgrade was applied.
@@ -32,7 +32,8 @@
 - Its canonical source is 77011 bytes, SHA-256 `cfc70b33316ebaa491715d11b24939767c3bf4ab615c0691c0c37e416bb1729f`; every scene has both language texts. All four reader modes display all 30 scenes (60 columns in bilingual mode), and desktop/mobile have no horizontal overflow.
 - Existing public and owner-private readers were checked in authenticated UI. Anonymous access to all nine private articles, objects and snapshots was denied in the earlier corpus sweep; all 531 then-public PDF/keyframe URLs returned success with no-store. A fresh sweep includes the new article and is still running.
 - Real Mind Map → Infographic / Full Text switching, three cycles: zero page errors. Infographic image loaded successfully. Summary, Full Text and Watchless four-mode behavior was checked separately.
-- The real QA request returned and persisted a grounded answer; the initial history-loading race and provider draft leakage discovered during that check have subsequent regression fixes. Final post-deploy history readback remains required.
+- The real QA request returned and persisted a grounded answer; the initial history-loading race and provider draft leakage discovered during that check have regression fixes. Final post-deploy authenticated history readback showed only the final answer.
+- All 75 ordinary podcast analysis endpoints passed the access/readback sweep, including the 59 public records and anonymous denial of private records. Three local transport timeouts were rechecked using bounded read-only requests; the final report has zero failed ordinary endpoints.
 - Historical language/full-text repair and detailed analysis are bounded background work, not complete corpus acceptance. Original source hashes remain unchanged on successful repairs; immutable backup references are retained. Current outcomes are tracked in issue 18, rather than implying one repaired page proves the whole library.
 - MCP positive publish/submit acceptance is blocked by the current Codex token lacking both Watchless scopes. No token was broadened without user approval; negative permission checks and route/transaction tests pass.
 
@@ -52,3 +53,12 @@
 Hash validation proves consistency with submitted transcripts, not the accuracy of ASR against the audio. Existing recognised-word uncertainties are retained, not silently rewritten. Previously downloaded or browser-cached private content cannot be recalled by a server patch; future requests must enforce the current access rules.
 
 The current URL-runtime PDF contains Chinese text and timestamps but not the web reader's keyframe images. Illustrated-PDF parity is tracked in issue 20; successful file responses are not presented as proof of that parity. Seven-criteria review and all tracked follow-ups are in `docs/code-review-20260906.md`.
+
+## Pronunciation follow-up — 2026-09-06
+
+- User reported that Watchless vocabulary cards lacked the standard reader's automatic pronunciation. The cards now reuse the existing recorded-audio/browser-TTS controller and defaults. No paid-model API was added.
+- Mouse/pen hover starts playback; leaving stops. Keyboard focus and activation work; touch taps play once rather than starting a hover loop. Language changes, article collapse, window blur and unmount stop playback.
+- Real desktop production check on `/dashboard/watchless-veizk1m7v7e`: `foundation` emitted audio play/playing/pause events, and `capability` invoked system speech with `en-US`. The automation browser did not emit a native TTS start event; this verifies the fallback call, not audible output on every OS/voice.
+- Real touch-emulated 390×844 local check: one tap emitted one audio play/playing pair, no repeated loop after 1800 ms, and no horizontal overflow. Screenshots: `output/playwright/production-watchless-pronunciation.png` and `output/playwright/watchless-pronunciation-mobile.png`.
+- Latest Worker: `9f62dce7-141e-4aa0-9d4a-758d708cc8cc`, source `c6712cf`, clean release-worktree equivalent `42b318f`; Container unchanged. CI runs `33980733941` and `33980731774` passed. PR #21 remains draft pending the wider acceptance in #18.
+- Wider backfill remains incomplete: the ULi repair rejected an incomplete 12-turn translation response (10 returned) before committing. Four analysis jobs currently have timeout outcomes requiring checkpoint/operator review. These are not included in a claim of full historical completion.
