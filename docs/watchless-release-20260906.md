@@ -1,5 +1,14 @@
 # Watchless review and release — 2026-09-06
 
+## Typography follow-up — production verified
+
+- Source `84faad7`, clean release equivalent `b18345f`, Worker `5c8cbc28-1cfe-4aec-a20e-c5dde0ddf490`. Container digest unchanged (`9445ded02ed08ebc8f34d43739ee1dd5520be8036734d3d0467ff27746be2064`).
+- Shared vocabulary UI typography: Geist with Chinese sans fallbacks, 13.12px definitions / 14.4px bold headwords. Editorial article serif is unchanged. Fixed dark-mode Chinese definition color and mobile line-edge clipping.
+- Production `/dashboard/watchless-k9v45bfeneu`: upper/lower font, size, weight and colors match in both themes. Minimum tooltip text contrast 6.06:1 in light mode and 8.18:1 in dark mode. At 390×844 both cards have x=35, width=320, and remain within the viewport.
+- Production `/dashboard/watchless-veizk1m7v7e`: `capability` tooltip verified with new sans typography; screenshot `output/playwright/production-sam-vocabulary-font.png`. Paired screenshots `production-font-{upper,lower}-{light,dark}.png` and `production-font-mobile-{upper,lower}.png` in the same directory.
+- 85 suites / 712 tests / 1 snapshot, TypeScript, OpenNext production build, 26 cache readbacks, clean release guard and both CI checks passed. CSS-only change: no model requests, article rewrites, credit changes or permission expansion.
+- Scoped review posted to issue #18 (comment 5553568793). Broader acceptance/backfill status below remains separate.
+
 ## Implemented
 
 - Treat Watchless as a normal podcast with a separate, faithful illustrated reader. Overview no longer counts as complete analysis.
