@@ -25,8 +25,11 @@ export async function POST(request: NextRequest) {
     const publication = await getStoredWatchlessPublication(body.id);
     if (!publication) return NextResponse.json({ success: false }, { status: 404 });
     let article = await loadStoredWatchlessArticle(publication);
+    let bilingualComplete = true;
+    try { assertBilingualArticle(article); } catch { bilingualComplete = false; }
     if (body.action === 'inspect') return NextResponse.json({ success: true, data: {
       id: body.id, scenes: article.scenes.length, modes: article.availableLanguageModes,
+      bilingualComplete,
       sourceBytes: new TextEncoder().encode(canonicalWatchlessSource(article)).length,
       sourceSha256: createHash('sha256').update(canonicalWatchlessSource(article)).digest('hex'),
     } });

@@ -18,8 +18,13 @@ export function assertBilingualArticle(article: WatchlessArticle): void {
 // stable indexes prevent dropped, reordered or merged speaker turns.
 export async function ensureBilingualArticle(article: WatchlessArticle, translate: TranslateBlocks): Promise<WatchlessArticle> {
   if (article.bilingualVersion === 1) {
-    assertBilingualArticle(article);
-    return article;
+    try {
+      assertBilingualArticle(article);
+      return article;
+    } catch {
+      // Historical metadata can declare four modes while one scene is still
+      // monolingual. Repair from the immutable source, not from that declaration.
+    }
   }
   const sourceTexts = article.scenes.map(s => s.sourceTranscript || (
     article.transcriptEnKind === 'translation' ? s.articleZh : s.transcriptEn

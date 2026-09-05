@@ -85,6 +85,18 @@ describe('Watchless repair atomicity and paid checkpoints', () => {
     expect(uploadObject).not.toHaveBeenCalled();
     expectOriginalRows();
   });
+  test('detects and repairs a falsely complete historical bilingual declaration', async () => {
+    mockArticle = { ...mockArticle, scenes: [{...mockArticle.scenes[0], articleZh: mockArticle.scenes[0].transcriptEn}] };
+    const original = canonicalWatchlessSource(mockArticle);
+    const inspection = await (await POST(request('inspect'))).json();
+    expect(inspection.data.bilingualComplete).toBe(false);
+    expect((await POST(request('bilingual'))).status).toBe(200);
+    expect(translateWatchlessBlocks).toHaveBeenCalledTimes(1);
+    const key = mockD1.run('SELECT article_key FROM watchless_publications')[0].article_key as string;
+    const updated = JSON.parse(mockObjects.get(key)!);
+    expect(canonicalWatchlessSource(updated)).toBe(original);
+    expect(updated.scenes[0].articleZh).toContain('中文');
+  });
   test('oversized candidate projection cannot replace the source', async () => {
     mockArticle = { ...mockArticle, scenes: [{ ...mockArticle.scenes[0], articleZh: '完整中文原文内容。'.repeat(100000) }] };
     expect((await POST(request())).status).toBe(422);
