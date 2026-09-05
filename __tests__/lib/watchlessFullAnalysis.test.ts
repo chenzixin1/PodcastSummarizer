@@ -87,14 +87,15 @@ describe('full Watchless analysis', () => {
     const article = { ...shortArticle, scenes: [...shortArticle.scenes, { ...shortArticle.scenes[0], id: 'scene-2' }] };
     await expect(generateWatchlessAnalysis(article, async () => { mockD1.run("UPDATE processing_jobs SET worker_id = 'worker-2'"); }, lease)).rejects.toThrow('SUPERSEDED');
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(uploadObject).toHaveBeenCalledTimes(1);
+    expect(uploadObject).toHaveBeenCalledTimes(2);
   });
   test('malformed analysis gets one bounded correction and a private diagnostic checkpoint', async () => {
     (fetch as jest.Mock).mockResolvedValueOnce(Response.json({version:1,scenes:[]})).mockResolvedValueOnce(Response.json(partAnalysis));
     expect((await generateWatchlessAnalysis(shortArticle,jest.fn(),lease)).scenes).toHaveLength(1);
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect((uploadObject as jest.Mock).mock.calls[0][0]).toMatch(/\.rejected-0\.json$/);
-    expect(JSON.parse((uploadObject as jest.Mock).mock.calls[0][1]).reason).toContain('expected 1 scene');
+    expect((uploadObject as jest.Mock).mock.calls[0][0]).toMatch(/\.attempt-0\.json$/);
+    expect((uploadObject as jest.Mock).mock.calls[1][0]).toMatch(/\.rejected-0\.json$/);
+    expect(JSON.parse((uploadObject as jest.Mock).mock.calls[1][1]).reason).toContain('expected 1 scene');
   });
   test('persisted invalid attempts fail closed on restart without another model bill',async()=>{
     (getObjectText as jest.Mock).mockImplementation(async(key:string)=>{
@@ -110,6 +111,20 @@ describe('full Watchless analysis', () => {
       return Response.json(partAnalysis);
     });
     await expect(generateWatchlessAnalysis(shortArticle, jest.fn(), lease)).rejects.toThrow('SUPERSEDED');
-    expect(uploadObject).not.toHaveBeenCalled();
+    expect(uploadObject).toHaveBeenCalledTimes(1);
+    expect((uploadObject as jest.Mock).mock.calls[0][0]).toMatch(/\.attempt-0\.json$/);
+  });
+  test('unknown paid outcome on restart never incurs another charge',async()=>{
+    (getObjectText as jest.Mock).mockImplementation(async(key:string)=>{
+      if(key.includes('.attempt-0.')) return JSON.stringify({attempt:0});
+      throw new Error('File not found in object storage.');
+    });
+    await expect(generateWatchlessAnalysis(shortArticle,jest.fn(),lease)).rejects.toThrow('ATTEMPT_UNCERTAIN');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  test('cannot bill when durable attempt reservation fails',async()=>{
+    (uploadObject as jest.Mock).mockRejectedValueOnce(new Error('R2 unavailable'));
+    await expect(generateWatchlessAnalysis(shortArticle,jest.fn(),lease)).rejects.toThrow('R2 unavailable');
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
