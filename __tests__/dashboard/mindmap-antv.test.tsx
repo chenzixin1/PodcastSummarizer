@@ -48,6 +48,7 @@ jest.mock('@ant-design/graphs', () => {
 });
 
 interface MindMapTestProps {
+  defaultExpandLevel?: number;
   direction: string; type: string; labelField: string;
   nodeMinWidth: number; nodeMaxWidth: number; animation: boolean;
   transforms: (previous: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
@@ -119,7 +120,16 @@ describe('MindMapCanvas AntV integration', () => {
     expect(collapseTransform?.enable).toBe(true);
     expect(collapseTransform?.trigger).toBe('node');
     expect(collapseTransform?.direction).toBe('out');
-    expect(collapseTransform?.refreshLayout).toBe(false);
+    expect(collapseTransform?.refreshLayout).toBe(true);
+    expect(props.defaultExpandLevel).toBeUndefined();
+  });
+
+  test('large complete analyses start at readable branch level without removing source nodes',()=>{
+    const data={root:{label:'Complete episode',children:Array.from({length:3},(_,group)=>({label:`Group ${group}`,children:Array.from({length:25},(_,i)=>({label:`Point ${i}`}))}))}};
+    const original=JSON.stringify(data);
+    render(<MindMapCanvas data={data} themeMode="light" />);
+    expect(getMockState().latestProps?.defaultExpandLevel).toBe(1);
+    expect(JSON.stringify(data)).toBe(original);
   });
 
   test('calls graph.fitView when clicking Fit View button', async () => {

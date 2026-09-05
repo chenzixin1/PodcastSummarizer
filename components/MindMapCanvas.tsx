@@ -3,7 +3,7 @@
 import { MindMap, RCNode } from '@ant-design/graphs';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MindMapData } from '../lib/mindMap';
-import { buildAntvMindMapData, estimateMindMapNodeSize } from '../lib/mindMapAntv';
+import { buildAntvMindMapData, collectNodeIds, estimateMindMapNodeSize } from '../lib/mindMapAntv';
 
 interface MindMapCanvasProps {
   data: MindMapData;
@@ -93,6 +93,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const antvData = useMemo(() => buildAntvMindMapData(data), [data]);
+  const defaultExpandLevel = useMemo(() => collectNodeIds(antvData).length > 60 ? 1 : undefined, [antvData]);
 
   const fitView = useCallback(() => {
     if (graphRef.current?.destroyed || !containerRef.current) return;
@@ -171,7 +172,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
         enable: true,
         trigger: 'node',
         direction: 'out',
-        refreshLayout: false,
+        refreshLayout: true,
       };
     });
 
@@ -182,7 +183,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
         enable: true,
         trigger: 'node',
         direction: 'out',
-        refreshLayout: false,
+        refreshLayout: true,
       });
     }
 
@@ -255,6 +256,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
       <div className="mindmap-antv-surface">
         <MindMap
           data={antvData}
+          defaultExpandLevel={defaultExpandLevel}
           type="linear"
           direction="right"
           labelField="label"
