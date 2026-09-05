@@ -18,6 +18,12 @@
 - [x] **F9: Dockerfile 检查/构建** — 确认 GLM 模块进入 Linux amd64 Container，构建并测试；Worker 与 Container 版本一致，积分1000门槛不变。
 - [ ] **F10: 注册发布** — 在干净的 Git 发布版本运行 Cloudflare 迁移/部署；生产回读权限、内容、模型和任务状态，端到端 smoke；记录 commit、Worker/Container 版本与回滚边界。历史安全缓存单独核查。
 
+## 追加：词汇浮层字体一致性
+
+- [x] T1: `app/globals.css` 与 `components/watchless/watchless.css` 共用词汇字体、字号、释义和主题色变量；保留完整图文正文衬线字体，修复深色中文释义对比度。
+- [x] T2: 迭代预览 — 85 套 712 项通过；真实浏览器确认下方浮层使用 Geist/中文无衬线、13.12px 释义、14.4px 标题；浅/深色截图，390px 浮层 x=35、宽320，正文衬线保留。生产再比对上下两处。
+- [ ] T3: 注册发布 — 沿用干净工作树 Cloudflare 发布流程，不修改 Container、数据或积分；生产回读并记录版本。
+
 ## 之前迭代记录（以下待办由本轮 F1–F10 接续）
 
 ## 本轮：项目审查、MCP bundle 分析差异与 UI 优化
