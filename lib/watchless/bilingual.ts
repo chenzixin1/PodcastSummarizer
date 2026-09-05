@@ -3,6 +3,20 @@ import { watchlessModelRequest, watchlessModelText } from './modelProvider';
 
 export type TranslateBlocks = (blocks: string[], target: 'zh' | 'en', key: string) => Promise<string[]>;
 
+/** Identity, not response array order, aligns translations with immutable source blocks. */
+export function alignTranslatedBlocks(value: unknown, count: number): string[] {
+  if (!Array.isArray(value) || value.length !== count) throw new Error(`Translation block count mismatch: expected ${count}, received ${Array.isArray(value) ? value.length : 'non-array'}`);
+  const result: string[] = new Array(count);
+  for (const row of value) {
+    const id = typeof row?.id === 'string' && /^(0|[1-9]\d*)$/.test(row.id) ? Number(row.id) : row?.id;
+    if (!Number.isInteger(id) || id < 0 || id >= count) throw new Error('Translation contains an invalid block id');
+    if (result[id] !== undefined) throw new Error('Translation contains a duplicate block id');
+    if (typeof row.text !== 'string' || !row.text.trim()) throw new Error('Translation contains an empty block');
+    result[id] = row.text.trim();
+  }
+  return result;
+}
+
 export function assertBilingualArticle(article: WatchlessArticle): void {
   for (const scene of article.scenes) {
     if (inferTextLanguage(scene.articleZh) !== 'zh' || inferTextLanguage(scene.transcriptEn) !== 'en') {
@@ -96,9 +110,8 @@ export async function translateWatchlessBlocks(blocks: string[], target: 'zh' | 
           const detail = String(failure.error?.message || '').replace(/(?:sk-or-v1-|Bearer\s+)[A-Za-z0-9._-]+/g, '[redacted]').slice(0, 300);
           throw new Error(`Translation ${request.provider} HTTP ${response.status}: ${detail}`);
         }
-        const rows = JSON.parse(watchlessModelText(await response.json(), request.provider)).translations as Array<{id:number;text:string}>;
-        if (!Array.isArray(rows) || rows.length !== batch.length || rows.some((row, i) => row.id !== i || typeof row.text !== 'string' || !row.text.trim())) throw new Error('Translation ids missing or reordered');
-        translated = rows.map(row => row.text.trim());
+        const rows: unknown = JSON.parse(watchlessModelText(await response.json(), request.provider)).translations;
+        translated = alignTranslatedBlocks(rows, batch.length);
         break;
       } catch (error) {
         if (error instanceof Error && /HTTP (400|401|402|403|404):|not configured|is invalid|Invalid WATCHLESS/.test(error.message)) throw error;
