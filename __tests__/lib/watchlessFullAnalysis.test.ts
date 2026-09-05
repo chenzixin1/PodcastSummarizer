@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { validateAnalysisBundle, saveWatchlessFullAnalysis, generateWatchlessAnalysis } from '../../lib/watchless/fullAnalysis';
+import { validateAnalysisBundle, validateGeneratedAnalysis, saveWatchlessFullAnalysis, generateWatchlessAnalysis } from '../../lib/watchless/fullAnalysis';
 import { sampleWatchlessArticle } from '../../lib/watchless/sample';
 import { getObjectText, uploadObject } from '../../lib/objectStorage';
 import { createWatchlessD1 } from '../helpers/watchlessD1';
@@ -30,6 +30,30 @@ describe('full Watchless analysis', () => {
     expect(() => validateAnalysisBundle(analysis, ['scene-1', 'scene-2'])).toThrow();
     expect(() => validateAnalysisBundle({ ...analysis, scenes: [{ ...analysis.scenes[0], points: [] }] }, ['scene-1'])).toThrow();
     expect(() => validateAnalysisBundle({ ...analysis, scenes: [{ ...analysis.scenes[0], points: analysis.scenes[0].points.map(point => ({ ...point, zh: point.en })) }] }, ['scene-1'])).toThrow();
+  });
+  test('only generated single scenes may omit the envelope', () => {
+    expect(validateGeneratedAnalysis(partAnalysis.scenes[0], 'scene-1-part-1')).toEqual(partAnalysis);
+    expect(validateGeneratedAnalysis(partAnalysis, 'scene-1-part-1')).toEqual(partAnalysis);
+    expect(() => validateAnalysisBundle(partAnalysis.scenes[0], ['scene-1-part-1'])).toThrow();
+  });
+  test.each([
+    { ...partAnalysis.scenes[0], id: 'wrong' },
+    { ...partAnalysis.scenes[0], points: [] },
+    { ...partAnalysis.scenes[0], points: partAnalysis.scenes[0].points.map(point => ({ zh: point.en, en: point.en })) },
+    { ...partAnalysis.scenes[0], version: '1' },
+  ])('envelope recovery never fills or overlooks invalid content', value => {
+    expect(() => validateGeneratedAnalysis(value, 'scene-1-part-1')).toThrow();
+  });
+  test('recovers paid rejected bare-scene output without another model request', async () => {
+    (getObjectText as jest.Mock).mockImplementation(async (key: string) => {
+      if (key.includes('.rejected-0.')) return JSON.stringify({ reason: 'version missing', raw: JSON.stringify(partAnalysis.scenes[0]) });
+      throw new Error('File not found in object storage.');
+    });
+    expect(await generateWatchlessAnalysis(shortArticle, jest.fn(), lease)).toEqual(partAnalysis);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(uploadObject).toHaveBeenCalledTimes(1);
+    expect((uploadObject as jest.Mock).mock.calls[0][0]).not.toMatch(/\.(attempt|rejected)-/);
+    expect(JSON.parse((uploadObject as jest.Mock).mock.calls[0][1])).toEqual(partAnalysis);
   });
   test('mind map retains every section of a long episode', async () => {
     await saveWatchlessFullAnalysis(sampleWatchlessArticle, { version: 1, scenes: Array.from({ length: 30 }, (_, index) => ({ ...analysis.scenes[0], id: `section-${index}` })) }, 'mcp-supplied', lease);

@@ -28,6 +28,16 @@ export function validateAnalysisBundle(value: unknown, ids: string[]): Watchless
   return data;
 }
 
+// Provider-only compatibility: some JSON-mode responses omit the envelope.
+// Keep MCP validation strict and never infer IDs or fill missing bilingual data.
+export function validateGeneratedAnalysis(value: unknown, id: string): WatchlessAnalysisBundle {
+  if (value && typeof value === 'object' && !Array.isArray(value)
+      && !('version' in value) && !('scenes' in value) && 'id' in value && value.id === id) {
+    return validateAnalysisBundle({ version: 1, scenes: [value] }, [id]);
+  }
+  return validateAnalysisBundle(value, [id]);
+}
+
 /** Full analysis is derived separately; never send the original transcript through a rewrite step. */
 export async function generateWatchlessAnalysis(article: WatchlessArticle, progress: (current: number, total: number) => Promise<void>, lease: WatchlessAnalysisLease): Promise<WatchlessAnalysisBundle> {
   const parts = article.scenes.flatMap(scene => {
@@ -51,9 +61,20 @@ export async function generateWatchlessAnalysis(article: WatchlessArticle, progr
       let previousFailure = '';
       for (let attempt = 0; attempt < 2 && !analysis; attempt++) {
       const rejectedKey = cacheKey.replace(/\.json$/, `.rejected-${attempt}.json`);
-      const rejected = await readWatchlessCheckpoint(rejectedKey) as {reason?:string} | undefined;
+      const rejected = await readWatchlessCheckpoint(rejectedKey) as {reason?:string;raw?:string} | undefined;
       if (rejected !== undefined) {
         if (!rejected || typeof rejected.reason !== 'string') throw new Error('Invalid rejected analysis checkpoint');
+        // Recover already-paid valid content after a parser compatibility fix.
+        // Invalid content still consumes its original attempt; no rebilling.
+        if (typeof rejected.raw === 'string') {
+          try { analysis = validateGeneratedAnalysis(JSON.parse(rejected.raw), part.id); }
+          catch { analysis = null; }
+        }
+        if (analysis) {
+          await assertWatchlessAnalysisLease(article.id, lease);
+          await uploadObject(cacheKey, JSON.stringify(analysis), { contentType: 'application/json' });
+          break;
+        }
         previousFailure = rejected.reason;
         continue;
       }
@@ -75,7 +96,7 @@ export async function generateWatchlessAnalysis(article: WatchlessArticle, progr
       let raw = '';
       try {
         raw = watchlessModelText(await response.json(), request.provider);
-        analysis = validateAnalysisBundle(JSON.parse(raw), [part.id]);
+        analysis = validateGeneratedAnalysis(JSON.parse(raw), part.id);
       }
       catch (error) {
         previousFailure = error instanceof SyntaxError ? 'Return valid JSON with the specified schema' : (error as Error).message;
