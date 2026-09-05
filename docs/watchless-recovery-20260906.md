@@ -42,3 +42,9 @@
 - 生产桌面/手机验证完成：失败提示消失，完整摘要、脑图、原文和图文可读；四种阅读模式保留；390px无横向页面溢出。
 - 截图：`output/playwright/recovery-complete-summary-desktop.png`、`recovery-complete-mindmap-desktop.png`、`recovery-complete-bilingual-mobile.png`；只读比较记录在 `output/recovery-audit-before.json` / `recovery-audit-after.json`。
 - 没有批量恢复其他历史文章。PR #21 仍保持草稿，因为项目级历史回填验收由 #18 单独跟踪。
+
+### 脑图默认视图补验
+
+完整内容加载后发现原“全部展开 + Fit View”缩得过小。按 harden 大数据量检查，将超过60节点的脑图默认展开到第一层，并在点击展开/收起时重新布局。所有源节点保留，普通小脑图仍全部展开。
+
+代码 `10f19ba`，干净发布 `e337a9c`，最终 Worker `0e4e517b-52b9-4920-8faf-caed9bc8f337`。87套744项测试、类型检查、生产构建通过；线上可读的章节组默认视图及展开/收起已实测。截图 `output/playwright/recovery-mindmap-final-desktop.png` / `recovery-mindmap-final-mobile.png`。本次纯前端发布没有新增模型请求，D1继续保持30/30 completed。
