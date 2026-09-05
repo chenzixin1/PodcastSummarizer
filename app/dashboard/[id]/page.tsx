@@ -15,6 +15,7 @@ import FloatingQaAssistant from '../../../components/FloatingQaAssistant';
 import AppHeader from '../../../components/AppHeader';
 import LiteYouTubeEmbed from '../../../components/LiteYouTubeEmbed';
 import InfographicPanel from '../../../components/dashboard/InfographicPanel';
+import AnalysisRecoveryNotice from '../../../components/watchless/AnalysisRecoveryNotice';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 import {
   fetchWatchlessPublication,
@@ -77,6 +78,7 @@ interface ProcessedData {
 }
 
 interface ProcessingJobData {
+  recovery?: import('../../../lib/watchless/recoveryTypes').AnalysisRecoveryStatus | null;
   status: 'queued' | 'processing' | 'completed' | 'failed';
   currentTask?: 'summary' | 'translation' | 'highlights' | null;
   progressCurrent?: number;
@@ -574,6 +576,8 @@ export default function DashboardPage() {
   const [data, setData] = useState<ProcessedData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [processingError, setProcessingError] = useState<string | null>(null);
+  const [analysisRecovery, setAnalysisRecovery] = useState<ProcessingJobData['recovery']>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
   const [isSummaryFinal, setIsSummaryFinal] = useState(true);
@@ -733,6 +737,8 @@ export default function DashboardPage() {
   }, []);
 
   const applyProcessingJobState = useCallback((job: ProcessingJobData | null) => {
+    setAnalysisRecovery(job?.recovery || null);
+    setProcessingError(null);
     if (!job) {
       setIsProcessing(false);
       isProcessingRef.current = false;
@@ -771,9 +777,9 @@ export default function DashboardPage() {
       requestSentRef.current = false;
       setProcessingStatus(job.statusMessage || null);
       if (job.lastError) {
-        setError(`后台处理失败: ${job.lastError}`);
+        setProcessingError(`后台处理失败: ${job.lastError}`);
       }
-      resetProcessingProgress();
+      setProcessingProgress({ task: 'summary', completed: job.progressCurrent || 0, total: job.progressTotal || 0 });
       return;
     }
 
@@ -789,7 +795,7 @@ export default function DashboardPage() {
 
   const enqueueBackgroundProcessing = useCallback(async (force = false) => {
     if (!id) return;
-    if (!force && requestSentRef.current) return;
+    if (requestSentRef.current) return;
 
     requestSentRef.current = true;
     setError(null);
@@ -827,7 +833,7 @@ export default function DashboardPage() {
       }
     } catch (enqueueError) {
       const message = enqueueError instanceof Error ? enqueueError.message : String(enqueueError);
-      setError(`提交后台任务失败: ${message}`);
+      setProcessingError(`提交后台任务失败: ${message}`);
       setIsProcessing(false);
       isProcessingRef.current = false;
       requestSentRef.current = false;
@@ -1697,7 +1703,7 @@ export default function DashboardPage() {
     if (isLoading && !data) {
       return <div className="text-center p-10 text-[var(--text-muted)]">Loading content...</div>;
     }
-    if (error) {
+    if (error && !data) {
       return <div className="text-center p-10 text-[var(--danger)]">Error: {error}</div>;
     }
     if (!data) {
@@ -1808,7 +1814,7 @@ export default function DashboardPage() {
                         <span className="mr-2 inline-block animate-spin">↻</span>
                         处理中...
                       </>
-                    ) : '重新处理'}
+                    ) : id.startsWith('watchless-') ? '继续未完成部分' : '重新处理'}
                   </button>
                   <Link
                     href="/?view=my"
@@ -1882,7 +1888,7 @@ export default function DashboardPage() {
                               <span className="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--border-medium)] border-t-[var(--btn-primary)]" />
                               处理中
                             </>
-                          ) : '重新处理'}
+                          ) : watchlessPublication ? '继续未完成部分' : '重新处理'}
                         </button>
                       </div>
                     )}
@@ -2002,6 +2008,8 @@ export default function DashboardPage() {
             </section>
 
             <div className="mb-1 sm:mb-2">
+              <AnalysisRecoveryNotice recovery={analysisRecovery} error={processingError} completed={processingProgress.completed}
+                total={processingProgress.total} busy={isProcessing} canEdit={canEdit} onResume={retryProcessing} />
               {watchlessPublication && (
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-soft)] pb-4">
                   <div className="min-w-0">
