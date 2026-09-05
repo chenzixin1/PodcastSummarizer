@@ -38,6 +38,7 @@ beforeEach(()=>{
   mockD1=createWatchlessD1(article.id,article.videoId);
   mockD1.exec(readFileSync('migrations/d1/0010_watchless_analysis_recovery.sql','utf8'));
   mockD1.exec(readFileSync('migrations/d1/0011_watchless_analysis_delete.sql','utf8'));
+  mockD1.exec(readFileSync('migrations/d1/0012_watchless_analysis_settlement.sql','utf8'));
   mockD1.run("UPDATE processing_jobs SET status='failed'");mockObjects=new Map();mockStorageFailure=false;
   mockCreate.mockClear();mockStatus.mockResolvedValue({status:'running'});
   global.fetch=jest.fn(async()=>new Response(JSON.stringify(valid()),{status:200}));
@@ -152,6 +153,21 @@ test('R2 saved but D1 acknowledgement lost is recovered without a model call',as
   mockObjects.set(key,result.pending!.analysis);
   expect((await advance()).status).toBe('completed');expect(fetch).toHaveBeenCalledTimes(1);
   await expect(saveAnalysisRecoveryResult(r.id,r.workflow_id,result.pending!)).rejects.toThrow('SUPERSEDED');
+});
+test('new generation settles the original request and reuses its saved R2 result',async()=>{
+  await startAnalysisRecovery(article.id);const result=await advance();const r=active();
+  const key=mockD1.run('SELECT result_key FROM watchless_analysis_attempts')[0].result_key as string;
+  mockObjects.set(key,result.pending!.analysis);await pauseAnalysisRecovery(r.id,r.workflow_id);
+  mockStatus.mockResolvedValue({status:'complete'});await startAnalysisRecovery(article.id);
+  expect(active().workflow_id).not.toBe(r.workflow_id);
+  expect((await advance()).status).toBe('completed');expect(fetch).toHaveBeenCalledTimes(1);
+});
+test('new generation counts an expired original request and uses only its next attempt',async()=>{
+  await startAnalysisRecovery(article.id);await advance();const r=active();
+  mockD1.run('UPDATE watchless_analysis_attempts SET deadline=0');
+  await pauseAnalysisRecovery(r.id,r.workflow_id);mockStatus.mockResolvedValue({status:'complete'});
+  await startAnalysisRecovery(article.id);expect((await advance()).pending?.attempt).toBe(2);
+  expect(fetch).toHaveBeenCalledTimes(2);
 });
 test('final transaction failure resumes only storage, never regenerated analysis',async()=>{
   mockObjects.set(legacyKey(),valid());await startAnalysisRecovery(article.id);await tick();

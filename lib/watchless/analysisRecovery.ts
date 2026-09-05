@@ -226,14 +226,16 @@ export async function tickAnalysisRecovery(runId: string, owner: string): Promis
       validateAnalysisBundle(cached,[part.part_id]);
       await assertOwner(run,owner);
       await query(`UPDATE watchless_analysis_parts SET status='completed',result_key=? WHERE run_id=? AND part_id=?`,resultKey,runId,part.part_id);
-      await query(`UPDATE watchless_analysis_attempts SET status='succeeded' WHERE run_id=? AND part_id=? AND status='started'`,runId,part.part_id);
+      await query(`UPDATE watchless_analysis_attempts SET status='succeeded' WHERE run_id=? AND part_id=? AND status='started'
+        AND EXISTS(SELECT 1 FROM watchless_analysis_runs WHERE id=? AND workflow_id=?)`,runId,part.part_id,runId,owner);
       await query(`UPDATE processing_jobs SET progress_current=(SELECT COUNT(*) FROM watchless_analysis_parts WHERE run_id=? AND status='completed'),
         updated_at=CURRENT_TIMESTAMP WHERE podcast_id=? AND worker_id=?`,runId,run.podcast_id,owner);
       return {done:false,waitMs:0,status:'running'};
     }
     const last=attempts.at(-1);
     if(last && ['started','unknown'].includes(last.status) && last.deadline>Date.now()) return wait(run,owner,last.deadline);
-    if(last?.status==='started') await query(`UPDATE watchless_analysis_attempts SET status='unknown',error_kind='timeout' WHERE run_id=? AND part_id=? AND attempt=?`,runId,part.part_id,last.attempt);
+    if(last?.status==='started') await query(`UPDATE watchless_analysis_attempts SET status='unknown',error_kind='timeout' WHERE run_id=? AND part_id=? AND attempt=?
+      AND EXISTS(SELECT 1 FROM watchless_analysis_runs WHERE id=? AND workflow_id=?)`,runId,part.part_id,last.attempt,runId,owner);
     if(last?.error_kind==='permanent') return pause(run,owner,'PERMANENT: 模型权限、余额或参数错误，请先处理配置');
     if(last?.retry_at && last.retry_at>Date.now()) return wait(run,owner,last.retry_at);
     const extras=(await query<{n:number}>('SELECT COUNT(*) AS n FROM watchless_analysis_attempts WHERE run_id=? AND attempt>1',runId))[0].n;
@@ -264,8 +266,9 @@ export async function tickAnalysisRecovery(runId: string, owner: string): Promis
       const uncertain=kind==='timeout'||kind==='network';
       const next=kind==='permanent'?null:Math.max(retryAt(attempt,Date.now(),retryAfter),uncertain?now+ANALYSIS_LEASE_MS:0);
       await assertOwner(run,owner);
-      await query(`UPDATE watchless_analysis_attempts SET status=?,finished_at=?,error_kind=?,retry_at=? WHERE run_id=? AND part_id=? AND attempt=? AND workflow_id=?`,
-        uncertain?'unknown':'failed',Date.now(),kind,next,runId,part.part_id,attempt,owner);
+      await query(`UPDATE watchless_analysis_attempts SET status=?,finished_at=?,error_kind=?,retry_at=? WHERE run_id=? AND part_id=? AND attempt=? AND workflow_id=?
+        AND EXISTS(SELECT 1 FROM watchless_analysis_runs WHERE id=? AND workflow_id=?)`,
+        uncertain?'unknown':'failed',Date.now(),kind,next,runId,part.part_id,attempt,owner,runId,owner);
       if(kind==='permanent') return pause(run,owner,'PERMANENT: 模型权限、余额或参数错误');
       return wait(run,owner,next!);
     }

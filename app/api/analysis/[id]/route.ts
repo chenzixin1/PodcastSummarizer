@@ -147,7 +147,11 @@ export async function GET(
     // 获取分析结果
     const processingJobResult = await getProcessingJob(id);
     const legacyJob = processingJobResult.success ? processingJobResult.data : null;
-    const recovery = recoveryEnabled(id) ? await analysisRecoveryStatus(id) : null;
+    // Optional background state must never turn a readable article into a 500.
+    const recovery = recoveryEnabled(id) ? await analysisRecoveryStatus(id).catch(() => {
+      console.error('Watchless recovery status unavailable');
+      return null;
+    }) : null;
     const processingJob = legacyJob ? {...legacyJob, recovery,
       ...(recovery ? { progressCurrent:recovery.completed, progressTotal:recovery.total,
         status:recovery.status==='completed'?'completed':recovery.status==='paused'?'failed':recovery.status==='cancelled'?'cancelled':'processing',
