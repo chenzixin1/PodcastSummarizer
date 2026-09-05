@@ -352,7 +352,7 @@ function availableTools(context: McpAccessAuthContext): McpTool[] {
       toolDefinition(
         'podsum_begin_watchless_publish',
         'Begin Watchless publish',
-        'Create a no-video-compute upload session for a Watchless article already produced by Codex.',
+        'Create a no-video-compute upload session for a Watchless article already produced by Codex. Include original transcript and exact scene keyframe paths. Optionally upload analysis.json as role manifest: {version:1,scenes:[{id,titleZh,titleEn,points:[{zh,en}]}]}, covering every article scene in order with 2-12 substantial paired points. If omitted, the published article enters the full-analysis queue; its overview is not treated as a complete Summary.',
         {
           type: 'object',
           properties: {
@@ -792,7 +792,7 @@ async function handleCommitWatchlessPublish(context: McpAccessAuthContext, args:
   if (owned.status !== 'awaiting_upload') return errorToolResult({ code: 'JOB_NOT_COMMITTABLE', error: `Job is ${owned.status}.` });
   try {
     const validation = await validateWatchlessBundle(jobId);
-    await updateWatchlessJobStatus({ jobId, status: 'queued', stage: 'queued', progressCurrent: 5, progressTotal: 100 });
+    await updateWatchlessJobStatus({ jobId, status: 'queued', expectedStatus: 'awaiting_upload', stage: 'queued', progressCurrent: 5, progressTotal: 100 });
     let workflowInstanceId: string;
     try {
       workflowInstanceId = await startWatchlessWorkflow(jobId, 'publish');
@@ -800,6 +800,7 @@ async function handleCommitWatchlessPublish(context: McpAccessAuthContext, args:
       await updateWatchlessJobStatus({
         jobId,
         status: 'awaiting_upload',
+        expectedStatus: 'queued',
         stage: 'awaiting_upload',
         progressCurrent: 0,
         progressTotal: 100,

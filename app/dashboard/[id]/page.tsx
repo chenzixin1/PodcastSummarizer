@@ -18,7 +18,6 @@ import InfographicPanel from '../../../components/dashboard/InfographicPanel';
 import type { MindMapData, MindMapNode } from '../../../lib/mindMap';
 import {
   fetchWatchlessPublication,
-  findWatchlessPublication,
   type WatchlessPublication,
 } from '../../../lib/watchless/publications';
 import { enforceLineBreaks } from '../../../lib/fullTextFormatting';
@@ -56,6 +55,7 @@ dashboardDebugLog(`[DEBUG] Podcast Summarizer v${APP_VERSION} loading...`);
 
 // Define types for the processed data
 interface ProcessedData {
+  analysisKind?: string;
   title: string;
   originalFileName: string;
   originalFileSize: string;
@@ -96,6 +96,7 @@ interface DashboardPodcastPayload {
 }
 
 interface DashboardAnalysisPayload {
+  analysisKind?: string;
   summary?: string | null;
   summaryZh?: string | null;
   summaryEn?: string | null;
@@ -598,6 +599,8 @@ export default function DashboardPage() {
   const [isSavingVisibility, setIsSavingVisibility] = useState(false);
   const [visibilitySaveError, setVisibilitySaveError] = useState<string | null>(null);
   const [remoteWatchlessPublication, setRemoteWatchlessPublication] = useState<WatchlessPublication | null>(null);
+  const [watchlessQaOpen, setWatchlessQaOpen] = useState(false);
+  const [watchlessQaMounted, setWatchlessQaMounted] = useState(false);
   
   // Refs for scroll control and processing state
   const contentRef = useRef<HTMLElement | null>(null);
@@ -1276,6 +1279,7 @@ export default function DashboardPage() {
             const normalizedFullTextBilingualJson = normalizeFullTextBilingualPayload(analysis.fullTextBilingualJson);
             const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis.summaryBilingualJson);
             const loadedData: ProcessedData = {
+              analysisKind: analysis.analysisKind,
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName || 'Transcript',
               originalFileSize: podcast.fileSize || '-',
@@ -1332,6 +1336,7 @@ export default function DashboardPage() {
               const normalizedFullTextBilingualJson = normalizeFullTextBilingualPayload(analysis?.fullTextBilingualJson);
               const normalizedSummaryBilingualJson = normalizeSummaryBilingualPayload(analysis?.summaryBilingualJson);
               return ({
+              analysisKind: analysis?.analysisKind,
               title: resolveDashboardTitle(podcast),
               originalFileName: podcast.originalFileName || 'Transcript',
               originalFileSize: podcast.fileSize || '-',
@@ -1479,11 +1484,10 @@ export default function DashboardPage() {
   const sourceReferenceIsUrl = currentSourceReference ? isValidHttpUrl(currentSourceReference) : false;
   const youtubeVideoId = getYouTubeVideoId(currentSourceReference);
   const sourceHost = getSourceHost(currentSourceReference);
-  const localWatchlessPublication = findWatchlessPublication(id, youtubeVideoId);
-  const watchlessPublication = localWatchlessPublication || remoteWatchlessPublication;
+  const watchlessPublication = remoteWatchlessPublication;
 
   useEffect(() => {
-    if (!id || localWatchlessPublication) {
+    if (!id) {
       setRemoteWatchlessPublication(null);
       return;
     }
@@ -1503,7 +1507,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, localWatchlessPublication]);
+  }, [id]);
 
   const toggleVisibility = async () => {
     if (!id || !canEdit || !data || isSavingVisibility) {
@@ -1708,10 +1712,10 @@ export default function DashboardPage() {
       case 'summary':
         return (
           <div className="p-4 sm:p-6 lg:p-8">
-            <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
+            <div className="streaming-content dashboard-reading" style={watchlessPublication ? { minHeight: 0 } : undefined} ref={setContentElement} onScroll={handleContentScroll}>
               <div className="markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={markdownUrlTransform}>
-                  {getRenderableViewContent() || '正在生成摘要...'}
+                  {getRenderableViewContent() || (isProcessing ? '正在生成摘要...' : '此语言的摘要尚未生成。')}
                 </ReactMarkdown>
               </div>
             </div>
@@ -1723,7 +1727,7 @@ export default function DashboardPage() {
                 <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
                   <div className="markdown-body">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={markdownUrlTransform}>
-                      {getRenderableViewContent() || '正在生成重点内容...'}
+                      {getRenderableViewContent() || (isProcessing ? '正在生成全文...' : '此语言的全文尚未生成。完整图文可在下方阅读。')}
                     </ReactMarkdown>
                   </div>
                 </div>
@@ -1741,7 +1745,7 @@ export default function DashboardPage() {
               <MindMapCanvas data={activeMindMap} themeMode={themeMode} />
             ) : (
               <div className="h-full w-full flex items-center justify-center rounded-xl border border-dashed border-[var(--border-medium)] bg-[var(--paper-base)] px-6 text-center text-sm text-[var(--text-muted)] leading-7">
-                {isProcessing ? '脑图正在生成中，请稍候...' : '当前内容还没有脑图数据，可点击“重新处理文件”后生成。'}
+                {isProcessing ? '脑图正在生成中，请稍候...' : watchlessPublication ? '完整图文已发布，脑图尚未生成。这是单独的播客分析产物，不影响下方阅读。' : '当前内容还没有脑图数据。'}
               </div>
             )}
           </div>
@@ -1753,7 +1757,7 @@ export default function DashboardPage() {
   };
 
   const getButtonClass = (view: ViewMode) =>
-    `shrink-0 px-3 sm:px-4 py-2 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap
+    `shrink-0 min-h-11 px-3 sm:px-4 py-2 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]
      ${activeView === view
        ? 'text-[var(--heading)] border-[var(--btn-primary)]'
        : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)] hover:border-[var(--border-medium)]'}`;
@@ -1820,12 +1824,13 @@ export default function DashboardPage() {
         {data && (
           <main className="container mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8 flex-grow flex flex-col gap-4 md:gap-6">
             <section className="dashboard-panel overflow-hidden rounded-2xl">
-              <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className={`grid gap-0 ${watchlessPublication ? 'lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)]' : 'lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]'}`}>
                 <div className="border-b border-[var(--border-soft)] bg-[var(--paper-subtle)] lg:border-b-0 lg:border-r">
                   {youtubeVideoId ? (
                     <LiteYouTubeEmbed
                       videoId={youtubeVideoId}
                       title={`Original video for ${data.title}`}
+                      compact={Boolean(watchlessPublication)}
                     />
                   ) : (
                     <div className="flex aspect-video min-h-[220px] w-full flex-col justify-between p-5 sm:min-h-[320px] lg:min-h-[520px]">
@@ -1848,9 +1853,9 @@ export default function DashboardPage() {
                         <span className="h-1 w-1 rounded-full bg-[var(--border-medium)]" />
                         <span>{youtubeVideoId ? 'YouTube video' : sourceHost}</span>
                       </div>
-                      <h2 className="mt-1 line-clamp-2 text-base font-semibold leading-6 text-[var(--heading)] sm:text-lg">
+                      <h1 className="mt-1 text-base font-semibold leading-6 text-[var(--heading)] sm:text-lg">
                         {data.title}
-                      </h2>
+                      </h1>
                     </div>
 
                     {canEdit && (
@@ -1997,15 +2002,28 @@ export default function DashboardPage() {
             </section>
 
             <div className="mb-1 sm:mb-2">
-              <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border-soft)] pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <button onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
-                <button onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
-                <button onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
-                <button onClick={() => switchActiveView('infographic')} className={`${getButtonClass('infographic')} shrink-0`}>Infographic</button>
+              {watchlessPublication && (
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-soft)] pb-4">
+                  <div className="min-w-0">
+                    <h2 className="text-base font-semibold text-[var(--heading)]">播客分析</h2>
+                    <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">{data?.analysisKind === 'overview' ? (isProcessing ? '完整分析正在补齐，当前先显示文章导读；下方原话图文可以正常阅读。' : '当前为文章导读，完整分析尚未完成；下方原话图文不受影响。') : '摘要梳理论点与依据；下方完整图文保留逐场景原话、关键帧和时间码。'}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a href="#watchless-full-article" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border-soft)] px-3 text-sm font-semibold text-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2">前往完整图文 ↓</a>
+                    <button type="button" aria-expanded={watchlessQaOpen} aria-controls="watchless-dashboard-qa" className="min-h-11 rounded-lg px-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--paper-muted)] focus-visible:outline-2 focus-visible:outline-offset-2" onClick={() => { setWatchlessQaMounted(true); setWatchlessQaOpen(open => !open); }}>{watchlessQaOpen ? '收起问答' : '问答助手'}</button>
+                  </div>
+                </div>
+              )}
+              <div role="group" aria-label="播客内容视图" className="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border-soft)] pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <button aria-pressed={activeView === 'summary'} onClick={() => switchActiveView('summary')} className={`${getButtonClass('summary')} shrink-0`}>Summary</button>
+                <button aria-pressed={activeView === 'fullText'} onClick={() => switchActiveView('fullText')} className={`${getButtonClass('fullText')} shrink-0`}>Full Text</button>
+                <button aria-pressed={activeView === 'mindMap'} onClick={() => switchActiveView('mindMap')} className={`${getButtonClass('mindMap')} shrink-0`}>Mind Map</button>
+                <button aria-pressed={activeView === 'infographic'} onClick={() => switchActiveView('infographic')} className={`${getButtonClass('infographic')} shrink-0`}>Infographic</button>
               </div>
-              {activeView !== 'infographic' && <div className="mt-3 inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5">
+              {activeView !== 'infographic' && <div role="group" aria-label="阅读语言" className="mt-3 inline-flex max-w-full flex-wrap items-center rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-0.5 [&>button]:min-h-11 [&>button]:focus-visible:outline-2 [&>button]:focus-visible:outline-offset-2">
                 <button
                   onClick={() => setContentLanguage('zh')}
+                  aria-pressed={contentLanguage === 'zh'}
                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                     contentLanguage === 'zh'
                       ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
@@ -2016,6 +2034,7 @@ export default function DashboardPage() {
                 </button>
                 <button
                   onClick={() => setContentLanguage('en')}
+                  aria-pressed={contentLanguage === 'en'}
                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                     contentLanguage === 'en'
                       ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
@@ -2026,6 +2045,7 @@ export default function DashboardPage() {
                 </button>
                 <button
                   onClick={() => setContentLanguage('bilingual')}
+                  aria-pressed={contentLanguage === 'bilingual'}
                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                     contentLanguage === 'bilingual'
                       ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
@@ -2036,6 +2056,7 @@ export default function DashboardPage() {
                 </button>
                 <button
                   onClick={activateHintMode}
+                  aria-pressed={contentLanguage === 'hint'}
                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                     contentLanguage === 'hint'
                       ? 'bg-[var(--btn-primary)] text-[var(--btn-primary-text)]'
@@ -2073,15 +2094,15 @@ export default function DashboardPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px] gap-4 md:gap-6 xl:items-start">
+            <div className={`grid grid-cols-1 ${!watchlessPublication || watchlessQaOpen ? 'xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]' : ''} gap-4 md:gap-6 xl:items-start`}>
               <section className="w-full min-w-0">
-                <div ref={contentPanelRef} className="dashboard-panel min-h-[240px] sm:min-h-[320px] rounded-2xl overflow-hidden">
+                <div ref={contentPanelRef} className={`dashboard-panel ${watchlessPublication && !watchlessQaOpen ? 'min-h-[160px]' : 'min-h-[240px] sm:min-h-[320px]'} rounded-2xl overflow-hidden`}>
                   {renderContent()}
                 </div>
               </section>
 
-              <div className="w-full self-start xl:sticky" style={{ top: assistantStickyTop }}>
-                {isQaAssistantEnabled ? (
+              <div id="watchless-dashboard-qa" hidden={(Boolean(watchlessPublication) || id.startsWith('watchless-')) && !watchlessQaOpen} className="w-full self-start xl:sticky" style={{ top: assistantStickyTop }}>
+                {((!watchlessPublication && !id.startsWith('watchless-')) || watchlessQaMounted) && (isQaAssistantEnabled ? (
                   <FloatingQaAssistant
                     podcastId={id}
                     enabled={isQaAssistantEnabled}
@@ -2094,7 +2115,7 @@ export default function DashboardPage() {
                   >
                     Copilot 会在当前文件处理完成后启用。
                   </aside>
-                )}
+                ))}
               </div>
             </div>
 

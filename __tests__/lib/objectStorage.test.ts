@@ -82,4 +82,27 @@ describe('objectStorage', () => {
     );
     expect(get).toHaveBeenCalledWith('missing.srt');
   });
+
+  it('rejects foreign URLs before making a request or reading a local object', async () => {
+    const get = jest.fn();
+    mockGetCloudflareContext.mockResolvedValue({ env: { PODSUM_BUCKET: { get }, NEXTAUTH_URL: 'https://podsum.cc' } });
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    const { getObjectText } = await import('../../lib/objectStorage');
+    for (const url of ['https://evil.invalid/api/files/private.txt', 'http://127.0.0.1/private', 'https://example.com/data', 'https://user:password@a.public.blob.vercel-storage.com/a']) {
+      await expect(getObjectText(url)).rejects.toThrow('Untrusted');
+    }
+    expect(get).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it('reads canonical URLs and rejects streamed objects over the 8 MiB budget', async () => {
+    const get = jest.fn().mockResolvedValueOnce({ body: new Response('原话 original').body })
+      .mockResolvedValueOnce({ body: new Response(new Uint8Array(8 * 1024 * 1024 + 1)).body });
+    mockGetCloudflareContext.mockResolvedValue({ env: { PODSUM_BUCKET: { get }, NEXTAUTH_URL: 'https://podsum.cc' } });
+    const { getObjectText } = await import('../../lib/objectStorage');
+    await expect(getObjectText('https://podsum.cc/api/files/source.txt')).resolves.toBe('原话 original');
+    expect(get).toHaveBeenCalledWith('source.txt');
+    await expect(getObjectText('too-large.txt')).rejects.toThrow('size limit');
+  });
 });

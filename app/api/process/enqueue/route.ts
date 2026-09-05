@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
 
     if (!force) {
       const analysisResult = await getAnalysisResults(id);
-      if (analysisResult.success) {
+      if (analysisResult.success && (analysisResult.data as { analysisKind?: string })?.analysisKind !== 'overview') {
         return NextResponse.json({
           success: true,
           data: {

@@ -71,7 +71,7 @@ describe('/api/watchless/[id] API route', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('cache-control')).toContain('public');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(body.data.articleMeta).toEqual({
       sceneCount: 12,
       durationLabel: '53 分钟',

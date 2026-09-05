@@ -17,7 +17,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ success: false, code: 'JOB_NOT_COMMITTABLE', error: `Job is ${job.status}.` }, { status: 409 });
     }
     await validateWatchlessBundle(id);
-    await updateWatchlessJobStatus({ jobId: id, status: 'queued', stage: 'queued', progressCurrent: 5, progressTotal: 100 });
+    await updateWatchlessJobStatus({ jobId: id, status: 'queued', expectedStatus: 'awaiting_upload', stage: 'queued', progressCurrent: 5, progressTotal: 100 });
     let workflowInstanceId: string;
     try {
       workflowInstanceId = await startWatchlessWorkflow(id, 'publish');
@@ -25,6 +25,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       await updateWatchlessJobStatus({
         jobId: id,
         status: 'awaiting_upload',
+        expectedStatus: 'queued',
         stage: 'awaiting_upload',
         progressCurrent: 0,
         progressTotal: 100,

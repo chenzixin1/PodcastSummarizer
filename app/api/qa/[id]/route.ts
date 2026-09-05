@@ -139,11 +139,8 @@ async function fetchTranscript(blobUrl?: string | null): Promise<string> {
     return '';
   }
   try {
-    const response = await fetch(blobUrl);
-    if (!response.ok) {
-      return '';
-    }
-    const content = await response.text();
+    const { getObjectText } = await import('../../../../lib/objectStorage');
+    const content = await getObjectText(blobUrl);
     return normalizeText(content);
   } catch {
     return '';

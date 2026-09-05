@@ -190,6 +190,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         id: job.podcastId,
+        workerId,
         blobUrl: podcast.blobUrl,
         fileName: podcast.originalFileName,
         debug: false,

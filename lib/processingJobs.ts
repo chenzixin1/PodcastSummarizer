@@ -138,6 +138,7 @@ export async function enqueueProcessingJob(podcastId: string): Promise<Processin
         started_at = NULL,
         finished_at = NULL,
         updated_at = CURRENT_TIMESTAMP
+      WHERE processing_jobs.status NOT IN ('queued', 'processing')
       RETURNING
         podcast_id as "podcastId",
         status,
@@ -155,7 +156,7 @@ export async function enqueueProcessingJob(podcastId: string): Promise<Processin
     `;
 
     if (result.rows.length === 0) {
-      return { success: false, error: 'Failed to enqueue processing job' };
+      return getProcessingJob(podcastId);
     }
 
     return { success: true, data: mapRowToProcessingJob(result.rows[0]) };

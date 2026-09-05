@@ -14,6 +14,8 @@ function analysisDebug(...args: unknown[]) {
 }
 
 interface AnalysisData {
+  analysisKind?: string;
+  analysisModel?: string;
   summary?: string | null;
   summaryZh?: string | null;
   summaryEn?: string | null;
@@ -58,7 +60,7 @@ function extractLegacySummary(summary: string): { zh: string; en: string } {
 }
 
 function hasCompleteAnalysis(analysis: AnalysisData | null, processingStatus: string | null): boolean {
-  if (!analysis) {
+  if (!analysis || analysis.analysisKind === 'overview') {
     return false;
   }
   const legacySummary = extractLegacySummary(String(analysis.summary || ''));

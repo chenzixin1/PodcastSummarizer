@@ -66,21 +66,22 @@ export default function WatchlessLongformSection({
   const collapse = () => {
     setExpanded(false);
     window.requestAnimationFrame(() => {
-      calloutRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      calloutRef.current?.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
       triggerRef.current?.focus({ preventScroll: true });
     });
   };
 
   return (
-    <section className="watchless-surface watchless-longform-section">
+    <section id="watchless-full-article" className="watchless-surface watchless-longform-section" style={{ scrollMarginTop: '6rem' }}>
       <section ref={calloutRef} className="watchless-expand-callout" aria-labelledby={`${regionId}-title`}>
         <div className="watchless-expand-index" aria-hidden="true">{sceneRange}</div>
         <div>
           <p className="watchless-section-label">Watchless 完整图文</p>
           <h2 id={`${regionId}-title`}>
-            {`沿着 ${articleMeta.sceneCount} 个场景，继续读完这段 ${articleMeta.durationLabel}的完整内容`}
+            逐场景阅读完整内容
           </h2>
-          <p>关键帧、逐场景正文与原视频时间码已经对齐。</p>
+          <p>{articleMeta.sceneCount} 个场景 · {articleMeta.durationLabel} · 关键帧与原视频时间码对齐</p>
         </div>
         <button
           ref={triggerRef}
@@ -98,6 +99,7 @@ export default function WatchlessLongformSection({
         id={regionId}
         className={`watchless-expand-region ${expanded ? 'is-open' : ''}`}
         aria-hidden={!expanded}
+        inert={!expanded}
       >
         <div>
           {article ? (
@@ -111,14 +113,14 @@ export default function WatchlessLongformSection({
               <p>完整图文加载失败：{loadError}</p>
               <button type="button" onClick={() => void requestArticle()}>重新加载</button>
             </div>
-          ) : (
+          ) : loadingArticle ? (
             <div className="watchless-reader-skeleton" role="status" aria-live="polite">
               <span />
               <span />
               <span />
               <p>正在准备完整图文…</p>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </section>

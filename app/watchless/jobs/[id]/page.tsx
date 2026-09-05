@@ -42,7 +42,7 @@ const STATUS_COPY: Record<string, { label: string; detail: string }> = {
   queued: { label: '等待开始', detail: '任务已进入队列，即将启动独立运行环境。' },
   preparing: { label: '正在准备视频', detail: '正在读取来源、下载视频并提取音轨。' },
   transcribing: { label: '正在转录原话', detail: '正在识别语音和说话人轮次。' },
-  segmenting: { label: '正在划分场景', detail: 'Luna 只负责识别说话人和场景边界，正文保留 ASR 原话。' },
+  segmenting: { label: '正在划分场景', detail: '模型只负责识别说话人和场景边界，正文保留 ASR 原话。' },
   rendering: { label: '正在生成完整图文', detail: '正在提取关键帧并制作文章和 PDF。' },
   validating: { label: '正在检查产物', detail: '正在核对时间线、原话和全部附件。' },
   publishing: { label: '正在写入 PodSum', detail: '正在保存为普通播客记录并发布完整图文。' },
@@ -82,6 +82,7 @@ function stageLabel(stage: string | null | undefined): string {
 }
 
 function modelLabel(model: string | null): string {
+  if (model === '@cf/zai-org/glm-5.3-flash') return 'GLM-5.3 Flash · Cloudflare';
   return model === 'openai/gpt-5.6-luna' ? 'GPT-5.6 Luna · OpenRouter' : model || '—';
 }
 

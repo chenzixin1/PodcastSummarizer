@@ -305,7 +305,8 @@ export async function POST(request: NextRequest) {
 
     const volcConfig = getVolcanoConfig('auto');
     const audioFormat = toVolcanoAudioFormat(fileName, file.type || '');
-    const providerTaskId = await submitVolcanoTask(audioBlob.url, audioFormat, volcConfig, 'auto');
+    const { signedAudioObjectUrl } = await import('../../../../lib/objectSigning');
+    const providerTaskId = await submitVolcanoTask(signedAudioObjectUrl(audioBlob), audioFormat, volcConfig, 'auto');
 
     if (monitorTaskId) {
       await updateExtensionMonitorTask(monitorTaskId, {

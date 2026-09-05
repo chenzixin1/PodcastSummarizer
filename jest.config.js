@@ -9,9 +9,11 @@ const createJestConfig = nextJest({
 const customJestConfig = {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   testEnvironment: 'jest-environment-jsdom',
+  modulePathIgnorePatterns: ['<rootDir>/.worktrees/', '<rootDir>/.open-next/', '<rootDir>/.next/'],
   testPathIgnorePatterns: [
     '<rootDir>/node_modules/',
     '<rootDir>/.next/',
+    '<rootDir>/__tests__/helpers/',
     '<rootDir>/__tests__/utils/requestTracker.ts',
   ],
   moduleNameMapper: {
