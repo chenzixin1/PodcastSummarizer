@@ -58,6 +58,10 @@ export async function ensureQaMessagesTable(): Promise<void> {
 }
 
 export async function saveQaMessage(input: SaveQaMessageInput): Promise<QaMessageResult> {
+  // A public podcast does not make its listeners' conversations public.
+  if (typeof input.userId !== 'string' || !input.userId.trim()) {
+    return { success: false, error: 'Authentication required' };
+  }
   try {
     await ensureQaMessagesTable();
     const id = nanoid();
@@ -73,7 +77,7 @@ export async function saveQaMessage(input: SaveQaMessageInput): Promise<QaMessag
       VALUES (
         ${id},
         ${input.podcastId},
-        ${input.userId ?? null},
+        ${input.userId},
         ${input.question},
         ${input.answer},
         ${Boolean(input.suggestedQuestion)}
@@ -98,7 +102,11 @@ export async function saveQaMessage(input: SaveQaMessageInput): Promise<QaMessag
   }
 }
 
-export async function getQaMessages(podcastId: string, limit = 30): Promise<QaMessageResult> {
+/** Read only the caller's history. Unowned legacy rows remain stored but are never exposed. */
+export async function getQaMessages(podcastId: string, userId: string | null | undefined, limit = 30): Promise<QaMessageResult> {
+  if (typeof userId !== 'string' || !userId.trim()) {
+    return { success: false, error: 'Authentication required' };
+  }
   try {
     await ensureQaMessagesTable();
     const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.floor(limit))) : 30;
@@ -113,6 +121,7 @@ export async function getQaMessages(podcastId: string, limit = 30): Promise<QaMe
         created_at as "createdAt"
       FROM qa_messages
       WHERE podcast_id = ${podcastId}
+        AND user_id = ${userId}
       ORDER BY created_at ASC
       LIMIT ${safeLimit}
     `;

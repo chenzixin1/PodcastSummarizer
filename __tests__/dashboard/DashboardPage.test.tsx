@@ -70,6 +70,7 @@ const analysisPayload = {
 };
 
 test('Watchless keeps full-reading access visible and opens QA only on request', async () => {
+  (useSession as jest.Mock).mockReturnValue({ data:{user:{id:'owner'}}, status:'authenticated' });
   const defaultFetch = mockFetch.getMockImplementation();
   mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
     if (String(input).startsWith('/api/watchless/')) {
@@ -87,6 +88,12 @@ test('Watchless keeps full-reading access visible and opens QA only on request',
   expect(screen.getByText('QA Assistant')).toBeVisible();
   await userEvent.click(screen.getByRole('button', {name:'收起问答'}));
   expect(screen.getByText('QA Assistant')).not.toBeVisible();
+});
+
+test('anonymous readers can read but cannot load another user QA history', async () => {
+  render(<DashboardPage />);
+  expect(await screen.findByText('请先登录，再向问答助手提问。你的问答记录仅自己可见。')).toBeInTheDocument();
+  expect(screen.queryByText('QA Assistant')).not.toBeInTheDocument();
 });
 
 beforeEach(() => {

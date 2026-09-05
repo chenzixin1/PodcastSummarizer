@@ -566,7 +566,7 @@ declare global {
 export default function DashboardPage() {
   const params = useParams();
   const id = params?.id as string;
-  const { status: sessionStatus } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const dashboardAccessMode = sessionStatus === 'authenticated' ? 'authenticated' : 'public';
   
   // Initialize all hooks first, before any conditional returns
@@ -2102,8 +2102,9 @@ export default function DashboardPage() {
               </section>
 
               <div id="watchless-dashboard-qa" hidden={(Boolean(watchlessPublication) || id.startsWith('watchless-')) && !watchlessQaOpen} className="w-full self-start xl:sticky" style={{ top: assistantStickyTop }}>
-                {((!watchlessPublication && !id.startsWith('watchless-')) || watchlessQaMounted) && (isQaAssistantEnabled ? (
+                {((!watchlessPublication && !id.startsWith('watchless-')) || watchlessQaMounted) && (isQaAssistantEnabled && session?.user?.id ? (
                   <FloatingQaAssistant
+                    key={`${id}:${session.user.id}`}
                     podcastId={id}
                     enabled={isQaAssistantEnabled}
                     panelHeight={assistantPanelHeight}
@@ -2113,7 +2114,7 @@ export default function DashboardPage() {
                     className="dashboard-panel w-full min-h-[260px] rounded-2xl overflow-hidden flex flex-col justify-center px-5 text-sm text-[var(--text-secondary)]"
                     style={typeof assistantPanelHeight === 'number' && assistantPanelHeight > 0 ? { height: assistantPanelHeight } : undefined}
                   >
-                    Copilot 会在当前文件处理完成后启用。
+                    {!session?.user?.id ? '请先登录，再向问答助手提问。你的问答记录仅自己可见。' : 'Copilot 会在当前文件处理完成后启用。'}
                   </aside>
                 ))}
               </div>

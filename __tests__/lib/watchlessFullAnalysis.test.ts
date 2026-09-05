@@ -89,6 +89,21 @@ describe('full Watchless analysis', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(uploadObject).toHaveBeenCalledTimes(1);
   });
+  test('malformed analysis gets one bounded correction and a private diagnostic checkpoint', async () => {
+    (fetch as jest.Mock).mockResolvedValueOnce(Response.json({version:1,scenes:[]})).mockResolvedValueOnce(Response.json(partAnalysis));
+    expect((await generateWatchlessAnalysis(shortArticle,jest.fn(),lease)).scenes).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect((uploadObject as jest.Mock).mock.calls[0][0]).toMatch(/\.rejected-0\.json$/);
+    expect(JSON.parse((uploadObject as jest.Mock).mock.calls[0][1]).reason).toContain('expected 1 scene');
+  });
+  test('persisted invalid attempts fail closed on restart without another model bill',async()=>{
+    (getObjectText as jest.Mock).mockImplementation(async(key:string)=>{
+      if(key.includes('.rejected-')) return JSON.stringify({reason:'WATCHLESS_ANALYSIS_INVALID: section 1 id must exactly match the source id',raw:'private output'});
+      throw new Error('File not found in object storage.');
+    });
+    await expect(generateWatchlessAnalysis(shortArticle,jest.fn(),lease)).rejects.toThrow('paid attempt limit reached');
+    expect(fetch).not.toHaveBeenCalled();
+  });
   test('lease lost during model call cannot publish a checkpoint', async () => {
     (fetch as jest.Mock).mockImplementation(async () => {
       mockD1.run("UPDATE processing_jobs SET status = 'cancelled'");

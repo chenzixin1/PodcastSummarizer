@@ -303,7 +303,7 @@ export default function WatchlessJobPage() {
               {canCancel ? <button type="button" onClick={cancelJob} disabled={cancelling} className="w-full rounded-lg border border-[var(--border-medium)] bg-[var(--paper)] px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--paper-subtle)] disabled:opacity-50">{cancelling ? '正在取消…' : '取消任务并退回积分'}</button> : null}
               {job && TERMINAL_STATUSES.has(job.status) && job.status !== 'completed' ? <Link href="/upload" className="flex w-full items-center justify-between rounded-lg border border-[var(--border-medium)] bg-[var(--paper)] px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] hover:text-[var(--heading)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--btn-primary)]">返回上传页 <ChevronRight size={16} aria-hidden="true" /></Link> : null}
             </div>
-            {job?.status === 'failed' ? <p className="mt-3 text-xs leading-5 text-[var(--text-muted)]">重新运行不会占用新的每日提交名额；系统会重新检查 1000 积分门槛，现有过程产物会保留到新版产物写入。</p> : null}
+            {job?.status === 'failed' ? <p className="mt-3 text-xs leading-5 text-[var(--text-muted)]">重新运行会计入最近 24 小时最多 3 次的转换额度，并重新检查和预留 1000 积分；失败自动退回。现有过程产物会保留到新版产物写入。</p> : null}
           </aside>
         </div>
         {error ? <p className="border-t border-[var(--border-soft)] px-5 py-4 text-sm text-[var(--danger)] sm:px-7" role="alert">{error}</p> : null}
