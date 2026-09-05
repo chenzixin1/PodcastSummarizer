@@ -11,6 +11,7 @@ import { enqueueProcessingJob } from '../../../../lib/processingJobs';
 import { refreshSnapshotsForPodcastMutation } from '../../../../lib/staticSnapshotHooks';
 import { readWatchlessCheckpoint, watchlessDatabase } from '../../../../lib/watchless/analysisGuard';
 import { validateAnalysisBundle } from '../../../../lib/watchless/fullAnalysis';
+import { recoveryEnabled, startAnalysisRecovery } from '../../../../lib/watchless/analysisRecovery';
 
 /** Operator-only, one article per request. No bulk defaults; old rows and article references are backed up first. */
 export async function POST(request: NextRequest) {
@@ -69,6 +70,10 @@ export async function POST(request: NextRequest) {
     assertBilingualArticle(article);
     if (canonicalWatchlessSource(article) !== originalSource) throw new Error('Repair attempted to change the original transcript');
     if (body.action === 'enqueue') {
+      if(recoveryEnabled(body.id)) {
+        const recovery=await startAnalysisRecovery(body.id);
+        return NextResponse.json({success:true,data:{id:body.id,recovery,backupPrefix}});
+      }
       const queued = await enqueueProcessingJob(body.id);
       if (!queued.success) throw new Error(queued.error || 'Queue failed');
       return NextResponse.json({ success: true, data: { id: body.id, queued: true, backupPrefix } });

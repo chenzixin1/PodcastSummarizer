@@ -1881,7 +1881,7 @@ export default function DashboardPage() {
                         <button
                           onClick={retryProcessing}
                           className="inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--border-soft)] bg-transparent px-3 py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--text-main)] disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isProcessing}
+                          disabled={isProcessing || analysisRecovery?.canResume === false}
                         >
                           {isProcessing ? (
                             <>

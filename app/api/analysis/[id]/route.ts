@@ -4,6 +4,8 @@ import { getProcessingJob, getProcessingJobLeaseSeconds } from '../../../../lib/
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
+import { analysisRecoveryStatus, recoveryEnabled } from '../../../../lib/watchless/analysisRecovery';
+import { isAdminEmailAllowed } from '../../../../lib/adminGuard';
 
 const ANALYSIS_DEBUG_ENABLED = process.env.ANALYSIS_DEBUG_LOGS === 'true';
 function analysisDebug(...args: unknown[]) {
@@ -144,9 +146,14 @@ export async function GET(
 
     // 获取分析结果
     const processingJobResult = await getProcessingJob(id);
-    const processingJob = processingJobResult.success ? processingJobResult.data : null;
+    const legacyJob = processingJobResult.success ? processingJobResult.data : null;
+    const recovery = recoveryEnabled(id) ? await analysisRecoveryStatus(id) : null;
+    const processingJob = legacyJob ? {...legacyJob, recovery,
+      ...(recovery ? { progressCurrent:recovery.completed, progressTotal:recovery.total,
+        status:recovery.status==='completed'?'completed':recovery.status==='paused'?'failed':recovery.status==='cancelled'?'cancelled':'processing',
+        lastError:recovery.pauseReason } : {})} : null;
 
-    if (shouldKickWorker(processingJob as ProcessingJobData | null)) {
+    if (!recovery && !recoveryEnabled(id) && shouldKickWorker(processingJob as ProcessingJobData | null)) {
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('analysis_poll', id);
         if (!triggerResult.success) {
@@ -166,7 +173,7 @@ export async function GET(
           analysis: null,
           isProcessed: false,
           processingJob,
-          canEdit: session?.user?.id === podcast.userId // 是否可以编辑
+          canEdit: session?.user?.id === podcast.userId || isAdminEmailAllowed(session?.user?.email)
         }
       });
     }
@@ -182,7 +189,7 @@ export async function GET(
         analysis: analysisData,
         isProcessed,
         processingJob,
-        canEdit: session?.user?.id === podcast.userId // 是否可以编辑
+        canEdit: session?.user?.id === podcast.userId || isAdminEmailAllowed(session?.user?.email)
       }
     });
 

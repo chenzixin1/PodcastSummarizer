@@ -5,6 +5,9 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
 import { isAdminEmailAllowed } from '../../../../lib/adminGuard';
+import { recoveryEnabled, startAnalysisRecovery } from '../../../../lib/watchless/analysisRecovery';
+import { getProcessingJob } from '../../../../lib/processingJobs';
+import { getStoredWatchlessPublication } from '../../../../lib/watchless/repository';
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,6 +49,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (recoveryEnabled(id) && await getStoredWatchlessPublication(id)) {
+      const recovery = await startAnalysisRecovery(id);
+      const current = await getProcessingJob(id);
+      return NextResponse.json({success:true,data:{job:{...current.data,recovery}}});
+    }
     const enqueueResult = await enqueueProcessingJob(id);
     if (!enqueueResult.success) {
       return NextResponse.json({ success: false, error: enqueueResult.error || 'Failed to enqueue job' }, { status: 500 });

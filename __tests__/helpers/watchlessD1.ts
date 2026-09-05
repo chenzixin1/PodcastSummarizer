@@ -37,5 +37,5 @@ export function createWatchlessD1(id: string, videoId: string) {
       } catch (error) { database.exec('ROLLBACK'); throw error; }
     },
   };
-  return { binding, run, hooks, close: () => database.close() };
+  return { binding, run, hooks, exec: (text:string) => database.exec(text), close: () => database.close() };
 }

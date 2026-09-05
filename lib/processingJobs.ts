@@ -235,8 +235,8 @@ export async function claimNextProcessingJob(
         WHERE podcast_id = (
           SELECT podcast_id
           FROM processing_jobs
-          WHERE status = 'queued'
-             OR (status = 'processing' AND updated_at < datetime('now', '-' || ${leaseSeconds} || ' seconds'))
+          WHERE executor = 'legacy' AND (status = 'queued'
+             OR (status = 'processing' AND updated_at < datetime('now', '-' || ${leaseSeconds} || ' seconds')))
           ORDER BY
             CASE WHEN status = 'queued' THEN 0 ELSE 1 END,
             updated_at ASC
@@ -248,6 +248,12 @@ export async function claimNextProcessingJob(
           WHERE status = 'processing'
             AND updated_at >= datetime('now', '-' || ${leaseSeconds} || ' seconds')
         ) < ${maxActiveWorkers}
+        AND (
+          (SELECT COUNT(*) FROM watchless_analysis_attempts WHERE status IN ('started','unknown')
+            AND deadline > CAST(strftime('%s','now') AS INTEGER)*1000) +
+          (SELECT COUNT(*) FROM processing_jobs WHERE executor='legacy' AND status='processing'
+            AND updated_at >= datetime('now', '-' || ${leaseSeconds} || ' seconds'))
+        ) < 3
         RETURNING
           podcast_id as "podcastId",
           status,

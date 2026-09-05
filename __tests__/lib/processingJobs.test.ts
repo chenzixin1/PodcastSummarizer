@@ -70,7 +70,9 @@ describe('processingJobs worker lease controls', () => {
     expect(query).toContain("datetime('now', '-' || ? || ' seconds')");
     expect(query).toContain('SELECT COUNT(*)');
     expect(query).toContain('< ?');
-    expect(values).toEqual(['worker-test', 420, 420, 2]);
+    expect(query).toContain('watchless_analysis_attempts');
+    expect(query).toContain("status IN ('started','unknown')");
+    expect(values).toEqual(['worker-test', 420, 420, 2, 420]);
   });
 
   it('scopes progress and terminal updates to the worker that owns the lease', async () => {

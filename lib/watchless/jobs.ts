@@ -9,6 +9,7 @@ import { readWatchlessCheckpoint } from './analysisGuard';
 import { mapSceneKeyframes, validateOriginalSource } from './bundleIntegrity';
 import { validateAnalysisBundle } from './fullAnalysis';
 import { refreshSnapshotsForPodcastMutation } from '../staticSnapshotHooks';
+import { recoveryEnabled } from './recoveryPolicy';
 
 export const WATCHLESS_URL_CREDIT_COST = 1000;
 export const WATCHLESS_ONLINE_MODEL = '@cf/zai-org/glm-5.3-flash';
@@ -1085,8 +1086,8 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
       podcastId, videoId, articleKey, finalArticle.scenes.length, finalArticle.durationLabel,
       finalArticle.availableLanguageModes?.includes('en') ? 1 : 0, jobId,
     ),
-    database.prepare(`INSERT INTO processing_jobs (podcast_id, status, status_message)
-      VALUES (?, 'queued', 'Watchless full analysis queued') ON CONFLICT(podcast_id) DO NOTHING`).bind(podcastId),
+    database.prepare(`INSERT INTO processing_jobs (podcast_id, status, status_message, executor)
+      VALUES (?, 'queued', 'Watchless full analysis queued', ?) ON CONFLICT(podcast_id) DO NOTHING`).bind(podcastId,recoveryEnabled(podcastId)?'watchless-workflow':'legacy'),
       ...finalKeys.map((entry) => database.prepare(`
       UPDATE watchless_job_assets SET object_key = ?, status = 'published', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -1106,6 +1107,11 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
     `).bind(podcastId, jobId),
     ];
     await database.batch(publicationStatements);
+    // Publication success/credits are independent from analysis scheduling.
+    const { startAnalysisRecovery } = await import('./analysisRecovery');
+    if (recoveryEnabled(podcastId)) {
+      await startAnalysisRecovery(podcastId).catch(error => console.error('Watchless analysis scheduling pending', error instanceof Error ? error.message : 'unknown'));
+    }
     await refreshSnapshotsForPodcastMutation(podcastId, 'Watchless publication');
     const completedForEvent = await getWatchlessJob(jobId);
     if (completedForEvent) await recordWatchlessJobEvent(completedForEvent, 'PodSum publication completed.');
