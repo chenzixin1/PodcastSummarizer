@@ -1,3 +1,4 @@
+import { finalModelText } from '../modelOutput';
 // Server-side only. Provider selection is explicit; never fall back across bills.
 export type WatchlessModelProvider = 'openrouter' | 'cloudflare';
 type Env = Record<string, string | undefined>;
@@ -50,10 +51,10 @@ export function watchlessModelText(body: unknown, provider: string): string {
     const text = (data.output || []).filter(item => item.type === 'message')
       .flatMap(item => item.content || []).filter(item => item.type === 'output_text').map(item => item.text || '').join('');
     if (!text.trim()) throw new Error('Cloudflare model returned no text');
-    return text;
+    return finalModelText(text);
   }
   if (data.choices?.[0]?.finish_reason === 'length') throw new Error('Translation truncated');
   const text = data.choices?.[0]?.message?.content;
   if (!text?.trim()) throw new Error('OpenRouter model returned no text');
-  return text;
+  return finalModelText(text);
 }

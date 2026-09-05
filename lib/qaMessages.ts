@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import { isD1DatabaseProvider, sql } from './sql';
+import { finalModelText } from './modelOutput';
 
 export interface QaMessage {
   id: string;
@@ -25,12 +26,17 @@ interface SaveQaMessageInput {
   suggestedQuestion?: boolean;
 }
 
+function historicalAnswer(value: unknown): string {
+  try { return finalModelText(String(value ?? '')); }
+  catch { return '这条历史回答不完整，请重新提问。'; }
+}
+
 const mapRowToQaMessage = (row: Record<string, unknown>): QaMessage => ({
   id: String(row.id ?? ''),
   podcastId: String(row.podcastId ?? ''),
   userId: (row.userId as string | null) || null,
   question: String(row.question ?? ''),
-  answer: String(row.answer ?? ''),
+  answer: historicalAnswer(row.answer),
   suggestedQuestion: Boolean(row.suggestedQuestion),
   createdAt: String(row.createdAt ?? ''),
 });

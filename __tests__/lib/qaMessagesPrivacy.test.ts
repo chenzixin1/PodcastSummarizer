@@ -38,6 +38,16 @@ describe('strict per-user QA history', () => {
     expect((await getQaMessages('public-podcast', 'new-user')).data).toEqual([]);
     expect(mockDatabase.prepare('SELECT COUNT(*) AS count FROM qa_messages').get().count).toBe(6);
   });
+  test('historical reasoning is removed on read without changing stored records', async () => {
+    mockDatabase.prepare('UPDATE qa_messages SET answer = ? WHERE id = ?').run('Internal draft</think> Final answer', 'alice-1');
+    mockDatabase.prepare('UPDATE qa_messages SET answer = ? WHERE id = ?').run('<think>Unfinished draft', 'alice-2');
+    const result = await getQaMessages('public-podcast', 'alice');
+    expect(result.data).toEqual([
+      expect.objectContaining({ id: 'alice-1', answer: 'Final answer' }),
+      expect.objectContaining({ id: 'alice-2', answer: '这条历史回答不完整，请重新提问。' }),
+    ]);
+    expect(mockDatabase.prepare('SELECT answer FROM qa_messages WHERE id = ?').get('alice-1').answer).toBe('Internal draft</think> Final answer');
+  });
   test.each([undefined, null, '', '  ', 30])('missing or legacy positional identity %p fails before database access', async identity => {
     expect(await getQaMessages('public-podcast', identity as string)).toEqual({ success: false, error: 'Authentication required' });
     expect(sql).not.toHaveBeenCalled();

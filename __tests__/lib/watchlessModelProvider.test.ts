@@ -9,6 +9,12 @@ test('GLM uses Workers AI and preserves structured output limits', () => {
 test('Workers AI envelope extracts only final content', () => {
   expect(watchlessModelText({success:true,result:{choices:[{finish_reason:'stop',message:{content:'{"ok":true}',reasoning_content:'private'}}]}}, 'cloudflare')).toBe('{"ok":true}');
 });
+test.each(['<think>Internal draft</think> Final answer', 'Internal draft</think> Final answer'])('reasoning mixed into content is not returned: %s', content => {
+  expect(watchlessModelText({ success: true, result: { choices: [{ finish_reason: 'stop', message: { content } }] } }, 'cloudflare')).toBe('Final answer');
+});
+test.each(['<think>Unfinished draft', 'Draft</think>'])('reasoning without a final answer fails closed: %s', content => {
+  expect(() => watchlessModelText({ success: true, result: { choices: [{ finish_reason: 'stop', message: { content } }] } }, 'cloudflare')).toThrow('incomplete');
+});
 test('rejects truncated and failed responses', () => {
   expect(() => watchlessModelText({result:{choices:[{finish_reason:'length',message:{content:'partial'}}]}}, 'cloudflare')).toThrow('truncated');
   expect(() => watchlessModelText({success:false,result:{},errors:[{}]}, 'cloudflare')).toThrow();
