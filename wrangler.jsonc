@@ -100,7 +100,7 @@
     "OPENROUTER_INFOGRAPHIC_MODEL": "google/gemini-3-pro-image",
     "WATCHLESS_MODEL": "@cf/zai-org/glm-5.3-flash",
     "WATCHLESS_ANALYSIS_RECOVERY_ENABLED": "false",
-    "WATCHLESS_ANALYSIS_RECOVERY_IDS": "",
+    "WATCHLESS_ANALYSIS_RECOVERY_IDS": "watchless-veizk1m7v7e",
     "WATCHLESS_AI_PROVIDER": "cloudflare",
     "WATCHLESS_CF_ACCOUNT_ID": "29bbd7941ce035396dd966247e42c44f",
     "WATCHLESS_CF_GATEWAY_ID": "default",
