@@ -35,7 +35,8 @@ interface FloatingQaAssistantProps {
 
 const MAX_INPUT_LENGTH = 1000;
 const HISTORY_REQUEST_TIMEOUT_MS = 15_000;
-const ASK_REQUEST_TIMEOUT_MS = 70_000;
+// The explicitly selected provider has a 90-second deadline plus retrieval/storage.
+const ASK_REQUEST_TIMEOUT_MS = 120_000;
 
 function normalizeRequestError(error: unknown, timeoutMs: number): string {
   if (error instanceof Error && error.name === 'AbortError') {

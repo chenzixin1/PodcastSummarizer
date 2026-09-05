@@ -44,7 +44,7 @@ jest.mock('@ant-design/graphs', () => {
 
   MindMap.displayName = 'MindMapMock';
 
-  return { MindMap };
+  return { MindMap, RCNode:{TextNode:({text}:{text:string})=>React.createElement('span',null,text)} };
 });
 
 function getMockState() {
@@ -128,6 +128,19 @@ describe('MindMapCanvas AntV integration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fit View' }));
 
     expect(state.fitViewMock).toHaveBeenCalledTimes(1);
+  });
+  test('deferred node labels do not access an already destroyed graph model',()=>{
+    render(<MindMapCanvas data={SAMPLE_DATA} themeMode="light" />);
+    const renderer=getMockState().latestProps.node.style.component;
+    const disposed={getParentData:()=>{throw new Error('disposed model');}};
+    expect(()=>renderer.call(disposed,{depth:1,data:{label:'A source point'},style:{color:'#3f7d6a'}})).not.toThrow();
+  });
+  test('all queued fits are cancelled when switching away from the graph',()=>{
+    jest.useFakeTimers();
+    const {unmount}=render(<MindMapCanvas data={SAMPLE_DATA} themeMode="light" />);
+    unmount(); getMockState().fitViewMock.mockClear(); jest.runAllTimers();
+    expect(getMockState().fitViewMock).not.toHaveBeenCalled();
+    jest.useRealTimers();
   });
 
   test('fullscreen button enters and exits fullscreen mode', async () => {
