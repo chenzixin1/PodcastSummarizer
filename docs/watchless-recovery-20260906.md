@@ -24,3 +24,21 @@
 后端发布、实际请求数和最终验收记录在恢复执行后补充；不得将本文件当作已完成 30/30 的证明。
 
 迁移兼容：Wrangler migrations apply 的远程 query 路径报 incomplete input，读回确认事务回滚、未部分落库。使用 `wrangler d1 execute --remote --file` 的事务式导入路径成功执行 0010，核对 12 个表/索引/触发器后登记 d1_migrations。0011 为已有数据库补齐删除级联触发器，避免恢复状态阻止正常删除播客。
+
+最终自动回归：87 套 / 743 项通过，TypeScript 与 OpenNext 生产构建通过。独立安全复核补齐跨 generation 请求结算，0012 保留历史 request workflow_id 并由当前 run owner 做结算 CAS。手机实际切换上方全文及下方阅读器的四种模式通过；390px 页面 scrollWidth=390。
+
+默认关闭版：Worker `ef6a851a-4c24-448c-a5c6-ee62fbfe9db2`。单篇灰度版：主源码 `9ba3df7`（运行代码 `f009974`），干净发布 checkout `f1e60cb`；Worker `1f974e0a-1faa-4e2b-80da-eb99d22e0dcc`。Container 镜像摘要保持 `sha256:9445ded02ed08ebc8f34d43739ee1dd5520be8036734d3d0467ff27746be2064`。内部和用户处理接口匿名请求均返回 401。
+
+已在上述灰度发布完成后，首次提交目标文章恢复。运维边界：运行中的播客若需删除，先取消并等 180 秒租约结束；运行中删除入口的进一步保护在 #18 跟踪。
+
+## 最终生产验收
+
+- D1 run `df2373f40c1a1c353e8deb3a61bec498905671059db2e8e129c65cb9f44e39f0` 已 completed，30/30 parts completed。
+- generation 1 导入全部历史记录后从第20段续跑。第30段首次请求120秒超时，随后 Cloudflare 返回 WorkflowInternalError；持久状态安全停在29/30。等租约到期后显式恢复到 generation 2，预算未重置。第二次响应格式不合格，退避后第三次成功，自动完成最终提交。
+- 本次新请求13次：11成功、1超时不确定、1格式失败。旧记录25次：19成功、5格式失败、1超时不确定。合计38次，全篇额外8/10，每段均≤3。前19段新增模型请求 **0**。
+- `analysis_kind=full`，双语摘要30节；中文22424字符、英文68034字符；中英文脑图均已保存，网页真实渲染可用。
+- 原文SHA256仍为 `cfc70b33316ebaa491715d11b24939767c3bf4ab615c0691c0c37e416bb1729f`；文章文件SHA256仍为 `9621b957a3f49eaee491305f31e8c84235e16ef6251afa9364de2efdfdf06596`；19份原分析缓存逐文件hash全部一致。
+- 积分7966→7966，流水31→31；未重复扣1000转换积分。模型超时请求已计数，不声称上游未计费。
+- 生产桌面/手机验证完成：失败提示消失，完整摘要、脑图、原文和图文可读；四种阅读模式保留；390px无横向页面溢出。
+- 截图：`output/playwright/recovery-complete-summary-desktop.png`、`recovery-complete-mindmap-desktop.png`、`recovery-complete-bilingual-mobile.png`；只读比较记录在 `output/recovery-audit-before.json` / `recovery-audit-after.json`。
+- 没有批量恢复其他历史文章。PR #21 仍保持草稿，因为项目级历史回填验收由 #18 单独跟踪。
