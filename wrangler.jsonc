@@ -87,7 +87,7 @@
     "DATABASE_PROVIDER": "d1",
     "DEPLOYMENT_STAGE": "production",
     "ENABLE_CRON": "true",
-    "PROCESS_WORKER_CONCURRENCY": "1",
+    "PROCESS_WORKER_CONCURRENCY": "3",
     "PROCESSING_JOB_LEASE_SECONDS": "300",
     "CHROME_EXTENSION_IDS": "bgohgakmnepefbcccanofomnhodflnab",
     "OPENROUTER_MODEL": "openai/gpt-4o-mini",

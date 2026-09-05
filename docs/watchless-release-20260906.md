@@ -9,6 +9,7 @@
 - Credit reservations/refunds are atomic and idempotent. Retries count toward the daily limit; cancellation cannot race publication for a refund.
 - Historical repair stages and validates candidates before an atomic switch, retains private backups, invalidates stale QA and analysis leases, and reuses paid checkpoints.
 - Watchless uses Cloudflare GLM-5.3 Flash. Other PodSum models and the 1000-credit URL-conversion gate are unchanged.
+- The analysis queue is bounded at three concurrent leases for historical backfill; video conversion remains one active job per user and one Container instance. This changes throughput, not the credit or source limits.
 - Existing paper/green UI retained; source section is compact, analysis and original reading are distinguished, QA loads on demand, and collapsed content is keyboard-inert.
 
 ## Verification before release
