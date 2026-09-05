@@ -14,7 +14,7 @@
 ## Verification before release
 
 - Jest: 78 suites, 620 tests, one snapshot passed.
-- Python: six unit tests passed; six direct pinned dependencies have no known advisory in the direct-dependency scan. Full resolved container scan is a separate check.
+- Python: six unit tests and five HTTP tests passed inside the Linux amd64 image. Full resolved dependency audit is clean after upgrading FastAPI/Starlette; the image runs as non-root.
 - TypeScript and changed-file ESLint: passed; nine pre-existing dashboard warnings remain (no errors).
 - Production npm dependency audit: zero vulnerabilities. Ten affected development dependency entries in LHCI are tracked in [issue 16](https://github.com/chenzixin1/PodcastSummarizer/issues/16); no unsafe force-downgrade was applied.
 - Real in-memory SQLite tests cover batch rollback, insufficient credits, repeated reservation/refund, daily retry limits, cancelled/reassigned leases and concurrent repair/publication.
@@ -28,6 +28,7 @@
 - Migration `0008_watchless_analysis_origin.sql` applied successfully. Existing Watchless overview rows are explicitly marked as such.
 - Each operator repair additionally creates a private immutable R2 backup before writing; original article, PDF, keyframes and source objects are not overwritten.
 - Worker/Container rollout and live historical readback are pending below. Do not interpret local tests as deployed verification.
+- Release builds use a real dependency installation, not a cross-worktree `node_modules` symlink (which breaks OpenNext's native-module exclusion). `dev.enable_containers=false` avoids Wrangler's local platform-proxy assertion during cache population; production Container bindings and deployment remain enabled. Runtime tests use the real Docker image separately.
 
 ## Boundaries
 
