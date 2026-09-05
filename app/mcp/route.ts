@@ -329,7 +329,7 @@ function availableTools(context: McpAccessAuthContext): McpTool[] {
       toolDefinition(
         'podsum_submit_watchless_url',
         'Submit Watchless URL',
-        `Run the full Cloudflare Watchless pipeline for one authorized YouTube URL. Requires and reserves ${WATCHLESS_URL_CREDIT_COST} credits. Uses ${WATCHLESS_ONLINE_MODEL} through OpenRouter.`,
+        `Run the full Cloudflare Watchless pipeline for one authorized YouTube URL. Requires and reserves ${WATCHLESS_URL_CREDIT_COST} credits. Uses ${WATCHLESS_ONLINE_MODEL} through ${process.env.WATCHLESS_AI_PROVIDER === 'cloudflare' ? 'Cloudflare Workers AI' : 'OpenRouter'}.`,
         {
           type: 'object',
           properties: {
@@ -729,7 +729,7 @@ async function handleSubmitWatchlessUrl(context: McpAccessAuthContext, args: Rec
     return textContent({
       job: { ...job, workflowInstanceId },
       creditPolicy: { required: WATCHLESS_URL_CREDIT_COST, state: 'reserved', refunds: 'platform failure or pre-completion rollback' },
-      runtime: { model: WATCHLESS_ONLINE_MODEL, provider: 'OpenRouter', execution: 'Cloudflare Workflow + Container' },
+      runtime: { model: WATCHLESS_ONLINE_MODEL, provider: process.env.WATCHLESS_AI_PROVIDER === 'cloudflare' ? 'Cloudflare Workers AI' : 'OpenRouter', execution: 'Cloudflare Workflow + Container' },
     });
   } catch (error) {
     if (error instanceof WatchlessJobError) return errorToolResult({ code: error.code, status: error.status, error: error.message });
