@@ -107,6 +107,7 @@ export default function WatchlessLongformSection({
               article={article}
               askQuestion={askQuestion}
               onCollapse={collapse}
+              active={expanded}
             />
           ) : loadError ? (
             <div className="watchless-reader-load-error" role="alert">

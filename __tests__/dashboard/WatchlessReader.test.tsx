@@ -1,9 +1,12 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import WatchlessReader from '../../components/watchless/WatchlessReader';
 import type { WatchlessArticle } from '../../lib/watchless/article';
+
+const mockPronunciation = { startHoverLoop: jest.fn(), stop: jest.fn(), playTap: jest.fn(), prime: jest.fn(), dispose: jest.fn() };
+jest.mock('../../lib/pronunciationClient', () => ({ createPronunciationController: () => mockPronunciation }));
 
 jest.mock('next/image', () => function MockImage(props: React.ImgHTMLAttributes<HTMLImageElement> & { priority?: boolean }) {
   const imageProps = { ...props };
@@ -65,11 +68,33 @@ const article: WatchlessArticle = {
 
 describe('WatchlessReader language modes', () => {
   beforeEach(() => {
+    jest.clearAllMocks();
     global.IntersectionObserver = NoopIntersectionObserver;
     global.fetch = jest.fn(async () => ({
       ok: true,
       json: async () => ({ original: { zh: '原始的', level: ['CET6'] } }),
     })) as jest.Mock;
+  });
+
+  test('primes audio on selecting hints and stops on language change, collapse and unmount', async () => {
+    const { rerender, unmount } = render(<WatchlessReader article={article} />);
+    await userEvent.click(screen.getByRole('button', { name: /词汇提示.*English/ }));
+    expect(mockPronunciation.prime).toHaveBeenCalledTimes(1);
+    mockPronunciation.stop.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: /English.*Transcript/ }));
+    expect(mockPronunciation.stop).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /词汇提示.*English/ }));
+    mockPronunciation.stop.mockClear();
+    rerender(<WatchlessReader article={article} active={false} />);
+    expect(mockPronunciation.stop).toHaveBeenCalled();
+    unmount();
+    expect(mockPronunciation.dispose).toHaveBeenCalledTimes(1);
+  });
+  test('leaving the browser window stops pronunciation', () => {
+    render(<WatchlessReader article={article} />);
+    mockPronunciation.stop.mockClear();
+    fireEvent(window, new Event('blur'));
+    expect(mockPronunciation.stop).toHaveBeenCalledTimes(1);
   });
 
   test('switches among Chinese translation, English original, bilingual, and vocabulary hints', async () => {

@@ -973,7 +973,7 @@
 }
 
 .watchless-hint-word:hover .watchless-hint-tooltip,
-.watchless-hint-word:focus-visible .watchless-hint-tooltip {
+.watchless-hint-word:focus .watchless-hint-tooltip {
   display: grid;
   gap: 0.3rem;
 }
@@ -993,6 +993,14 @@
 }
 
 .watchless-hint-sense > span { color: var(--watchless-sage); font-weight: 800; }
+
+.watchless-hint-audio-note {
+  margin-top: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--watchless-rule);
+  color: var(--watchless-sage);
+  font-size: 0.65rem;
+}
 
 .watchless-source-dock {
   position: fixed;
