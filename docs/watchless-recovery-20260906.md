@@ -22,3 +22,5 @@
 页面容错已先发布：主源码 `60a8a04`；Worker `d384dd4d-fa5f-4738-8a2f-b8f0e531b8b9`。桌面真实浏览器确认 19/30 暂停提示下 Full Text 仍可读。
 
 后端发布、实际请求数和最终验收记录在恢复执行后补充；不得将本文件当作已完成 30/30 的证明。
+
+迁移兼容：Wrangler migrations apply 的远程 query 路径报 incomplete input，读回确认事务回滚、未部分落库。使用 `wrangler d1 execute --remote --file` 的事务式导入路径成功执行 0010，核对 12 个表/索引/触发器后登记 d1_migrations。0011 为已有数据库补齐删除级联触发器，避免恢复状态阻止正常删除播客。

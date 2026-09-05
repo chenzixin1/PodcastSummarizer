@@ -37,6 +37,7 @@ beforeEach(()=>{
   process.env.WATCHLESS_ANALYSIS_RECOVERY_ENABLED='true';process.env.WATCHLESS_MODEL='test-model';
   mockD1=createWatchlessD1(article.id,article.videoId);
   mockD1.exec(readFileSync('migrations/d1/0010_watchless_analysis_recovery.sql','utf8'));
+  mockD1.exec(readFileSync('migrations/d1/0011_watchless_analysis_delete.sql','utf8'));
   mockD1.run("UPDATE processing_jobs SET status='failed'");mockObjects=new Map();mockStorageFailure=false;
   mockCreate.mockClear();mockStatus.mockResolvedValue({status:'running'});
   global.fetch=jest.fn(async()=>new Response(JSON.stringify(valid()),{status:200}));
@@ -163,6 +164,13 @@ test('legacy rejected raw that now validates is reused for free',async()=>{
   mockObjects.set(legacyKey().replace('.json','.rejected-0.json'),{reason:'old parser',raw:JSON.stringify(valid().scenes[0])});
   await startAnalysisRecovery(article.id);expect((await advance()).status).toBe('completed');
   expect(fetch).not.toHaveBeenCalled();expect(mockD1.run('SELECT * FROM watchless_analysis_attempts')).toHaveLength(1);
+});
+test('deleting a podcast removes its recovery state without foreign key failure',async()=>{
+  await startAnalysisRecovery(article.id);await advance();
+  mockD1.run('DELETE FROM podcasts WHERE id=?',[article.id]);
+  expect(mockD1.run('SELECT * FROM watchless_analysis_runs')).toHaveLength(0);
+  expect(mockD1.run('SELECT * FROM watchless_analysis_parts')).toHaveLength(0);
+  expect(mockD1.run('SELECT * FROM watchless_analysis_attempts')).toHaveLength(0);
 });
 test('SQL rejects an eleventh extra request and a fourth request on one part',async()=>{
   await startAnalysisRecovery(article.id);await tick();const r=active();
