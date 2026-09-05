@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import { isD1DatabaseProvider, sql } from './sql';
+import { finalModelText } from './modelOutput';
 
 export interface QaMessage {
   id: string;
@@ -25,12 +26,17 @@ interface SaveQaMessageInput {
   suggestedQuestion?: boolean;
 }
 
+function historicalAnswer(value: unknown): string {
+  try { return finalModelText(String(value ?? '')); }
+  catch { return '这条历史回答不完整，请重新提问。'; }
+}
+
 const mapRowToQaMessage = (row: Record<string, unknown>): QaMessage => ({
   id: String(row.id ?? ''),
   podcastId: String(row.podcastId ?? ''),
   userId: (row.userId as string | null) || null,
   question: String(row.question ?? ''),
-  answer: String(row.answer ?? ''),
+  answer: historicalAnswer(row.answer),
   suggestedQuestion: Boolean(row.suggestedQuestion),
   createdAt: String(row.createdAt ?? ''),
 });
@@ -58,6 +64,10 @@ export async function ensureQaMessagesTable(): Promise<void> {
 }
 
 export async function saveQaMessage(input: SaveQaMessageInput): Promise<QaMessageResult> {
+  // A public podcast does not make its listeners' conversations public.
+  if (typeof input.userId !== 'string' || !input.userId.trim()) {
+    return { success: false, error: 'Authentication required' };
+  }
   try {
     await ensureQaMessagesTable();
     const id = nanoid();
@@ -73,7 +83,7 @@ export async function saveQaMessage(input: SaveQaMessageInput): Promise<QaMessag
       VALUES (
         ${id},
         ${input.podcastId},
-        ${input.userId ?? null},
+        ${input.userId},
         ${input.question},
         ${input.answer},
         ${Boolean(input.suggestedQuestion)}
@@ -98,7 +108,11 @@ export async function saveQaMessage(input: SaveQaMessageInput): Promise<QaMessag
   }
 }
 
-export async function getQaMessages(podcastId: string, limit = 30): Promise<QaMessageResult> {
+/** Read only the caller's history. Unowned legacy rows remain stored but are never exposed. */
+export async function getQaMessages(podcastId: string, userId: string | null | undefined, limit = 30): Promise<QaMessageResult> {
+  if (typeof userId !== 'string' || !userId.trim()) {
+    return { success: false, error: 'Authentication required' };
+  }
   try {
     await ensureQaMessagesTable();
     const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.floor(limit))) : 30;
@@ -113,6 +127,7 @@ export async function getQaMessages(podcastId: string, limit = 30): Promise<QaMe
         created_at as "createdAt"
       FROM qa_messages
       WHERE podcast_id = ${podcastId}
+        AND user_id = ${userId}
       ORDER BY created_at ASC
       LIMIT ${safeLimit}
     `;

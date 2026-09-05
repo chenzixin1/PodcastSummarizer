@@ -1,9 +1,9 @@
 'use client';
 
-import { MindMap } from '@ant-design/graphs';
+import { MindMap, RCNode } from '@ant-design/graphs';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MindMapData } from '../lib/mindMap';
-import { buildAntvMindMapData, estimateMindMapNodeSize } from '../lib/mindMapAntv';
+import { buildAntvMindMapData, collectNodeIds, estimateMindMapNodeSize } from '../lib/mindMapAntv';
 
 interface MindMapCanvasProps {
   data: MindMapData;
@@ -11,7 +11,18 @@ interface MindMapCanvasProps {
 }
 
 interface GraphLike {
-  fitView?: () => void;
+  fitView?: () => void | Promise<void>;
+  destroyed?: boolean;
+}
+
+// Deferred React node rendering can outlive G6's model during tab switches.
+// This right-directed label renderer uses only its immutable node data.
+function renderMindMapLabel(node: { depth?: number; style?: { color?: string } }) {
+  const root = node.depth === 0;
+  return <RCNode.TextNode text={readNodeLabel(node)} maxWidth={560}
+    type={root ? 'filled' : 'underlined'} color={root ? '#f1f4f5' : node.style?.color}
+    font={{fontWeight:root ? 600 : 400,fontSize:root ? 24 : 16}}
+    style={root ? {color:'#252525'} : {textAlign:'left'}} />;
 }
 
 function readNodeLabel(node: unknown): string {
@@ -78,29 +89,40 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<GraphLike | null>(null);
   const initialFittedRef = useRef(false);
+  const fitTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const antvData = useMemo(() => buildAntvMindMapData(data), [data]);
+  const defaultExpandLevel = useMemo(() => collectNodeIds(antvData).length > 60 ? 1 : undefined, [antvData]);
 
   const fitView = useCallback(() => {
+    if (graphRef.current?.destroyed || !containerRef.current) return;
     try {
-      graphRef.current?.fitView?.();
+      void Promise.resolve(graphRef.current?.fitView?.()).catch(() => { /* Graph may be disposed during a tab switch. */ });
     } catch (error) {
       console.error('[MindMap] fitView failed:', error);
     }
   }, []);
+
+  const scheduleFit = useCallback((delay: number) => {
+    const timer = setTimeout(() => { fitTimersRef.current.delete(timer); fitView(); }, delay);
+    fitTimersRef.current.add(timer);
+  }, [fitView]);
+  useEffect(() => {
+    const timers = fitTimersRef.current;
+    return () => { timers.forEach(clearTimeout); timers.clear(); graphRef.current = null; };
+  }, []);
+  const nodeOptions = useMemo(() => ({style:{component:renderMindMapLabel}}), []);
 
   const handleGraphReady = useCallback(
     (graph: unknown) => {
       graphRef.current = (graph as GraphLike) || null;
       if (!initialFittedRef.current) {
         initialFittedRef.current = true;
-        setTimeout(() => {
-          fitView();
-        }, 32);
+        scheduleFit(32);
       }
     },
-    [fitView]
+    [scheduleFit]
   );
 
   const toggleFullscreen = useCallback(async () => {
@@ -150,7 +172,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
         enable: true,
         trigger: 'node',
         direction: 'out',
-        refreshLayout: false,
+        refreshLayout: true,
       };
     });
 
@@ -161,7 +183,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
         enable: true,
         trigger: 'node',
         direction: 'out',
-        refreshLayout: false,
+        refreshLayout: true,
       });
     }
 
@@ -193,9 +215,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
 
     const onFullscreenChange = () => {
       setIsFullscreen(document.fullscreenElement === containerRef.current);
-      setTimeout(() => {
-        fitView();
-      }, 40);
+      scheduleFit(40);
     };
 
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -204,7 +224,7 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
     return () => {
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
-  }, [fitView]);
+  }, [scheduleFit]);
 
   return (
     <div
@@ -236,11 +256,13 @@ export default function MindMapCanvas({ data, themeMode }: MindMapCanvasProps) {
       <div className="mindmap-antv-surface">
         <MindMap
           data={antvData}
+          defaultExpandLevel={defaultExpandLevel}
           type="linear"
           direction="right"
           labelField="label"
           nodeMinWidth={0}
           nodeMaxWidth={560}
+          node={nodeOptions}
           transforms={transforms}
           layout={layout}
           animation={false}

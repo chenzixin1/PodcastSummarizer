@@ -48,9 +48,7 @@ export async function GET(
         hasEnglishTranscript: publication.hasEnglishTranscript,
       },
     };
-    const cacheControl = podcast.isPublic
-      ? 'public, max-age=300, stale-while-revalidate=86400'
-      : 'private, no-store';
+    const cacheControl = 'private, no-store';
     const successResponse = (data: Record<string, unknown>) => {
       const response = NextResponse.json({ success: true, data });
       response.headers.set('Cache-Control', cacheControl);

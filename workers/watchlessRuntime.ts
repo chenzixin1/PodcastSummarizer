@@ -7,7 +7,11 @@ export interface WatchlessRuntimeEnv {
   NEXTAUTH_URL?: string;
   NEXT_PUBLIC_APP_URL?: string;
   WATCHLESS_INTERNAL_SECRET: string;
-  OPENROUTER_API_KEY: string;
+  OPENROUTER_API_KEY?: string;
+  WATCHLESS_AI_PROVIDER?: string;
+  WATCHLESS_CF_ACCOUNT_ID?: string;
+  WATCHLESS_CF_GATEWAY_ID?: string;
+  WATCHLESS_CF_API_TOKEN?: string;
   VOLCENGINE_APP_KEY?: string;
   VOLCENGINE_API_KEY?: string;
   VOLCANO_ACCESS_KEY?: string;
@@ -53,7 +57,7 @@ async function failJob(
   runtimeStatus?: RuntimeStatus,
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
-  await internalFetch(env, `/api/watchless/jobs/internal/${encodeURIComponent(jobId)}/fail`, {
+  const response = await internalFetch(env, `/api/watchless/jobs/internal/${encodeURIComponent(jobId)}/fail`, {
     method: 'POST',
     body: JSON.stringify({
       code: runtimeStatus?.errorCode || 'WATCHLESS_WORKFLOW_FAILED',
@@ -62,6 +66,7 @@ async function failJob(
       progressCurrent: runtimeStatus?.progress,
     }),
   });
+  if (!response.ok) throw new Error(`Failed to record failure/refund (${response.status})`);
 }
 
 export class WatchlessWorkflow extends WorkflowEntrypoint<WatchlessRuntimeEnv, WatchlessWorkflowParams> {
@@ -84,7 +89,13 @@ export class WatchlessWorkflow extends WorkflowEntrypoint<WatchlessRuntimeEnv, W
           envVars: {
             PODSUM_CALLBACK_BASE: appOrigin(this.env),
             WATCHLESS_INTERNAL_SECRET: this.env.WATCHLESS_INTERNAL_SECRET,
-            OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
+            // Only hand the active provider's credential to the container.
+            WATCHLESS_AI_PROVIDER: this.env.WATCHLESS_AI_PROVIDER || 'openrouter',
+            ...(this.env.WATCHLESS_AI_PROVIDER === 'cloudflare' ? {
+              WATCHLESS_CF_ACCOUNT_ID: this.env.WATCHLESS_CF_ACCOUNT_ID || '',
+              WATCHLESS_CF_GATEWAY_ID: this.env.WATCHLESS_CF_GATEWAY_ID || '',
+              WATCHLESS_CF_API_TOKEN: this.env.WATCHLESS_CF_API_TOKEN || '',
+            } : { OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY || '' }),
             VOLCENGINE_APP_KEY: this.env.VOLCENGINE_APP_KEY || '',
             VOLCENGINE_API_KEY: this.env.VOLCENGINE_API_KEY || this.env.VOLCANO_ACCESS_KEY || '',
             WATCHLESS_MODEL: this.env.WATCHLESS_MODEL || 'openai/gpt-5.6-luna',

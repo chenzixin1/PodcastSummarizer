@@ -6,6 +6,9 @@ import { NextRequest } from 'next/server';
 import { GET as getPublicListSnapshotRoute } from '../../app/api/snapshots/lists/public/route';
 import { GET as getAnalysisSnapshotRoute } from '../../app/api/snapshots/analysis/[id]/route';
 import { getAnalysisSnapshot, getPublicListSnapshot } from '../../lib/staticSnapshots';
+import { getPodcast } from '../../lib/db';
+jest.mock('../../lib/db', () => ({ getPodcast: jest.fn(async () => ({ success: true, data: { isPublic: true } })) }));
+jest.mock('../../lib/sql', () => ({ sql: jest.fn(async () => ({ rows: [{ id: 'pod-1' }] })) }));
 
 jest.mock('../../lib/staticSnapshots', () => ({
   ANALYSIS_SNAPSHOT_CACHE_CONTROL: 'public, max-age=300, stale-while-revalidate=86400',
@@ -24,6 +27,14 @@ const mockGetPublicListSnapshot = getPublicListSnapshot as jest.MockedFunction<t
 describe('static snapshot routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (getPodcast as jest.Mock).mockResolvedValue({ success: true, data: { isPublic: true } });
+  });
+
+  test('private status in D1 revokes access to a stale public snapshot', async () => {
+    (getPodcast as jest.Mock).mockResolvedValue({ success: true, data: { isPublic: false } });
+    const response = await getAnalysisSnapshotRoute(new NextRequest('https://podsum.cc/api/snapshots/analysis/pod-1'), { params: Promise.resolve({ id: 'pod-1' }) });
+    expect(response.status).toBe(404);
+    expect(mockGetAnalysisSnapshot).not.toHaveBeenCalled();
   });
 
   test('GET /api/snapshots/lists/public returns cached list snapshots', async () => {
@@ -41,7 +52,7 @@ describe('static snapshot routes', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('Cache-Control')).toBe('public, max-age=60, stale-while-revalidate=300');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(mockGetPublicListSnapshot).toHaveBeenCalledWith(2, 12);
     expect(payload).toEqual({
       success: true,
@@ -93,7 +104,7 @@ describe('static snapshot routes', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('Cache-Control')).toBe('public, max-age=300, stale-while-revalidate=86400');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(mockGetAnalysisSnapshot).toHaveBeenCalledWith('pod-1');
     expect(payload).toEqual({
       success: true,

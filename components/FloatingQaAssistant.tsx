@@ -35,7 +35,8 @@ interface FloatingQaAssistantProps {
 
 const MAX_INPUT_LENGTH = 1000;
 const HISTORY_REQUEST_TIMEOUT_MS = 15_000;
-const ASK_REQUEST_TIMEOUT_MS = 70_000;
+// The explicitly selected provider has a 90-second deadline plus retrieval/storage.
+const ASK_REQUEST_TIMEOUT_MS = 120_000;
 
 function normalizeRequestError(error: unknown, timeoutMs: number): string {
   if (error instanceof Error && error.name === 'AbortError') {
@@ -167,7 +168,7 @@ export default function FloatingQaAssistant({
   const sendQuestion = useCallback(
     async (rawQuestion: string) => {
       const question = rawQuestion.trim();
-      if (!enabled || !question || sending) {
+      if (!enabled || !question || sending || loadingHistory) {
         return;
       }
 
@@ -244,7 +245,7 @@ export default function FloatingQaAssistant({
         setSending(false);
       }
     },
-    [enabled, podcastId, sending]
+    [enabled, podcastId, sending, loadingHistory]
   );
 
   const handleSubmit = useCallback(
@@ -313,6 +314,7 @@ export default function FloatingQaAssistant({
           value={input}
           onChange={event => setInput(event.target.value.slice(0, MAX_INPUT_LENGTH))}
           placeholder="输入你的问题，例如：有哪些被忽略但关键的数据？"
+          aria-label="你的问题"
           rows={2}
           className="w-full resize-none rounded-xl border border-[var(--border-medium)] bg-[var(--paper-base)] px-3 py-2 text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:border-[var(--btn-primary)] focus:outline-none"
           onKeyDown={event => {
@@ -326,7 +328,7 @@ export default function FloatingQaAssistant({
           <span className="text-[11px] text-[var(--text-muted)]">{input.length}/{MAX_INPUT_LENGTH}</span>
           <button
             type="submit"
-            disabled={sending || !input.trim()}
+            disabled={sending || loadingHistory || !input.trim()}
             className="rounded-lg bg-[var(--btn-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? '回答中...' : 'Send'}

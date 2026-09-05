@@ -21,6 +21,7 @@ import {
   reconcileInfographicJobs,
 } from '../../../../lib/infographicJobs';
 import { processNextInfographicJob } from '../../../../lib/infographicWorker';
+import { reconcileAnalysisDispatches } from '../../../../lib/watchless/analysisRecovery';
 
 interface PodcastJobPayload {
   blobUrl: string;
@@ -141,6 +142,9 @@ export async function POST(request: NextRequest) {
     }
 
     const workerId = `worker-${crypto.randomUUID()}`;
+    if(process.env.WATCHLESS_ANALYSIS_RECOVERY_ENABLED==='true' || process.env.WATCHLESS_ANALYSIS_RECOVERY_IDS) {
+      await reconcileAnalysisDispatches();
+    }
     const claimed = await claimNextProcessingJob(workerId, {
       leaseSeconds: getProcessingJobLeaseSeconds(),
       maxActiveWorkers: getProcessingWorkerConcurrency(),
@@ -190,6 +194,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         id: job.podcastId,
+        workerId,
         blobUrl: podcast.blobUrl,
         fileName: podcast.originalFileName,
         debug: false,

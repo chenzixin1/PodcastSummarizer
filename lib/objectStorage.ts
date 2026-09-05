@@ -83,10 +83,6 @@ async function toUploadBody(value: File | Blob | Buffer | Uint8Array | ArrayBuff
 }
 
 function objectUrlForKey(key: string, env?: CloudflareEnvLike): string {
-  const publicBase = (env?.R2_PUBLIC_BASE_URL || process.env.R2_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-  if (publicBase) {
-    return `${publicBase}/${encodeKeyPath(key)}`;
-  }
   return `${appBaseUrl(env)}/api/files/${encodeKeyPath(key)}`;
 }
 
@@ -137,15 +133,14 @@ export async function uploadObject(
 }
 
 function keyFromObjectUrl(url: string, env?: CloudflareEnvLike): string | null {
-  const apiMarker = '/api/files/';
-  const apiIndex = url.indexOf(apiMarker);
-  if (apiIndex >= 0) {
-    return decodeURIComponent(url.slice(apiIndex + apiMarker.length));
-  }
-
-  const publicBase = (env?.R2_PUBLIC_BASE_URL || process.env.R2_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-  if (publicBase && url.startsWith(`${publicBase}/`)) {
-    return decodeURIComponent(url.slice(publicBase.length + 1));
+  if (url.startsWith('/api/files/')) return decodeURIComponent(url.slice('/api/files/'.length));
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin === new URL(appBaseUrl(env)).origin && parsed.pathname.startsWith('/api/files/')) {
+      return decodeURIComponent(parsed.pathname.slice('/api/files/'.length));
+    }
+  } catch {
+    // Raw object keys are accepted only by trusted internal callers.
   }
 
   return null;
@@ -186,7 +181,7 @@ export async function getObject(key: string): Promise<Response> {
   return new Response(object.body, {
     headers: {
       'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Cache-Control': 'private, no-store',
     },
   });
 }
@@ -202,16 +197,39 @@ export async function getObjectText(urlOrKey: string): Promise<string> {
     if (!object) {
       throw new Error('File not found in object storage.');
     }
-    return await new Response(object.body).text();
+    return readBoundedText(new Response(object.body));
   }
 
   if (!isHttpUrl) {
     throw new Error('Object storage is not configured for this key.');
   }
 
-  const response = await fetch(urlOrKey);
+  const external = new URL(urlOrKey);
+  if (external.protocol !== 'https:' || external.username || external.password || external.port ||
+      !/^[a-z0-9-]+\.public\.blob\.vercel-storage\.com$/i.test(external.hostname)) {
+    throw new Error('Untrusted transcript source URL');
+  }
+  const response = await fetch(external, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
   if (!response.ok) {
     throw new Error(`Failed to fetch file content: ${response.statusText || `HTTP ${response.status}`}`);
   }
-  return await response.text();
+  return readBoundedText(response);
+}
+
+async function readBoundedText(response: Response, maxBytes = 8 * 1024 * 1024): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > maxBytes) { await reader.cancel(); throw new Error('Object exceeds text size limit'); }
+      text += decoder.decode(part.value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally { reader.releaseLock(); }
 }

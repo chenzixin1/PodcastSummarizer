@@ -3,7 +3,8 @@ import { getAnalysisResults, getPodcast, verifyPodcastOwnership } from '../../..
 import { getQaMessages, saveQaMessage } from '../../../../lib/qaMessages';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
-import { modelConfig } from '../../../../lib/modelConfig';
+import { callQaModel, QaModelError } from '../../../../lib/qaModel';
+import { consumeQaRequestQuota, QA_REQUESTS_PER_HOUR } from '../../../../lib/qaQuota';
 import { rebuildQaContextChunksForPodcast, renderChunkLabel, retrieveHybridQaChunks } from '../../../../lib/qaContextChunks';
 
 interface PodcastData {
@@ -23,12 +24,12 @@ interface QaRequestBody {
   suggested?: unknown;
 }
 
-const QA_MODEL = process.env.OPENROUTER_QA_MODEL || modelConfig.MODEL;
 const MAX_QUESTION_LENGTH = 1000;
 const MAX_RETRIEVED_CHUNKS = Math.max(4, Math.min(12, Number.parseInt(process.env.QA_MAX_RETRIEVED_CHUNKS || '8', 10)));
-const QA_MODEL_TIMEOUT_MS = Math.max(10_000, Number.parseInt(process.env.QA_MODEL_TIMEOUT_MS || '45000', 10) || 45_000);
-const QA_MODEL_MAX_RETRIES = Math.max(0, Number.parseInt(process.env.QA_MODEL_MAX_RETRIES || '1', 10) || 1);
-const QA_MODEL_RETRY_DELAY_MS = Math.max(0, Number.parseInt(process.env.QA_MODEL_RETRY_DELAY_MS || '800', 10) || 800);
+
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } });
+}
 
 const ENGLISH_STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'what', 'with', 'from', 'about', 'have', 'will',
@@ -42,16 +43,6 @@ const CHINESE_STOPWORDS = new Set([
   '这个', '那个', '哪些', '什么', '如何', '为什么', '请问', '一下', '里面', '还有',
   '关于', '可以', '是否', '是不是', '有没有', '总结', '翻译', '全文', '重点',
 ]);
-
-function getRefererValue(): string {
-  if (process.env.NEXTAUTH_URL) {
-    return process.env.NEXTAUTH_URL;
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  return 'http://localhost:3000';
-}
 
 function normalizeText(value: unknown): string {
   if (typeof value !== 'string') {
@@ -139,11 +130,8 @@ async function fetchTranscript(blobUrl?: string | null): Promise<string> {
     return '';
   }
   try {
-    const response = await fetch(blobUrl);
-    if (!response.ok) {
-      return '';
-    }
-    const content = await response.text();
+    const { getObjectText } = await import('../../../../lib/objectStorage');
+    const content = await getObjectText(blobUrl);
     return normalizeText(content);
   } catch {
     return '';
@@ -188,129 +176,32 @@ function buildRetrievedContext(
     .join('\n\n---\n\n');
 }
 
-async function callQaModel(question: string, context: string, mode: 'hybrid' | 'legacy'): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not configured');
-  }
-
-  const systemPrompt =
-    mode === 'hybrid'
-      ? '你是播客问答助手。你只能基于提供的证据回答，不要编造。' +
-        '请用中文输出，结构为：1) 直接答案；2) 依据要点（最多3条）。' +
-        '每条依据后追加对应证据 id（格式例如：chunk-12）。' +
-        '如果证据只支持“间接提及”，请明确写“属于间接提及，未直接下结论”。' +
-        '如果证据不足，请明确写“在当前上下文中未找到明确依据”。'
-      : '你是播客问答助手。只能基于提供的上下文回答，不要编造。请用中文输出，结构为：' +
-        '1) 直接答案；2) 依据要点（最多3条）。如果上下文不足，请明确写“在当前上下文中未找到明确依据”。';
-
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= QA_MODEL_MAX_RETRIES; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), QA_MODEL_TIMEOUT_MS);
-
-    try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': getRefererValue(),
-          'X-Title': 'PodSum.cc QA',
-        },
-        body: JSON.stringify({
-          model: QA_MODEL,
-          temperature: 0.2,
-          max_tokens: 1800,
-          messages: [
-            {
-              role: 'system',
-              content: systemPrompt,
-            },
-            {
-              role: 'user',
-              content: `问题：${question}\n\n上下文：\n${context}`,
-            },
-          ],
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const error = new Error(`QA model request failed: ${response.status} ${errorText}`);
-        const isRetriable = response.status === 429 || response.status >= 500;
-        if (isRetriable && attempt < QA_MODEL_MAX_RETRIES) {
-          await new Promise((resolve) => setTimeout(resolve, QA_MODEL_RETRY_DELAY_MS));
-          continue;
-        }
-        throw error;
-      }
-
-      const data = (await response.json()) as {
-        choices?: Array<{
-          message?: {
-            content?: string;
-          };
-        }>;
-      };
-
-      const answer = data.choices?.[0]?.message?.content;
-      if (!answer || typeof answer !== 'string') {
-        throw new Error('No answer generated');
-      }
-      return answer.trim();
-    } catch (error) {
-      const isTimeout = error instanceof Error && error.name === 'AbortError';
-      lastError = isTimeout
-        ? new Error(`QA model request timed out after ${QA_MODEL_TIMEOUT_MS}ms`)
-        : (error instanceof Error ? error : new Error(String(error)));
-
-      if (attempt < QA_MODEL_MAX_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, QA_MODEL_RETRY_DELAY_MS));
-        continue;
-      }
-
-      throw lastError;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  throw lastError || new Error('QA model request failed');
-}
-
 async function ensureAccess(
   podcastId: string
 ): Promise<
-  | { success: true; podcast: PodcastData; userId: string | null }
+  | { success: true; podcast: PodcastData; userId: string }
   | { success: false; response: NextResponse }
 > {
+  const session = await getServerSession(authOptions);
+  const sessionUserId = session?.user?.id;
+  if (typeof sessionUserId !== 'string' || !sessionUserId.trim()) {
+    return { success: false, response: json({ success: false, error: '请登录后使用问答。' }, 401) };
+  }
   const podcastResult = await getPodcast(podcastId);
   if (!podcastResult.success) {
     return {
       success: false,
-      response: NextResponse.json({ success: false, error: 'Podcast not found' }, { status: 404 }),
+      response: json({ success: false, error: 'Podcast not found' }, 404),
     };
   }
 
   const podcast = podcastResult.data as PodcastData;
-  const session = await getServerSession(authOptions);
-  const sessionUserId = session?.user?.id || null;
-
   if (!podcast.isPublic) {
-    if (!sessionUserId) {
-      return {
-        success: false,
-        response: NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 }),
-      };
-    }
     const ownership = await verifyPodcastOwnership(podcastId, sessionUserId);
     if (!ownership.success) {
       return {
         success: false,
-        response: NextResponse.json({ success: false, error: 'Access denied' }, { status: 403 }),
+        response: json({ success: false, error: 'Access denied' }, 403),
       };
     }
   }
@@ -325,7 +216,7 @@ export async function GET(
   try {
     const { id } = await context.params;
     if (!id) {
-      return NextResponse.json({ success: false, error: 'Missing ID parameter' }, { status: 400 });
+      return json({ success: false, error: 'Missing ID parameter' }, 400);
     }
 
     const access = await ensureAccess(id);
@@ -335,26 +226,20 @@ export async function GET(
 
     const rawLimit = request.nextUrl.searchParams.get('limit');
     const parsedLimit = rawLimit ? Number(rawLimit) : 30;
-    const historyResult = await getQaMessages(id, Number.isFinite(parsedLimit) ? parsedLimit : 30);
+    const historyResult = await getQaMessages(id, access.userId, Number.isFinite(parsedLimit) ? parsedLimit : 30);
     if (!historyResult.success) {
-      return NextResponse.json(
-        { success: false, error: historyResult.error || 'Failed to fetch QA history' },
-        { status: 500 }
-      );
+      return json({ success: false, error: '暂时无法读取问答历史，请稍后重试。' }, 500);
     }
 
-    return NextResponse.json({
+    return json({
       success: true,
       data: {
         messages: historyResult.data || [],
       },
     });
-  } catch (error) {
-    console.error('QA history API failed:', error);
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
-    );
+  } catch {
+    console.error('QA history API failed');
+    return json({ success: false, error: '暂时无法读取问答历史，请稍后重试。' }, 500);
   }
 }
 
@@ -365,7 +250,7 @@ export async function POST(
   try {
     const { id } = await context.params;
     if (!id) {
-      return NextResponse.json({ success: false, error: 'Missing ID parameter' }, { status: 400 });
+      return json({ success: false, error: 'Missing ID parameter' }, 400);
     }
 
     const access = await ensureAccess(id);
@@ -373,26 +258,32 @@ export async function POST(
       return access.response;
     }
 
-    const body = (await request.json()) as QaRequestBody;
+    let body: QaRequestBody;
+    try { body = (await request.json()) as QaRequestBody; }
+    catch { return json({ success: false, error: '请求格式不正确。' }, 400); }
     const question = normalizeText(body?.question);
     if (!question) {
-      return NextResponse.json({ success: false, error: 'Question is required' }, { status: 400 });
+      return json({ success: false, error: 'Question is required' }, 400);
     }
     if (question.length > MAX_QUESTION_LENGTH) {
-      return NextResponse.json(
+      return json(
         { success: false, error: `Question is too long (max ${MAX_QUESTION_LENGTH} chars)` },
-        { status: 400 }
+        400
       );
     }
 
     const analysisResult = await getAnalysisResults(id);
     if (!analysisResult.success) {
-      return NextResponse.json(
+      return json(
         { success: false, error: 'Analysis is not ready yet. Please wait until processing finishes.' },
-        { status: 409 }
+        409
       );
     }
     const analysis = (analysisResult.data || {}) as AnalysisData;
+
+    if (!await consumeQaRequestQuota(access.userId)) {
+      return json({ success: false, error: `每小时最多提问 ${QA_REQUESTS_PER_HOUR} 次，请稍后再试。` }, 429);
+    }
 
     let retrievedChunks = await retrieveHybridQaChunks(id, question, MAX_RETRIEVED_CHUNKS);
     let contextText = '';
@@ -403,7 +294,8 @@ export async function POST(
     } else {
       const transcript = await fetchTranscript(access.podcast.blobUrl);
 
-      const rebuildResult = await rebuildQaContextChunksForPodcast({
+      // Lexical-only deployments can answer from source without a racing, paid index rebuild.
+      const rebuildResult = process.env.QA_EMBEDDINGS_ENABLED === 'false' ? { success: true, chunkCount: 0 } : await rebuildQaContextChunksForPodcast({
         podcastId: id,
         summary: analysis.summary,
         translation: analysis.translation,
@@ -432,21 +324,16 @@ export async function POST(
       suggestedQuestion: Boolean(body?.suggested),
     });
     if (!saveResult.success) {
-      return NextResponse.json(
-        { success: false, error: saveResult.error || 'Failed to save QA result' },
-        { status: 500 }
-      );
+      return json({ success: false, error: '问答结果暂时无法保存，请稍后重试。' }, 500);
     }
 
-    return NextResponse.json({
+    return json({
       success: true,
       data: saveResult.data,
     });
   } catch (error) {
-    console.error('QA ask API failed:', error);
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
-    );
+    if (error instanceof QaModelError) return json({ success: false, error: error.message }, error.status);
+    console.error('QA ask API failed');
+    return json({ success: false, error: '问答暂时不可用，请稍后重试。' }, 500);
   }
 }

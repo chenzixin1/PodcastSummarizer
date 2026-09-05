@@ -26,13 +26,14 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from watchless_translation import translated_markdown, translation_batches, validate_translation_batch
+from watchless_provider import model_request, model_text
 
 app = FastAPI(docs_url=None, redoc_url=None)
 states: dict[str, dict[str, Any]] = {}
 YOUTUBE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 MODEL = os.getenv("WATCHLESS_MODEL", "openai/gpt-5.6-luna")
-if MODEL != "openai/gpt-5.6-luna":
-    raise RuntimeError("WATCHLESS_MODEL must be openai/gpt-5.6-luna")
+if MODEL not in {"openai/gpt-5.6-luna", "@cf/zai-org/glm-5.3-flash"}:
+    raise RuntimeError("WATCHLESS_MODEL is not allowed")
 
 
 class JobRequest(BaseModel):
@@ -40,9 +41,10 @@ class JobRequest(BaseModel):
 
 
 class OpenRouterError(RuntimeError):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(f"OpenRouter HTTP {status_code}: {message}")
+    def __init__(self, status_code: int, message: str, provider: str = "openrouter"):
+        super().__init__(f"{provider} HTTP {status_code}: {message}")
         self.status_code = status_code
+        self.provider = provider
 
 
 def secret_ok(value: str | None) -> bool:
@@ -105,7 +107,7 @@ async def status(
 
 def failure_code(exc: Exception) -> str:
     if isinstance(exc, OpenRouterError):
-        return f"WATCHLESS_OPENROUTER_HTTP_{exc.status_code}"
+        return f"WATCHLESS_{exc.provider.upper()}_HTTP_{exc.status_code}"
     if isinstance(exc, httpx.WriteTimeout):
         return "WATCHLESS_UPSTREAM_WRITE_TIMEOUT"
     if isinstance(exc, httpx.ReadTimeout):
@@ -224,23 +226,14 @@ def verbatim_transcript(turns: list[dict[str, str]]) -> str:
 
 
 def request_openrouter_json(prompt: str, schema: dict[str, Any], name: str, max_tokens: int = 65536) -> dict[str, Any]:
-    key = os.getenv("OPENROUTER_API_KEY", "")
-    if not key:
-        raise RuntimeError("OPENROUTER_API_KEY is not configured")
-    payload = {
-        "model": MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}},
-        "max_tokens": max_tokens,
-        "provider": {"require_parameters": True},
-    }
+    provider, endpoint, headers, payload = model_request(MODEL, prompt, schema, name, max_tokens)
     response: httpx.Response | None = None
     with httpx.Client(timeout=1200) as client:
         for attempt in range(3):
             try:
                 response = client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={"authorization": f"Bearer {key}", "content-type": "application/json"},
+                    endpoint,
+                    headers=headers,
                     json=payload,
                 )
             except httpx.TransportError:
@@ -253,7 +246,7 @@ def request_openrouter_json(prompt: str, schema: dict[str, Any], name: str, max_
             if attempt < 2:
                 time.sleep(2 ** attempt)
     if response is None:
-        raise RuntimeError("OpenRouter returned no response")
+        raise RuntimeError(f"{provider} returned no response")
     if response.status_code >= 400:
         detail = "request failed"
         try:
@@ -266,8 +259,8 @@ def request_openrouter_json(prompt: str, schema: dict[str, Any], name: str, max_
         except (ValueError, TypeError):
             detail = response.text or detail
         detail = re.sub(r"(?:sk-or-v1-|Bearer\s+)[A-Za-z0-9._-]+", "[redacted]", detail)[:1000]
-        raise OpenRouterError(response.status_code, detail)
-    content = response.json()["choices"][0]["message"]["content"]
+        raise OpenRouterError(response.status_code, detail, provider)
+    content = model_text(response.json(), provider)
     return json.loads(content)
 
 
@@ -397,6 +390,10 @@ async def process(job_id: str) -> None:
     try:
         info_response = await callback(f"/api/watchless/jobs/internal/{quote(job_id)}", method="GET")
         job = info_response.json()["data"]
+        if (job.get("sourceKind") != "url" or job.get("creditStatus") != "reserved"
+                or int(job.get("creditsReserved") or 0) < 1000
+                or job.get("status") not in ("queued", "preparing", "transcribing", "segmenting", "rendering")):
+            raise RuntimeError("Watchless job is not active or has no credit reservation")
         source = str(job.get("sourceUrl") or "")
         video_id = video_id_from_url(source)
         await status(job_id, "preparing", "preparing_metadata", 5, "正在读取视频信息")
@@ -512,6 +509,7 @@ async def process(job_id: str) -> None:
                 raise RuntimeError(f"Scene {index + 1} contains no source utterance")
             scene["articleZh"] = translated_markdown(turns, display_speaker, translations_zh)
             scene["transcriptEn"] = verbatim_transcript(original_turns)
+            scene["sourceTranscript"] = scene["transcriptEn"]
             scene["id"] = f"scene-{index + 1}"
             scene["number"] = index + 1
             scene["timeLabel"] = time_label(scene["startSec"], scene["endSec"])
@@ -547,6 +545,8 @@ async def process(job_id: str) -> None:
             "availableLanguageModes": ["zh", "en", "bilingual", "hint"], "scenes": scenes,
         }
         article_path = work / "article.json"
+        # Canonical text uses the exact published turn boundaries; raw ASR remains a separate artifact.
+        transcript_path.write_text("\n\n".join(scene["sourceTranscript"] for scene in scenes), encoding="utf-8")
         article_path.write_text(json.dumps(article, ensure_ascii=False, indent=2), encoding="utf-8")
         pdf_path = work / "article.pdf"
         await asyncio.to_thread(build_pdf, article, pdf_path)

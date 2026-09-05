@@ -1,4 +1,82 @@
-# PodSum Watchless 双语完整性修复执行计划
+# PodSum 修复、上线与完整自测执行计划
+
+## 当前执行：Watchless 分段续跑（2026-09-06）
+
+用户已批准实现与上线；仅恢复 `watchless-veizk1m7v7e`，不批量重跑，不再收取 1000 积分。
+
+- [x] R1 页面容错：分离读取错误和后台分析错误，已有各视图可读；增加进度、尝试次数、暂停原因和续跑入口。
+- [x] R2 持久化：新增 D1 运行/分段/请求记录与原子预算、并发租约；导入旧缓存和尝试，不改变原文/模型/提示词/分段。
+- [x] R3 执行链：独立分析 Workflow，逐段步骤、显式退避、存储恢复及最终幂等提交；每段最多3次，整篇额外10次，费用不确定请求也计数。
+- [x] R4 接口兼容：查询、用户续跑、URL/MCP发布和修复入口统一调度；新旧执行互斥，默认关闭，指定文章灰度。
+- [x] R5 自动回归与故障注入：权限、重复提交、预算并发、超时/限流/格式、存储中断、迟到响应、最终提交失败、页面仍可读。
+- [x] R6 迭代预览：1440×960 / 390×844 真实浏览器；全量测试、类型、构建和安全复核。
+- [x] R7 Dockerfile 检查：视频 Container 不变，仅新增 Worker Workflow 与 D1 状态。
+- [x] R8 注册发布：干净发布、迁移和默认关闭的新执行链；只启用目标文章，导入19段并续跑至30/30；原文/图文/19段缓存指纹与积分流水不变。本次13次请求（11成功、1超时不确定、1格式失败），全篇含历史额外8/10；详见 docs/watchless-recovery-20260906.md。
+- [x] R9 迭代预览与注册发布：视觉验收发现完整脑图节点过多，超过60节点默认收起详情，点击节点重新布局；保留所有节点，复测桌面/手机，增量发布纯前端修复，不重跑模型。Worker 0e4e517b-52b9-4920-8faf-caed9bc8f337。
+
+**Goal:** 修复本轮审查的安全和内容链路问题，让 MCP/URL Watchless 同时提供完整分析与原话图文，切换 GLM 并验证生产。
+**模板:** 现有 Next.js / OpenNext / Cloudflare Worker、D1、R2、Container，不迁移技术栈。
+**needs_dw:** false
+**needs_db:** true
+
+用户已明确授权修复和上线。所有历史更新先备份，原始字幕和原图不覆写；不新增充值，不使用 Superpower。
+
+- [x] **F1: 权限与规范源** — 修复 `app/api/files/[...key]/route.ts`、`lib/objectStorage.ts`、`app/api/process/route.ts`：文件必须属于可访问播客；私有和未知资源不缓存；处理只使用数据库源。验证匿名/非所有者/所有者/公开、跨源地址及大小边界。
+- [x] **F2: 完整分析生命周期** — `lib/watchless/analysis*.ts`、发布/队列路由与 D1 migration 区分 overview、queued、complete、failed；为 Watchless 生成双语完整 Summary 和脑图，但绝不改写英文原话。验证幂等、错误保留图文、可恢复重试。
+- [x] **F3: bundle 数据契约** — `lib/watchless/jobs.ts` 按场景引用精确绑定关键帧，保存规范字幕而非 article JSON，验证来源一致性和全文大小。补非补零图片名、无字幕、原话篡改和超限测试。
+- [x] **F4: 服务端数据与 UI** — 删除生产样例覆盖，保留开发预览；同步分析状态和重试入口；检查四种阅读模式、目录、折叠、问答与键盘体验。
+- [x] **F5: 依赖与安全复核** — 检查可达依赖、优先兼容更新/删除未用依赖；复核所有输入、权限、并发和资源预算。对无法安全本轮解决的问题记录证据，不虚报通过。
+- [ ] **F6: 历史数据备份与回填** — 备份生产 D1/文章引用；全文按文章逐场景恢复；完整分析先单篇验证，再有界批量补齐，保留每篇结果与失败原因。
+- [x] **F7: 全量自动回归** — Jest、Python、TypeScript、lint、依赖审计、生产构建，覆盖新增安全与内容契约。
+- [x] **F8: 迭代预览** — 本地真实浏览器 1440×960 / 390×844，自测 Summary/全文/脑图/完整图文、四语言模式、原视频/PDF、无横向溢出和折叠焦点，保存截图。
+- [x] **F9: Dockerfile 检查/构建** — 确认 GLM 模块进入 Linux amd64 Container，构建并测试；Worker 与 Container 版本一致，积分1000门槛不变。
+- [ ] **F10: 注册发布** — 在干净的 Git 发布版本运行 Cloudflare 迁移/部署；生产回读权限、内容、模型和任务状态，端到端 smoke；记录 commit、Worker/Container 版本与回滚边界。历史安全缓存单独核查。
+
+## 追加：词汇浮层字体一致性
+
+- [x] T1: `app/globals.css` 与 `components/watchless/watchless.css` 共用词汇字体、字号、释义和主题色变量；保留完整图文正文衬线字体，修复深色中文释义对比度。
+- [x] T2: 迭代预览 — 85 套 712 项通过；真实浏览器确认下方浮层使用 Geist/中文无衬线、13.12px 释义、14.4px 标题；浅/深色截图，390px 浮层 x=35、宽320，正文衬线保留。生产再比对上下两处。
+- [x] T3: 注册发布 — Worker `5c8cbc28-1cfe-4aec-a20e-c5dde0ddf490`，代码 `84faad7`；Container 镜像、数据和积分不变。生产上下浮层浅/深色字体、字号、字重、文字色完全一致；390px 下两处 x=35、宽320，无截断。
+
+## 之前迭代记录（以下待办由本轮 F1–F10 接续）
+
+## 本轮：项目审查、MCP bundle 分析差异与 UI 优化
+
+**Goal:** 核对字幕处理和 Watchless 发布的数据差异，记录有证据的问题，修复本轮相关内容与阅读 UI；保留现有暖纸张设计。
+**模板:** 现有 Next.js / Cloudflare / Python 项目；needs_dw=false，needs_db=true。
+
+- [x] V1: 对比 `lib/watchless/jobs.ts`、`app/api/process/route.ts` 和线上 D1 字段覆盖，确认 Summary、Full Text、Mind Map 的缺失来源；只读查询，不批量生成或覆盖历史数据。
+- [x] V2: 审查 MCP 鉴权、发布校验、状态/积分事务、文件访问、页面加载与部署配置；在 `docs/project-review-20260905.md` 记录严重性、文件位置与证据。
+- [x] V3: 修复已确认的 bundle 映射/呈现问题并补回归测试；不把文章导语伪装为完整分析，不重写英文原话。
+- [x] V4: 优化详情页分析与完整图文的关系、空状态和键盘/reduced-motion 体验；复用 `.impeccable.md` 设计。
+- [x] V5: 迭代预览：72 套/565 个 Jest 测试、6 个 Python 测试、类型检查与 OpenNext 构建通过；1440×960 和 390×844 无横向溢出，截图位于 output/playwright。预览为公开数据只读代理，未回填生产。
+- [x] V6: Dockerfile 检查：确认 COPY 包含 GLM transport；容器镜像尚未构建发布，不改变其他模型或已有积分机制。
+- [ ] V7: 注册发布：汇总审查与预览结果；本轮 UI 先预览，生产发布与历史回填另行确认，不绕过发布检查。
+
+## 本轮：切换 Cloudflare 托管 GLM-5.3 Flash
+
+- [x] M1: 官方模型标识与小额 API 翻译验证，`@cf/zai-org/glm-5.3-flash` 返回 HTTP 200。
+- [x] M2: TS/Python transport 增加 Workers AI 原生接口和响应校验，保留 OpenRouter 兼容路径。
+- [x] M3: 配置仅 Workers AI 权限的服务令牌，模型配置传递到 Container；保留积分门槛与退款逻辑。
+- [x] M4: 单元测试、类型检查、真实结构化翻译 smoke test。
+- [x] M5: 迭代预览：构建检查和模型显示检查；不启动历史批量任务。
+- [ ] M6: 注册发布：Cloudflare Worker/Container 发布并核实线上配置；未验证不宣称切换完成。
+
+**Goal:** 增加直连 Cloudflare 统一计费 API 的可选通道，先小额验证 Luna，不自动充值或切换生产。
+**模板:** 现有 Next.js / Cloudflare / Python Container
+**needs_dw:** false
+**needs_db:** true
+
+- [x] G1: 核对官方 Luna 目录与现有账户权限；以单次短请求测试，不输出密钥。
+
+2026-09-05 调用诊断：网页 Playground 的标准 `openai/gpt-5.6-luna` 返回 OK；Wrangler OAuth 经账户 Responses API 返回 402 Payment error，经网关原生 Responses 返回 401 Unauthorized。创建当前账户 Run 权限的 `PodSum Watchless Luna` 专用令牌后，原生 Responses 请求返回 403 `unsupported_country_region_territory`（Country, region, or territory not supported）。因此尚未修通生产 API，停止模型重试和上线；不得通过伪装地区或复用网页登录会话规避准入。临时远程绑定探针因 Network connection lost 未得出有效模型结果。现有 provider 代码仍为未上线草稿。
+- [ ] G2: `lib/watchless/modelProvider.ts` 与 Python provider 配置提供显式双通道；默认保留 OpenRouter，Cloudflare 配置缺失不回退或扣错账户。
+- [ ] G3: 接入双语补齐及 Container，传递限定用途凭证；测试 URL、请求参数、配置失败与原路径兼容。
+- [ ] G4: 迭代预览：定向测试、类型检查及有限 smoke test；无 UI 改动，无全量历史重跑。
+- [ ] G5: Dockerfile 检查：确认新 Python 模块进入镜像，不改变基础运行环境。
+- [ ] G6: 注册发布：记录试验与余额/权限阻碍；仅在真实请求验证通过且部署条件具备时启用云端新通道。
+
+## 上轮双语完整性修复执行计划
 
 **Goal:** 补齐历史文章双语内容，修复加载失败，并保证新发布内容具备真实四种阅读模式。
 **模板:** 现有 Next.js / Cloudflare 项目

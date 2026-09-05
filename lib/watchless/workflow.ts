@@ -11,6 +11,7 @@ type WorkflowBinding = {
 
 type WatchlessWorkflowEnv = {
   WATCHLESS_WORKFLOW?: WorkflowBinding;
+  WATCHLESS_CONTAINER?: { getByName(name: string): { stop(): Promise<void> } };
 };
 
 export async function startWatchlessWorkflow(
@@ -44,7 +45,16 @@ export async function terminateWatchlessWorkflow(instanceId: string): Promise<vo
   const context = await getCloudflareContext({ async: true });
   const binding = (context.env as unknown as WatchlessWorkflowEnv).WATCHLESS_WORKFLOW;
   if (!binding) throw new Error('WATCHLESS_WORKFLOW binding is not configured.');
-  const instance = await binding.get(instanceId);
-  if (typeof instance.terminate !== 'function') throw new Error('Workflow termination is unavailable.');
-  await instance.terminate();
+  const jobId = /^watchless-(wl_[A-Za-z0-9_-]{18})/.exec(instanceId)?.[1];
+  const containers = (context.env as unknown as WatchlessWorkflowEnv).WATCHLESS_CONTAINER;
+  const results = await Promise.allSettled([
+    (async () => {
+      const instance = await binding.get(instanceId);
+      if (typeof instance.terminate !== 'function') throw new Error('Workflow termination is unavailable.');
+      await instance.terminate();
+    })(),
+    jobId && containers ? containers.getByName(`watchless-${jobId}`).stop() : Promise.resolve(),
+  ]);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
 }

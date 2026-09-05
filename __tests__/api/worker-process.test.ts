@@ -8,6 +8,8 @@ import * as infographicJobsModule from '../../lib/infographicJobs';
 import * as infographicWorkerModule from '../../lib/infographicWorker';
 import * as processingJobsModule from '../../lib/processingJobs';
 import * as workerAuthModule from '../../lib/workerAuth';
+import { getPodcast } from '../../lib/db';
+import { POST as processPodcastRoute } from '../../app/api/process/route';
 
 jest.mock('../../lib/db', () => ({
   getPodcast: jest.fn(),
@@ -94,5 +96,19 @@ describe('POST /api/worker/process', () => {
       { leaseSeconds: 600, maxActiveWorkers: 1 },
     );
     expect(data.data.infographic).toEqual({ processed: false, podcastId: null, status: 'idle' });
+  });
+
+  it('passes the claimed worker identity into the process route and completion CAS', async () => {
+    processingJobs.claimNextProcessingJob.mockResolvedValue({ success: true, data: { podcastId: 'watchless-1' } } as never);
+    workerAuth.getPreferredWorkerSecretForInternalCalls.mockReturnValue('worker-secret');
+    (getPodcast as jest.Mock).mockResolvedValue({ success: true, data: { blobUrl: '/api/files/owned.txt', originalFileName: 'owned.txt' } });
+    processingJobs.updateProcessingJobProgress.mockResolvedValue({ success: true });
+    (processPodcastRoute as jest.Mock).mockResolvedValue(new Response('data: {"type":"all_done"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } }));
+    const result = await POST(new NextRequest('http://localhost:3000/api/worker/process', { method: 'POST', headers: { 'x-worker-secret': 'worker-secret' } }));
+    expect(result.status).toBe(200);
+    const workerId = processingJobs.claimNextProcessingJob.mock.calls[0][0];
+    const passedRequest = (processPodcastRoute as jest.Mock).mock.calls[0][0] as NextRequest;
+    expect(await passedRequest.json()).toMatchObject({ id: 'watchless-1', workerId, blobUrl: '/api/files/owned.txt' });
+    expect(processingJobs.completeProcessingJob).toHaveBeenCalledWith('watchless-1', workerId);
   });
 });
