@@ -33,7 +33,29 @@ export function validateAnalysisBundle(value: unknown, ids: string[]): Watchless
 export function validateGeneratedAnalysis(value: unknown, id: string): WatchlessAnalysisBundle {
   if (value && typeof value === 'object' && !Array.isArray(value)
       && !('version' in value) && !('scenes' in value) && 'id' in value && value.id === id) {
-    return validateAnalysisBundle({ version: 1, scenes: [value] }, [id]);
+    value = { version: 1, scenes: [value] };
+  }
+  // Provider responses sometimes contain 13+ complete pairs. Preserve every word
+  // and its order by joining adjacent pairs; never repair missing translations.
+  const data = value as WatchlessAnalysisBundle;
+  if (data?.version === 1 && Array.isArray(data.scenes) && data.scenes.length === 1
+      && data.scenes[0]?.id === id && Array.isArray(data.scenes[0].points)
+      && data.scenes[0].points.length > 12 && data.scenes[0].points.length <= 48) {
+    const points = data.scenes[0].points.map(point => ({ ...point }));
+    if (points.every(p => typeof p.zh === 'string' && p.zh.trim() && typeof p.en === 'string' && p.en.trim())) {
+      while (points.length > 12) {
+        let index = -1, size = Infinity;
+        for (let i = 0; i < points.length - 1; i++) {
+          const zh = points[i].zh.length + points[i + 1].zh.length + 2;
+          const en = points[i].en.length + points[i + 1].en.length + 2;
+          if (zh <= 1600 && en <= 2600 && zh + en < size) { index = i; size = zh + en; }
+        }
+        if (index < 0) break;
+        points.splice(index, 2, { zh: points[index].zh + '\n\n' + points[index + 1].zh,
+          en: points[index].en + '\n\n' + points[index + 1].en });
+      }
+      value = { ...data, scenes: [{ ...data.scenes[0], points }] };
+    }
   }
   return validateAnalysisBundle(value, [id]);
 }

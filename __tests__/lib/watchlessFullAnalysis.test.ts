@@ -36,6 +36,16 @@ describe('full Watchless analysis', () => {
     expect(validateGeneratedAnalysis(partAnalysis, 'scene-1-part-1')).toEqual(partAnalysis);
     expect(() => validateAnalysisBundle(partAnalysis.scenes[0], ['scene-1-part-1'])).toThrow();
   });
+  test('joins excess provider points without losing either language or mutating input', () => {
+    const points=Array.from({length:17},(_,i)=>({zh:`第${i}条完整论据。`,en:`Complete argument number ${i}.`}));
+    const value={version:1,scenes:[{...partAnalysis.scenes[0],points}]};
+    const result=validateGeneratedAnalysis(value,'scene-1-part-1');
+    expect(result.scenes[0].points).toHaveLength(12);
+    for(const lang of ['zh','en'] as const) expect(result.scenes[0].points.map(p=>p[lang]).join('\n\n')).toBe(points.map(p=>p[lang]).join('\n\n'));
+    expect(value.scenes[0].points).toHaveLength(17);
+    expect(()=>validateAnalysisBundle(value,['scene-1-part-1'])).toThrow();
+    expect(()=>validateGeneratedAnalysis({...value,scenes:[{...value.scenes[0],points:points.map(p=>({zh:p.zh}))}]},'scene-1-part-1')).toThrow();
+  });
   test.each([
     { ...partAnalysis.scenes[0], id: 'wrong' },
     { ...partAnalysis.scenes[0], points: [] },

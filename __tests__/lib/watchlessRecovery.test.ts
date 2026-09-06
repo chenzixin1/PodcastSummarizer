@@ -140,12 +140,40 @@ test('old enqueue cannot erase workflow progress or its attempt budget',async()=
 });
 test('malformed JSON can only be retried once',async()=>{
   (fetch as jest.Mock).mockResolvedValue(new Response('not json',{status:200}));
-  await startAnalysisRecovery(article.id);await advance();
+  await startAnalysisRecovery(article.id);const first=await advance();const r=active();
+  expect(first.pending?.rejected?.raw).toBe('not json');
+  await saveAnalysisRecoveryResult(r.id,r.workflow_id,first.pending!);
   mockD1.run('UPDATE watchless_analysis_attempts SET retry_at=0');
   (fetch as jest.Mock).mockResolvedValue(new Response('still not json',{status:200}));
-  await tick();mockD1.run('UPDATE watchless_analysis_attempts SET retry_at=0');
+  const second=await tick();await saveAnalysisRecoveryResult(r.id,r.workflow_id,second.pending!);
+  mockD1.run('UPDATE watchless_analysis_attempts SET retry_at=0');
   expect((await tick()).status).toBe('paused');expect(fetch).toHaveBeenCalledTimes(2);
   expect((await analysisRecoveryStatus(article.id))?.pauseReason).toContain('FORMAT_LIMIT');
+});
+test('format pause resumes only from a valid paid output, without resetting budget',async()=>{
+  await startAnalysisRecovery(article.id);await tick();const r=active();
+  mockD1.run("UPDATE watchless_analysis_runs SET status='paused',pause_reason='FORMAT_LIMIT: test',current_part=?",[part().id]);
+  mockD1.run("UPDATE processing_jobs SET status='failed'");mockStatus.mockResolvedValue({status:'complete'});
+  expect((await startAnalysisRecovery(article.id))?.status).toBe('paused');
+  const value=valid();value.scenes[0].points=Array.from({length:13},()=>value.scenes[0].points[0]);
+  mockObjects.set(legacyKey().replace('.json','.rejected-0.json'),{raw:JSON.stringify(value)});
+  await startAnalysisRecovery(article.id);
+  // Persisted history still counts; the parser fix is not a new paid attempt.
+  const current=active();
+  mockD1.run("INSERT INTO watchless_analysis_attempts(run_id,part_id,attempt,workflow_id,status,started_at,deadline,error_kind,imported) VALUES(?,?,1,'legacy','failed',0,0,'format',1)",[current.id,part().id]);
+  expect((await advance()).status).toBe('completed');expect(fetch).not.toHaveBeenCalled();
+  expect(mockD1.run('SELECT COUNT(*) n FROM watchless_analysis_attempts')[0].n).toBe(1);
+});
+test('rejected model output storage retries never call the model again',async()=>{
+  (fetch as jest.Mock).mockResolvedValue(new Response('broken JSON',{status:200}));
+  await startAnalysisRecovery(article.id);const result=await advance();const r=active();
+  mockStorageFailure=true;
+  await expect(saveAnalysisRecoveryResult(r.id,r.workflow_id,result.pending!)).rejects.toThrow('R2 unavailable');
+  mockStorageFailure=false;
+  await saveAnalysisRecoveryResult(r.id,r.workflow_id,result.pending!);
+  await saveAnalysisRecoveryResult(r.id,r.workflow_id,result.pending!);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(mockD1.run('SELECT status,error_kind FROM watchless_analysis_attempts')[0]).toMatchObject({status:'failed',error_kind:'format'});
 });
 test('R2 saved but D1 acknowledgement lost is recovered without a model call',async()=>{
   await startAnalysisRecovery(article.id);const result=await advance();const r=active();

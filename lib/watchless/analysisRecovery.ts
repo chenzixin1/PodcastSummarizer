@@ -15,7 +15,7 @@ type Run = { id: string; podcast_id: string; article_key: string; model: string;
   current_part: string | null; pause_reason: string | null; next_retry_at: number | null; supplied_key: string | null };
 type Part = { run_id: string; part_id: string; ordinal: number; cache_key: string; result_key: string | null; payload: string; imported: number; status: string };
 type Attempt = { attempt: number; status: string; deadline: number; retry_at: number | null; error_kind: string | null; result_key: string | null };
-export type PendingAnalysisResult = {partId:string;attempt:number;analysis:WatchlessAnalysisBundle};
+export type PendingAnalysisResult = {partId:string;attempt:number;analysis?:WatchlessAnalysisBundle;rejected?:{raw:string;reason:string;retryAt:number}};
 export type RecoveryTick = { done: boolean; waitMs: number; status: string; pending?:PendingAnalysisResult };
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 async function query<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]> {
@@ -92,7 +92,13 @@ export async function startAnalysisRecovery(id: string) {
   if (run.status === 'completed' || run.status === 'cancelled') return analysisRecoveryStatus(id);
   const status = await analysisRecoveryStatus(id);
   if(status?.status==='cancelled') return status;
-  if (run.status === 'paused' && !status?.canResume) return status;
+  if (run.status === 'paused' && !status?.canResume) {
+    // Format pauses may be repaired without buying another request, but only
+    // when an existing paid output now passes the provider compatibility parser.
+    if (!run.pause_reason?.startsWith('FORMAT_LIMIT')) return status;
+    const part=(await query<Part>('SELECT * FROM watchless_analysis_parts WHERE run_id=? AND part_id=?',run.id,run.current_part))[0];
+    if (!part || !await recoverRejectedOutput(run,part)) return status;
+  }
   if (run.workflow_id) {
     try {
       const instance = await binding.get(run.workflow_id);
@@ -185,6 +191,19 @@ async function importPart(run: Run, part: Part, owner: string) {
   ]);
 }
 
+async function recoverRejectedOutput(run:Run,part:Part):Promise<WatchlessAnalysisBundle|null> {
+  const attempts=await query<Attempt>('SELECT * FROM watchless_analysis_attempts WHERE run_id=? AND part_id=? ORDER BY attempt',run.id,part.part_id);
+  const keys=[0,1].map(i=>part.cache_key.replace(/\.json$/,`.rejected-${i}.json`));
+  for(const attempt of attempts) if(attempt.result_key) keys.push(`${attempt.result_key}.rejected.json`);
+  for(const key of keys) {
+    const rejected=await readWatchlessCheckpoint(key) as {raw?:string}|undefined;
+    if(typeof rejected?.raw!=='string') continue;
+    try { return validateGeneratedAnalysis(JSON.parse(rejected.raw),part.part_id); }
+    catch { /* Incomplete content is not repairable by normalization. */ }
+  }
+  return null;
+}
+
 /** One bounded step: import a checkpoint, execute one request, or commit. No implicit paid retries. */
 export async function tickAnalysisRecovery(runId: string, owner: string): Promise<RecoveryTick> {
   const run=(await query<Run>('SELECT * FROM watchless_analysis_runs WHERE id=?',runId))[0];
@@ -240,6 +259,17 @@ export async function tickAnalysisRecovery(runId: string, owner: string): Promis
     if(last?.retry_at && last.retry_at>Date.now()) return wait(run,owner,last.retry_at);
     const extras=(await query<{n:number}>('SELECT COUNT(*) AS n FROM watchless_analysis_attempts WHERE run_id=? AND attempt>1',runId))[0].n;
     const formatFailures=attempts.filter(a=>a.error_kind==='format').length;
+    if(formatFailures) {
+      const repaired=await recoverRejectedOutput(run,part);
+      if(repaired) {
+        const key=`watchless-runs/recovery/${runId}/normalized-${part.ordinal}.json`;
+        await assertOwner(run,owner);
+        await uploadObject(key,JSON.stringify(repaired),{contentType:'application/json'});
+        await assertOwner(run,owner);
+        await query(`UPDATE watchless_analysis_parts SET status='completed',result_key=? WHERE run_id=? AND part_id=?`,key,runId,part.part_id);
+        return {done:false,waitMs:0,status:'running'};
+      }
+    }
     if(!canSpendAttempt(attempts.length,extras,formatFailures)) return pause(run,owner,formatFailures>=2?'FORMAT_LIMIT: 输出格式连续不合格':'BUDGET: 已达到分段或整篇请求上限');
     const attempt=attempts.length+1, now=Date.now();
     let request:ReturnType<typeof analysisPartRequest>;
@@ -253,19 +283,21 @@ export async function tickAnalysisRecovery(runId: string, owner: string): Promis
       if(/BUDGET/.test(String(error))) return pause(run,owner,'BUDGET: 已达到请求上限');
       throw error;
     }
-    let response:Response, raw:string, analysis:WatchlessAnalysisBundle;
+    let response:Response, raw='', analysis:WatchlessAnalysisBundle;
     let kind='network', retryAfter:string|null=null;
     try {
       response=await fetch(request.url,{method:'POST',headers:request.headers,body:JSON.stringify(request.body),signal:AbortSignal.timeout(ANALYSIS_REQUEST_MS)});
       retryAfter=response.headers.get('retry-after');
       if(!response.ok) {kind=retryableHttp(response.status)?'http':'permanent';throw new Error(`Model HTTP ${response.status}`);}
-      kind='format'; const body=await response.json();
+      kind='format'; raw=await response.text(); const body=JSON.parse(raw);
       raw=watchlessModelText(body,request.provider); analysis=validateGeneratedAnalysis(JSON.parse(raw),part.part_id);
     } catch(error) {
       if(error instanceof Error && (error.name==='TimeoutError'||error.name==='AbortError')) kind='timeout';
       const uncertain=kind==='timeout'||kind==='network';
       const next=kind==='permanent'?null:Math.max(retryAt(attempt,Date.now(),retryAfter),uncertain?now+ANALYSIS_LEASE_MS:0);
       await assertOwner(run,owner);
+      if(kind==='format') return {done:false,waitMs:0,status:'saving',pending:{partId:part.part_id,attempt,
+        rejected:{raw,reason:error instanceof Error?error.message:'Invalid model output',retryAt:next!}}};
       await query(`UPDATE watchless_analysis_attempts SET status=?,finished_at=?,error_kind=?,retry_at=? WHERE run_id=? AND part_id=? AND attempt=? AND workflow_id=?
         AND EXISTS(SELECT 1 FROM watchless_analysis_runs WHERE id=? AND workflow_id=?)`,
         uncertain?'unknown':'failed',Date.now(),kind,next,runId,part.part_id,attempt,owner,runId,owner);
@@ -291,7 +323,20 @@ export async function saveAnalysisRecoveryResult(runId:string,owner:string,pendi
   if(!run) throw new Error('ANALYSIS_SUPERSEDED');
   await assertOwner(run,owner);
   const attempt=(await query<Attempt>(`SELECT * FROM watchless_analysis_attempts WHERE run_id=? AND part_id=? AND attempt=? AND workflow_id=?`,runId,pending.partId,pending.attempt,owner))[0];
-  if(!attempt?.result_key || !['started','succeeded'].includes(attempt.status)) throw new Error('ANALYSIS_SUPERSEDED');
+  if(!attempt?.result_key || !(pending.rejected?['started','failed']:['started','succeeded']).includes(attempt.status)) throw new Error('ANALYSIS_SUPERSEDED');
+  if(pending.rejected) {
+    if(pending.analysis || typeof pending.rejected.raw!=='string' || typeof pending.rejected.reason!=='string'
+      || !Number.isFinite(pending.rejected.retryAt)) throw new Error('Invalid rejected result');
+    const key=`${attempt.result_key}.rejected.json`;
+    if(await readWatchlessCheckpoint(key)===undefined) await uploadObject(key,JSON.stringify(pending.rejected),{contentType:'application/json'});
+    await assertOwner(run,owner);
+    const changed=await query(`UPDATE watchless_analysis_attempts SET status='failed',finished_at=?,error_kind='format',retry_at=?
+      WHERE run_id=? AND part_id=? AND attempt=? AND workflow_id=?
+      AND EXISTS(SELECT 1 FROM watchless_analysis_runs WHERE id=? AND workflow_id=? AND status IN ('running','waiting')) RETURNING attempt`,
+      Date.now(),pending.rejected.retryAt,runId,pending.partId,pending.attempt,owner,runId,owner);
+    if(!changed.length) throw new Error('ANALYSIS_SUPERSEDED');
+    return {done:false,waitMs:0,status:'running'};
+  }
   const analysis=validateAnalysisBundle(pending.analysis,[pending.partId]);
   const existing=await readWatchlessCheckpoint(attempt.result_key);
   if(existing===undefined) await uploadObject(attempt.result_key,JSON.stringify(analysis),{contentType:'application/json'});
