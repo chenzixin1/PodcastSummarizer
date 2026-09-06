@@ -4,6 +4,7 @@ export interface AnalysisRecoveryStatus {
   total: number;
   currentPart: string | null;
   attempts: number;
+  attemptLimit?: number;
   extraAttempts: number;
   nextRetryAt: number | null;
   pauseReason: string | null;

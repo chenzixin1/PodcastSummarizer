@@ -39,11 +39,66 @@ beforeEach(()=>{
   mockD1.exec(readFileSync('migrations/d1/0010_watchless_analysis_recovery.sql','utf8'));
   mockD1.exec(readFileSync('migrations/d1/0011_watchless_analysis_delete.sql','utf8'));
   mockD1.exec(readFileSync('migrations/d1/0012_watchless_analysis_settlement.sql','utf8'));
+  mockD1.exec(readFileSync('migrations/d1/0013_watchless_analysis_grants.sql','utf8'));
   mockD1.run("UPDATE processing_jobs SET status='failed'");mockObjects=new Map();mockStorageFailure=false;
   mockCreate.mockClear();mockStatus.mockResolvedValue({status:'running'});
   global.fetch=jest.fn(async()=>new Response(JSON.stringify(valid()),{status:200}));
 });
 afterEach(()=>{mockD1.close();delete process.env.WATCHLESS_ANALYSIS_RECOVERY_ENABLED;delete process.env.WATCHLESS_MODEL;});
+
+async function pausedWithThreeAttempts() {
+  await startAnalysisRecovery(article.id);await tick();const r=active();
+  for(let n=1;n<=3;n++)mockD1.run("INSERT INTO watchless_analysis_attempts(run_id,part_id,attempt,workflow_id,status,started_at,deadline,error_kind,imported) VALUES(?,?,?,'legacy','failed',0,0,'format',1)",[r.id,part().id,n]);
+  await tick();mockStatus.mockResolvedValue({status:'complete'});return r;
+}
+function grant(runId:string,attempt=4,expires=Date.now()+60000) {
+  mockD1.run('INSERT INTO watchless_analysis_grants(run_id,part_id,attempt,reason,approved_at,expires_at) VALUES(?,?,?,?,?,?)',
+    [runId,part().id,attempt,'explicit user authorization',Date.now()-1000,expires]);
+}
+test('grant migration preserves every existing request field with foreign keys enabled',()=>{
+  const legacy=createWatchlessD1(article.id,article.videoId);
+  try {
+    for(const name of ['0010_watchless_analysis_recovery','0011_watchless_analysis_delete','0012_watchless_analysis_settlement']) legacy.exec(readFileSync(`migrations/d1/${name}.sql`,'utf8'));
+    legacy.exec('PRAGMA foreign_keys=ON');
+    legacy.run("UPDATE processing_jobs SET status='failed'");
+    legacy.run("INSERT INTO watchless_analysis_runs(id,podcast_id,article_key,source_hash,model,total,created_at,updated_at) VALUES('preserved',?,'old/article.json','hash','model',1,10,20)",[article.id]);
+    legacy.run("INSERT INTO watchless_analysis_parts(run_id,part_id,ordinal,cache_key,payload) VALUES('preserved','part',1,'cache','{}')");
+    for(let n=1;n<=3;n++)legacy.run("INSERT INTO watchless_analysis_attempts VALUES('preserved','part',?,'original-owner','failed',100,200,150,'format',250,'saved-key',1)",[n]);
+    const before=legacy.run('SELECT * FROM watchless_analysis_attempts ORDER BY attempt');
+    legacy.exec(readFileSync('migrations/d1/0013_watchless_analysis_grants.sql','utf8'));
+    expect(legacy.run('SELECT * FROM watchless_analysis_attempts ORDER BY attempt')).toEqual(before);
+    expect(legacy.run('PRAGMA foreign_key_check')).toEqual([]);
+    expect(()=>legacy.run("INSERT INTO watchless_analysis_attempts VALUES('preserved','part',4,'original-owner','failed',100,200,150,'format',250,'saved-key',1)")).toThrow();
+  }finally{legacy.close();}
+});
+test('one exact grant permits a fourth request but no fifth, even after resume',async()=>{
+  const r=await pausedWithThreeAttempts();grant(r.id);
+  expect((await analysisRecoveryStatus(article.id))?.canResume).toBe(true);
+  await startAnalysisRecovery(article.id);
+  (fetch as jest.Mock).mockResolvedValue(new Response('bad',{status:200}));
+  const result=await advance(),owner=active().workflow_id;
+  expect(result.pending?.attempt).toBe(4);
+  await saveAnalysisRecoveryResult(r.id,owner,result.pending!);
+  mockD1.run('UPDATE watchless_analysis_attempts SET retry_at=0');
+  expect((await tick()).status).toBe('paused');
+  expect((await startAnalysisRecovery(article.id))?.status).toBe('paused');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(mockD1.run('SELECT COUNT(*) n FROM watchless_analysis_attempts')[0].n).toBe(4);
+});
+test.each(['expired','wrong-attempt'])('does not consume an %s grant',async mode=>{
+  const r=await pausedWithThreeAttempts();grant(r.id,mode==='wrong-attempt'?5:4,mode==='expired'?Date.now()-1:Date.now()+60000);
+  expect((await startAnalysisRecovery(article.id))?.status).toBe('paused');
+  expect(fetch).not.toHaveBeenCalled();
+});
+test('SQL refuses unapproved fourth attempt and preserves the grant after consumption',async()=>{
+  const r=await pausedWithThreeAttempts();
+  mockD1.run("UPDATE watchless_analysis_runs SET status='running'");mockD1.run("UPDATE processing_jobs SET status='processing'");
+  const insert=()=>mockD1.run("INSERT INTO watchless_analysis_attempts(run_id,part_id,attempt,workflow_id,status,started_at,deadline) VALUES(?,?,4,?,'started',?,?)",[r.id,part().id,r.workflow_id,Date.now(),Date.now()+180000]);
+  expect(insert).toThrow('BUDGET');grant(r.id);insert();
+  expect(insert).toThrow('CONFLICT');
+  expect(()=>mockD1.run('UPDATE watchless_analysis_grants SET attempt=5')).toThrow('IMMUTABLE');
+  expect(mockD1.run('SELECT COUNT(*) n FROM watchless_analysis_grants')[0].n).toBe(1);
+});
 
 test('imports paid successful checkpoints without a model call and commits',async()=>{
   mockObjects.set(legacyKey(),valid());

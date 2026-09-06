@@ -28,6 +28,15 @@ async function currentRun(id: string) {
     ORDER BY r.created_at DESC LIMIT 1`, id))[0] || null;
 }
 
+async function hasAttemptGrant(runId:string,partId:string|null,attempt?:number) {
+  if(!partId) return false;
+  const next=attempt ?? (await query<{n:number}>('SELECT COUNT(*)+1 AS n FROM watchless_analysis_attempts WHERE run_id=? AND part_id=?',runId,partId))[0].n;
+  return (await query(`SELECT attempt FROM watchless_analysis_grants WHERE run_id=? AND part_id=? AND attempt=?
+    AND approved_at<=? AND expires_at>? AND NOT EXISTS(SELECT 1 FROM watchless_analysis_attempts a
+      WHERE a.run_id=watchless_analysis_grants.run_id AND a.part_id=watchless_analysis_grants.part_id AND a.attempt=watchless_analysis_grants.attempt)`,
+    runId,partId,next,Date.now(),Date.now())).length>0;
+}
+
 export async function analysisRecoveryStatus(id: string): Promise<AnalysisRecoveryStatus | null> {
   const run = await currentRun(id);
   if (!run) return null;
@@ -40,10 +49,12 @@ export async function analysisRecoveryStatus(id: string): Promise<AnalysisRecove
     (SELECT COUNT(*) FROM watchless_analysis_attempts WHERE run_id=? AND attempt>1) AS extras,
     (SELECT COUNT(*) FROM watchless_analysis_attempts WHERE run_id=? AND part_id=?) AS attempts`,
   run.id, run.id, run.id, run.current_part))[0];
+  const approvedLimit=(await query<{n:number|null}>('SELECT MAX(attempt) AS n FROM watchless_analysis_grants WHERE run_id=? AND part_id=?',run.id,run.current_part))[0]?.n || 3;
   return { status: run.status, completed: run.supplied_key ? run.total : counts.completed, total: run.total,
-    currentPart: run.current_part, attempts: counts.attempts, extraAttempts: counts.extras,
+    currentPart: run.current_part, attempts: counts.attempts, attemptLimit:Math.max(3,approvedLimit), extraAttempts: counts.extras,
     nextRetryAt: run.next_retry_at, pauseReason: run.pause_reason,
-    canResume: run.status === 'paused' && !/BUDGET|PERMANENT|FORMAT_LIMIT|SUPERSEDED|RESULT_PENDING/.test(run.pause_reason || '') };
+    canResume: run.status === 'paused' && (!/BUDGET|PERMANENT|FORMAT_LIMIT|SUPERSEDED|RESULT_PENDING/.test(run.pause_reason || '') ||
+      (/^(BUDGET|FORMAT_LIMIT):/.test(run.pause_reason || '') && await hasAttemptGrant(run.id,run.current_part))) };
 }
 
 /** Read existing paid results before enabling any new model request. IDs/hash preserve the legacy contract. */
@@ -270,10 +281,13 @@ export async function tickAnalysisRecovery(runId: string, owner: string): Promis
         return {done:false,waitMs:0,status:'running'};
       }
     }
-    if(!canSpendAttempt(attempts.length,extras,formatFailures)) return pause(run,owner,formatFailures>=2?'FORMAT_LIMIT: 输出格式连续不合格':'BUDGET: 已达到分段或整篇请求上限');
+    const approved=await hasAttemptGrant(runId,part.part_id,attempts.length+1);
+    if(!canSpendAttempt(attempts.length,extras,formatFailures) && !approved) return pause(run,owner,formatFailures>=2?'FORMAT_LIMIT: 输出格式连续不合格':'BUDGET: 已达到分段或整篇请求上限');
     const attempt=attempts.length+1, now=Date.now();
     let request:ReturnType<typeof analysisPartRequest>;
-    try { request=analysisPartRequest(JSON.parse(part.payload),run.model,formatFailures ? 'Return valid JSON with the specified schema':''); }
+    try { request=analysisPartRequest(JSON.parse(part.payload),run.model,approved
+      ? 'Authorized single repair attempt. Return exactly one scene with the exact source id, both titles and 4-6 complete zh/en point pairs. Never split one language across point objects. Complete every English translation. Avoid embedding direct quotations; use faithful paraphrase. Escape any double quotes inside JSON strings. No placeholder example text. Keep the response concise enough to finish all pairs.'
+      : formatFailures ? 'Return valid JSON with the specified schema':''); }
     catch { return pause(run,owner,'PERMANENT: 模型配置无效，请先处理配置'); }
     try {
       await query(`INSERT INTO watchless_analysis_attempts(run_id,part_id,attempt,workflow_id,status,started_at,deadline,result_key)

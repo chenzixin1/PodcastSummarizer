@@ -14,7 +14,7 @@ export default function AnalysisRecoveryNotice({ recovery, error, completed, tot
       {busy ? '完整分析处理中' : '完整分析已暂停'} · 已完成 {recovery?.completed ?? completed}/{recovery?.total ?? total} 段
     </p>
     <p className="mt-2">已有全文、图文和其他产物仍可阅读。继续时复用成功段，不重新收取 1000 积分。</p>
-    {recovery?.currentPart && <p className="mt-2 break-words">当前段：{recovery.currentPart} · 已请求 {recovery.attempts}/3 次 · 全篇额外请求 {recovery.extraAttempts}/10 次</p>}
+    {recovery?.currentPart && <p className="mt-2 break-words">当前段：{recovery.currentPart} · 已请求 {recovery.attempts}/{recovery.attemptLimit || 3} 次 · 全篇额外请求 {recovery.extraAttempts}/10 次</p>}
     {recovery?.nextRetryAt && <p className="mt-2">下次尝试：{new Date(recovery.nextRetryAt).toLocaleString('zh-CN')}</p>}
     {reason && <p className="mt-2 break-words">原因：{reason}</p>}
     {canEdit && <button type="button" onClick={onResume} disabled={busy || recovery?.canResume === false}
