@@ -6,6 +6,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
+import { remarkReadingEmphasis } from '../../../lib/readingEmphasis';
 import type { Components } from 'react-markdown';
 import { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1732,7 +1733,7 @@ export default function DashboardPage() {
             <div className="p-4 sm:p-6 lg:p-8">
                 <div className="streaming-content dashboard-reading" ref={setContentElement} onScroll={handleContentScroll}>
                   <div className="markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={markdownUrlTransform}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkReadingEmphasis]} components={markdownComponents} urlTransform={markdownUrlTransform}>
                       {getRenderableViewContent() || (isProcessing ? '正在生成全文...' : '此语言的全文尚未生成。完整图文可在下方阅读。')}
                     </ReactMarkdown>
                   </div>

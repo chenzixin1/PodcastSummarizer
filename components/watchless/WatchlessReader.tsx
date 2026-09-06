@@ -11,6 +11,7 @@ import {
 } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { remarkReadingEmphasis } from '../../lib/readingEmphasis';
 import { createPronunciationController, type PronunciationController } from '../../lib/pronunciationClient';
 import WatchlessHintWord, { type HintPronunciation } from './WatchlessHintWord';
 import {
@@ -107,10 +108,10 @@ function QuestionIcon() {
   );
 }
 
-function Markdown({ children, className = '' }: { children: string; className?: string }) {
+function Markdown({ children, className = '', reading = false }: { children: string; className?: string; reading?: boolean }) {
   return (
     <div className={className}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={reading ? [remarkGfm, remarkReadingEmphasis] : [remarkGfm]}>{children}</ReactMarkdown>
     </div>
   );
 }
@@ -118,7 +119,7 @@ function Markdown({ children, className = '' }: { children: string; className?: 
 function HintTranscript({ markdown, dictionary, pronunciation }: { markdown: string; dictionary: AdvancedWordDict; pronunciation: HintPronunciation }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkReadingEmphasis]}
       urlTransform={(url) => (url.startsWith(HINT_HASH_PREFIX) ? url : defaultUrlTransform(url))}
       components={{
         a({ href, children }) {
@@ -280,7 +281,7 @@ function SceneContent({
         {showChinese ? (
           <article className="watchless-copy-column" lang={article.articleZhKind === 'original' && article.transcriptLanguage !== 'zh' ? undefined : 'zh-CN'}>
             <p className="watchless-copy-label">{chineseCopyLabel(article)}</p>
-            <Markdown className="watchless-prose watchless-prose-zh">
+            <Markdown reading className="watchless-prose watchless-prose-zh">
               {formatDialogueTurns(scene.articleZh, dialogueSpeakerLabels)}
             </Markdown>
           </article>
@@ -293,7 +294,7 @@ function SceneContent({
               {language === 'hint' && dictionary && hintMarkdown ? (
                 <HintTranscript markdown={hintMarkdown} dictionary={dictionary} pronunciation={pronunciation} />
               ) : (
-                <Markdown>{scene.transcriptEn}</Markdown>
+                <Markdown reading>{scene.transcriptEn}</Markdown>
               )}
             </div>
             <p className="watchless-boundary-note">

@@ -41,3 +41,15 @@ test('keyboard focus pronounces and Escape or blur stops playback', () => {
   fireEvent.blur(button);
   expect(pronunciation.stop).toHaveBeenCalledTimes(1);
 });
+
+test('reading emphasis inside a vocabulary button preserves the original pronunciation word', () => {
+  const pronunciation = { hover: jest.fn(), stop: jest.fn(), tap: jest.fn() };
+  const alignmentCard = buildHintDictionaryCard('alignment', { zh: '对齐', level: ['IELTS'] })!;
+  render(<WatchlessHintWord word="alignment" card={alignmentCard} pronunciation={pronunciation}><strong>alignment</strong></WatchlessHintWord>);
+  const button = screen.getByRole('button', { name: /alignment.*播放发音/ });
+  expect(button.querySelector('strong')).toHaveTextContent('alignment');
+  pointer(button, 'pointerover', 'mouse');
+  expect(pronunciation.hover).toHaveBeenCalledWith('alignment');
+  fireEvent.click(button.querySelector('strong')!);
+  expect(pronunciation.tap).toHaveBeenCalledWith('alignment');
+});
