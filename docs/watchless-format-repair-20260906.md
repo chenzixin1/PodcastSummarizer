@@ -11,3 +11,5 @@ Changes:
 Known limit: previously discarded new-workflow responses cannot be reconstructed. Truly incomplete results still require valid replacement content or separately authorized requests; this change does not claim to complete all seven articles.
 
 Review: bounded normalization, immutable input, missing-field rejection, strict MCP validation, old-cache repair without a request, unchanged attempt history, and storage-only rejection retry are tested. Owner/publication checks and atomic budget triggers remain in force. No database migration or Container change.
+
+Production: Worker `4cc1223d-ce3e-47f2-87b6-a19a534cd4ed`, source `58cbce2`; 87 suites / 747 tests, typecheck and build passed. Recovered `watchless-dpxzrtw-hgk` scene-02-part-1, `watchless-nglmpki-jru` scene-05-part-1, and `watchless-vd_oygwqsbm` scene-05-part-1. Each repaired part is completed with zero new model requests. Their remaining parts are running under the original budgets; this is not a claim that all three articles are complete. The other four format pauses remain because their stored data is incomplete or absent.
