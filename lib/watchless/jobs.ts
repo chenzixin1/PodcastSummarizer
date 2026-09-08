@@ -319,6 +319,35 @@ export async function listOwnedWatchlessJobs(userId: string, limit = 20): Promis
   return result.rows.map(mapJob);
 }
 
+export async function pageOwnedWatchlessJobs(userId: string, page: number, filter: string) {
+  const pageSize = 20;
+  if (!Number.isSafeInteger(page) || page < 1 || page > 100000
+      || !['all', 'queued', 'running', 'completed', 'failed', 'closed'].includes(filter)) {
+    throw new WatchlessJobError('INVALID_PAGINATION', 'Invalid task page or status filter.', 400);
+  }
+  // Bind every input, and apply ownership to both counts and rows (including admins).
+  const counts = await sql`
+    SELECT COUNT(*) AS total FROM watchless_jobs WHERE user_id = ${userId}
+    AND (${filter} = 'all' OR CASE
+      WHEN status IN ('created','awaiting_upload','queued') THEN 'queued'
+      WHEN status IN ('preparing','transcribing','segmenting','rendering','validating','publishing') THEN 'running'
+      WHEN status IN ('cancelled','rolled_back') THEN 'closed'
+      ELSE status END = ${filter})
+  `;
+  const total = Number(counts.rows[0]?.total || 0);
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)));
+  const result = await sql`
+    SELECT * FROM watchless_jobs WHERE user_id = ${userId}
+    AND (${filter} = 'all' OR CASE
+      WHEN status IN ('created','awaiting_upload','queued') THEN 'queued'
+      WHEN status IN ('preparing','transcribing','segmenting','rendering','validating','publishing') THEN 'running'
+      WHEN status IN ('cancelled','rolled_back') THEN 'closed'
+      ELSE status END = ${filter})
+    ORDER BY created_at DESC, id DESC LIMIT ${pageSize} OFFSET ${(currentPage - 1) * pageSize}
+  `;
+  return { jobs: result.rows.map(mapJob), pagination: { page: currentPage, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } };
+}
+
 export async function listWatchlessJobAssets(jobId: string): Promise<WatchlessJobAsset[]> {
   const result = await sql`
     SELECT * FROM watchless_job_assets

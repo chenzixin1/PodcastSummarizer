@@ -203,6 +203,7 @@ export default function AppHeader({
         )}
 
         <div className="flex items-center justify-end gap-2">
+          <Link href="/watchless/jobs" prefetch={false} className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold text-[var(--heading)] hover:bg-[var(--paper-muted)] focus-visible:outline focus-visible:outline-2">我的任务</Link>
           <ThemeModeSwitch themeMode={themeMode} onToggle={onThemeToggle} />
           <Link
             href="/upload"
