@@ -1,4 +1,5 @@
-import { isD1DatabaseProvider, sql } from './sql';
+import { getD1DatabaseBinding, isD1DatabaseProvider, sql } from './sql';
+import { buildTopicStatements } from './topicPersistence';
 import {
   projectCompatibilityTags,
   TOPIC_EXTRACTOR_VERSION,
@@ -175,6 +176,12 @@ export async function replacePodcastTopics(input: {
   assignments: TopicAssignment[];
   proposals?: TopicProposal[];
 }): Promise<string[]> {
+  const db = getD1DatabaseBinding();
+  if (db) {
+    await db.batch(buildTopicStatements(input.podcastId, input.assignments).map(s => db.prepare(s.sql).bind(...s.params)));
+    await saveCandidates(input.podcastId, input.proposals || []);
+    return projectCompatibilityTags(input.assignments, getTopicTaxonomy());
+  }
   await seedTopicDefinitions();
   const definitions = getTopicTaxonomy();
   const activeIds = new Set(definitions.filter((definition) => definition.status === 'active').map((definition) => definition.id));

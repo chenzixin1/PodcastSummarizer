@@ -1,5 +1,7 @@
 interface UploadObjectOptions {
   contentType?: string;
+  /** Sensitive operator backups must never fall back to a public Blob URL. */
+  requirePrivateR2?: boolean;
 }
 
 interface UploadObjectResult {
@@ -116,6 +118,7 @@ export async function uploadObject(
     };
   }
 
+  if (options.requirePrivateR2) throw new Error('Private R2 storage is required');
   if (process.env.BLOB_READ_WRITE_TOKEN) {
     const { put } = await import('@vercel/blob');
     const blob = await put(safeKey, value as Parameters<typeof put>[1], {

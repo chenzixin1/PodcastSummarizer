@@ -5,6 +5,8 @@ import { uploadObject } from '../objectStorage';
 import { projectWatchlessFullText } from './analysisProjection';
 import { canonicalWatchlessSource } from './bundleIntegrity';
 import { refreshSnapshotsForPodcastMutation } from '../staticSnapshotHooks';
+import { extractWatchlessTopics } from './topics';
+import { buildTopicStatements } from '../topicPersistence';
 import { ANALYSIS_LEASE_CONDITION, analysisLeaseValues, assertWatchlessAnalysisLease, readWatchlessCheckpoint,
   watchlessDatabase, type WatchlessAnalysisLease } from './analysisGuard';
 
@@ -188,6 +190,9 @@ export async function saveWatchlessFullAnalysis(article: WatchlessArticle, analy
         input.characterCount, model, sha, article.id, ...analysisLeaseValues(article.id, lease)),
     // Lazy QA rebuild reads the newly committed canonical source; no stale async index writer.
     db.prepare('DELETE FROM qa_context_chunks WHERE podcast_id = ? AND changes() = 1').bind(article.id),
+    ...buildTopicStatements(article.id, extractWatchlessTopics(article, input).assignments, {
+      sql: ANALYSIS_LEASE_CONDITION, params: analysisLeaseValues(article.id, lease),
+    }).map(s => db.prepare(s.sql).bind(...s.params)),
   ]);
   if (!result[0]?.results?.length) throw new Error('WATCHLESS_ANALYSIS_SUPERSEDED: article changed or worker lease lost');
   await refreshSnapshotsForPodcastMutation(article.id, 'Watchless full analysis');

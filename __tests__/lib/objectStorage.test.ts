@@ -15,6 +15,14 @@ describe('objectStorage', () => {
     delete process.env.BLOB_READ_WRITE_TOKEN;
   });
 
+  it('never sends sensitive backups to public Blob when R2 is missing', async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = 'test-not-a-real-token';
+    mockGetCloudflareContext.mockResolvedValue({ env: {} });
+    const { uploadObject } = await import('../../lib/objectStorage');
+    await expect(uploadObject('watchless-runs/topic-repairs/backup.json', 'private evidence', { requirePrivateR2: true }))
+      .rejects.toThrow('Private R2 storage is required');
+  });
+
   it('verifies an R2 object is readable before returning a successful upload', async () => {
     const put = jest.fn().mockResolvedValue(undefined);
     const get = jest.fn().mockResolvedValue({

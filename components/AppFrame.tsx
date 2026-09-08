@@ -27,10 +27,14 @@ export default function AppFrame({
     if (typeof window === 'undefined') {
       return;
     }
-    const storedTheme = window.localStorage.getItem('podsum-dashboard-theme');
-    if (storedTheme === 'light' || storedTheme === 'dark') {
-      setThemeMode(storedTheme);
-      return;
+    try {
+      const storedTheme = window.localStorage.getItem('podsum-dashboard-theme');
+      if (storedTheme === 'light' || storedTheme === 'dark') {
+        setThemeMode(storedTheme);
+        return;
+      }
+    } catch {
+      // Restricted browser storage must not prevent reading or using favorites.
     }
     setThemeMode(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   }, []);
@@ -39,7 +43,11 @@ export default function AppFrame({
     if (typeof window === 'undefined') {
       return;
     }
-    window.localStorage.setItem('podsum-dashboard-theme', themeMode);
+    try {
+      window.localStorage.setItem('podsum-dashboard-theme', themeMode);
+    } catch {
+      // The theme remains usable for this page even when it cannot be persisted.
+    }
   }, [themeMode]);
 
   return (

@@ -565,7 +565,16 @@ const SummaryCard = memo(function SummaryCard({
   return (
     <article className="summary-card group rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] p-4 shadow-[0_14px_38px_-34px_rgba(80,67,44,0.55)] transition-colors hover:bg-[var(--paper-muted)]">
       <div className="flex gap-4">
-        <SummaryCover item={item} />
+        <Link
+          href={dashboardHref}
+          prefetch={false}
+          onMouseEnter={preloadDashboard}
+          onFocus={preloadDashboard}
+          aria-label={`打开详情：${item.title}`}
+          className="shrink-0 self-start rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--heading)]"
+        >
+          <SummaryCover item={item} />
+        </Link>
         <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
           <div className="min-w-0">
             <div className="flex min-w-0 items-start gap-2">
@@ -574,27 +583,12 @@ const SummaryCard = memo(function SummaryCard({
                 prefetch={false}
                 onMouseEnter={preloadDashboard}
                 onFocus={preloadDashboard}
-                className="min-w-0"
+                className="min-w-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--heading)]"
               >
                 <h2 className="line-clamp-2 text-lg font-semibold leading-6 text-[var(--text-main)] group-hover:text-[var(--heading)]">
                   {item.title}
                 </h2>
               </Link>
-              <button
-                type="button"
-                onClick={() => onToggleStar(item.id)}
-                aria-pressed={isStarred}
-                aria-label={`${isStarred ? 'Remove from' : 'Add to'} Starred: ${item.title}`}
-                title={isStarred ? 'Remove from Starred' : 'Add to Starred'}
-                className={[
-                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors',
-                  isStarred
-                    ? 'text-[#b87912] hover:bg-[#fff2cf]'
-                    : 'text-[var(--text-muted)] hover:bg-[var(--paper-subtle)] hover:text-[#b87912]',
-                ].join(' ')}
-              >
-                <SmallIcon type="star" className="h-5 w-5" filled={isStarred} />
-              </button>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--text-secondary)]">
               <span>{getSourceLabel(item)}</span>
@@ -627,24 +621,22 @@ const SummaryCard = memo(function SummaryCard({
               <StatusBadge item={item} />
               <div className="text-sm text-[var(--text-secondary)]">{formatSummaryDate(itemDisplayDate(item))}</div>
             </div>
-            <div className="flex items-center gap-2">
-              <Link
-                href={dashboardHref}
-                prefetch={false}
-                onMouseEnter={preloadDashboard}
-                onFocus={preloadDashboard}
-                className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-base)] px-5 py-2 text-sm font-semibold text-[var(--text-main)] transition-colors hover:bg-[var(--paper-subtle)]"
-              >
-                View
-              </Link>
-              <button
-                type="button"
-                className="rounded-lg px-2 py-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--paper-subtle)] hover:text-[var(--heading)]"
-                aria-label={`More actions for ${item.title}`}
-              >
-                ...
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => onToggleStar(item.id)}
+              aria-pressed={isStarred}
+              aria-label={`${isStarred ? 'Remove from' : 'Add to'} Starred: ${item.title}`}
+              title="收藏保存在当前浏览器"
+              className={[
+                'inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--heading)]',
+                isStarred
+                  ? 'border-[var(--heading)] bg-[var(--accent-soft)] text-[var(--heading)]'
+                  : 'border-[var(--border-soft)] text-[var(--text-secondary)] hover:bg-[var(--paper-subtle)] hover:text-[var(--heading)]',
+              ].join(' ')}
+            >
+              <SmallIcon type="star" className="h-5 w-5" filled={isStarred} />
+              {isStarred ? '已收藏' : '收藏'}
+            </button>
           </div>
         </div>
       </div>
@@ -686,6 +678,8 @@ export default function HomeWorkspace({
   const [isLoadingExplore, setIsLoadingExplore] = useState(false);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [starredLoaded, setStarredLoaded] = useState(false);
+  const [starredStorageError, setStarredStorageError] = useState(false);
+  const starredReadFailed = useRef(false);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -744,16 +738,27 @@ export default function HomeWorkspace({
       return;
     }
 
-    setStarredIds(parseStoredStarredIds(window.localStorage.getItem(STARRED_SUMMARIES_STORAGE_KEY)));
-    setStarredLoaded(true);
+    try {
+      setStarredIds(parseStoredStarredIds(window.localStorage.getItem(STARRED_SUMMARIES_STORAGE_KEY)));
+    } catch {
+      starredReadFailed.current = true;
+      setStarredStorageError(true);
+    } finally {
+      setStarredLoaded(true);
+    }
   }, []);
 
   useEffect(() => {
-    if (!starredLoaded || typeof window === 'undefined') {
+    // Do not overwrite existing favorites when the initial read failed.
+    if (!starredLoaded || starredReadFailed.current || typeof window === 'undefined') {
       return;
     }
 
-    window.localStorage.setItem(STARRED_SUMMARIES_STORAGE_KEY, JSON.stringify(Array.from(starredIds)));
+    try {
+      window.localStorage.setItem(STARRED_SUMMARIES_STORAGE_KEY, JSON.stringify(Array.from(starredIds)));
+    } catch {
+      setStarredStorageError(true);
+    }
   }, [starredIds, starredLoaded]);
 
   const toggleStarred = useCallback((itemId: string) => {
@@ -1088,6 +1093,11 @@ export default function HomeWorkspace({
             )}
           </div>
 
+          {starredStorageError && (
+            <p role="status" className="rounded-lg border border-[var(--border-soft)] bg-[var(--paper-subtle)] p-3 text-sm text-[var(--text-secondary)]">
+              浏览器存储不可用，收藏仅在当前页面有效，离开后将无法保留。
+            </p>
+          )}
           {view === 'my' && status === 'unauthenticated' ? (
             <section className="dashboard-panel rounded-lg p-10 text-center">
               <h1 className="text-2xl font-semibold text-[var(--heading)]">Sign in to see My Summaries</h1>

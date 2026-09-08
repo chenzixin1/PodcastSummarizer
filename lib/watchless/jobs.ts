@@ -10,6 +10,10 @@ import { mapSceneKeyframes, validateOriginalSource } from './bundleIntegrity';
 import { validateAnalysisBundle } from './fullAnalysis';
 import { refreshSnapshotsForPodcastMutation } from '../staticSnapshotHooks';
 import { recoveryEnabled } from './recoveryPolicy';
+import { extractWatchlessTopics } from './topics';
+import { buildTopicStatements } from '../topicPersistence';
+import { projectCompatibilityTags } from '../topicTaxonomy';
+import { getTopicTaxonomy } from '../topicTaxonomyData';
 
 export const WATCHLESS_URL_CREDIT_COST = 1000;
 export const WATCHLESS_ONLINE_MODEL = '@cf/zai-org/glm-5.3-flash';
@@ -844,16 +848,6 @@ function wordCount(value: string): number {
   return latin + cjk;
 }
 
-function highConfidenceTags(article: WatchlessArticle): string[] {
-  const text = `${article.title} ${article.titleZh} ${article.summaryZh}`.toLowerCase();
-  const tags: string[] = [];
-  if (/\bai\b|人工智能|模型|agent/.test(text)) tags.push('Artificial Intelligence');
-  if (/startup|创业|创始人/.test(text)) tags.push('Startups');
-  if (/semiconductor|gpu|hbm|芯片|半导体/.test(text)) tags.push('Semiconductors');
-  if (/invest|market|股票|资本|财报/.test(text)) tags.push('Investing');
-  return tags.slice(0, 4);
-}
-
 function requiredAsset(assets: WatchlessJobAsset[], role: WatchlessAssetRole): WatchlessJobAsset {
   const asset = assets.find((item) => item.role === role);
   if (!asset) throw new WatchlessJobError('MISSING_ASSET', `Missing required ${role} asset.`, 422);
@@ -1032,7 +1026,8 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
       throw new WatchlessJobError('WATCHLESS_ANALYSIS_TOO_LARGE', 'The complete analysis row exceeds its storage budget.', 422);
     }
     const fullText = fullTextProjection.highlights;
-    const tags = JSON.stringify(highConfidenceTags(finalArticle));
+    const topics = extractWatchlessTopics(finalArticle);
+    const tags = JSON.stringify(projectCompatibilityTags(topics.assignments, getTopicTaxonomy()));
     const original = validateOriginalSource(finalArticle);
     await uploadObject(transcriptKey, original.text, { contentType: 'text/plain; charset=utf-8' });
     await uploadObject(provenanceKey, JSON.stringify({ version: 1, sourceSha256: original.sha256,
@@ -1086,6 +1081,7 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
       podcastId, videoId, articleKey, finalArticle.scenes.length, finalArticle.durationLabel,
       finalArticle.availableLanguageModes?.includes('en') ? 1 : 0, jobId,
     ),
+    ...buildTopicStatements(podcastId, topics.assignments).map(s => database.prepare(s.sql).bind(...s.params)),
     database.prepare(`INSERT INTO processing_jobs (podcast_id, status, status_message, executor)
       VALUES (?, 'queued', 'Watchless full analysis queued', ?) ON CONFLICT(podcast_id) DO NOTHING`).bind(podcastId,recoveryEnabled(podcastId)?'watchless-workflow':'legacy'),
       ...finalKeys.map((entry) => database.prepare(`

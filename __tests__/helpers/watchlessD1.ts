@@ -5,7 +5,7 @@ const { DatabaseSync } = jest.requireActual('node:sqlite');
 /** Real SQLite transactions model D1 batch atomicity, including changes(). */
 export function createWatchlessD1(id: string, videoId: string) {
   const database = new DatabaseSync(':memory:');
-  for (const file of ['0001_initial_schema.sql', '0005_add_watchless_publications.sql', '0008_watchless_analysis_origin.sql']) {
+  for (const file of ['0001_initial_schema.sql', '0003_add_topic_taxonomy.sql', '0005_add_watchless_publications.sql', '0008_watchless_analysis_origin.sql']) {
     database.exec(readFileSync(join(process.cwd(), 'migrations/d1', file), 'utf8'));
   }
   const run = (query: string, values: unknown[] = []) => database.prepare(query).all(...values) as Record<string, unknown>[];
@@ -20,7 +20,7 @@ export function createWatchlessD1(id: string, videoId: string) {
       let values: unknown[] = [];
       return {
         bind(...args: unknown[]) { values = args; return this; },
-        async all() { return { results: run(query, values) }; },
+        async all() { const results = run(query, values); return { results, meta: { changes: Number(run('SELECT changes() AS n')[0].n) } }; },
       };
     },
     async batch(statements: Array<{ all(): Promise<{ results: Record<string, unknown>[] }> }>) {

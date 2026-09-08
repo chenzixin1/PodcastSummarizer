@@ -16,6 +16,7 @@ export interface StructuredTopicInput {
   briefSummary?: string | null;
   summaryZh?: string | null;
   summaryEn?: string | null;
+  content?: string | null;
 }
 
 export interface StructuredTopicResult {
@@ -51,6 +52,13 @@ function buildUserPrompt(source: string): string {
       aliases: definition.aliases,
     }));
   return `CONTROLLED TAXONOMY:\n${JSON.stringify(taxonomy)}\n\nSOURCE CONTENT:\n${source}`;
+}
+
+/** Shared evidence-backed path for bundle publication/import; no model request. */
+export function extractLocalTopics(input: StructuredTopicInput): StructuredTopicResult {
+  const definitions = getTopicTaxonomy();
+  const assignments = deterministicTopicFallback(definitions, buildTopicExtractionInput(input));
+  return { assignments, proposals: [], facets: toTopicFacets(assignments, definitions), usedFallback: true, rejections: {} };
 }
 
 export async function extractStructuredTopics(
