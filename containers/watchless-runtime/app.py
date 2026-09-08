@@ -27,6 +27,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from watchless_translation import translated_markdown, translation_batches, validate_translation_batch
 from watchless_provider import model_request, model_text
+from watchless_limits import validate_video_duration
 
 app = FastAPI(docs_url=None, redoc_url=None)
 states: dict[str, dict[str, Any]] = {}
@@ -402,9 +403,7 @@ async def process(job_id: str) -> None:
             ["yt-dlp", "--no-playlist", "--no-warnings", "--dump-single-json", source],
             180,
         ))
-        duration = float(metadata.get("duration") or 0)
-        if duration <= 0 or duration > 7200:
-            raise RuntimeError("Video duration must be between 1 second and 2 hours")
+        duration = validate_video_duration(metadata.get("duration"))
         metadata_path = work / "source-metadata.json"
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         await upload(job_id, "intermediate/source-metadata.json", "manifest", metadata_path, "application/json")

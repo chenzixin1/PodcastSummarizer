@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py ./app.py
 COPY watchless_translation.py ./watchless_translation.py
 COPY watchless_provider.py ./watchless_provider.py
+COPY watchless_limits.py ./watchless_limits.py
 
 RUN useradd --create-home --uid 10001 watchless \
   && mkdir -p /work \
