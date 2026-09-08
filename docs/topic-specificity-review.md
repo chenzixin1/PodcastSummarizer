@@ -51,3 +51,11 @@ Extraction uses the existing controlled taxonomy: English aliases with ASCII tok
 
 **Review Status:** COMPLETE
 <!-- REVIEW:END -->
+
+## Production rollout — 2026-09-08
+
+- Source commit `c649e8bf2111468bf009c4be06c1c7721c0ff0a4`; release checkout `5757ae7`; Worker `2ff6ab3a-7e54-4cb4-ac31-a77d3ff0819d`.
+- 41 explicitly reviewed Watchless articles repaired; homepage snapshots refreshed. Apply evidence: `output/topic-repair-apply-1788837146678.json`.
+- Before/after integrity records are identical: 41 article analysis/source/publication hashes, 317 model attempt records and 43 credit ledger rows. Visibility unchanged. No model reruns or additional credit charges.
+- Existing video container unchanged; final deploy used `--containers-rollout none`. OpenNext production build and cache verification passed.
+- Production card navigation, favorites after refresh, and desktop/mobile layout verified. The anonymous FDE filter correctly excludes private articles; it is not evidence of missing tags. Final authenticated-browser recheck was unavailable after the browser connection disconnected; no visibility changes were made to work around this.

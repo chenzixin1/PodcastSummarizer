@@ -5,8 +5,8 @@ Scope: remove redundant View and inert overflow controls; preserve title navigat
 - [x] Inspect favorite rendering and persistence; remove redundant controls.
 - [x] Add accessible, visible favorite feedback and storage-failure handling.
 - [x] Run focused interaction tests, including reload and keyboard use.
-- [ ] Iterative preview: hand off desktop/mobile verification to the integrating agent.
-- [ ] Release registration: integrating agent owns deployment; this subtask does not deploy.
+- [x] Iterative preview: production desktop/mobile checked by the integrating agent; cover navigation and favorite persistence after refresh verified.
+- [x] Release registration: deployed by the integrating agent, Worker `2ff6ab3a-7e54-4cb4-ac31-a77d3ff0819d`.
 
 ## Findings and implementation
 
@@ -30,4 +30,4 @@ Scope: remove redundant View and inert overflow controls; preserve title navigat
 6. Documentation: PASS — local-only boundary and verification limitations recorded here.
 7. Style: PASS — existing paper/heading color tokens, native links/buttons and focus treatment.
 
-Unaddressed code findings: 0. Desktop/mobile rendered preview and release verification remain the integrating agent's handoff tasks, not claims of this subtask.
+Unaddressed code findings: 0. Integrating-agent production verification: 1440×960 and 390×844; no horizontal overflow, no View/overflow controls, cover opens the matching dashboard, favorite survives refresh and was restored after testing. Screenshots are under `output/playwright/home-actions-production-{desktop,mobile}.png`. Local preview has missing backend bindings, so it is not claimed to be an error-free end-to-end environment.
