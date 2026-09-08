@@ -48,7 +48,11 @@ export interface TopicExtractionValidationResult {
   rejections: Record<string, number>;
 }
 
-export const TOPIC_EXTRACTOR_VERSION = 'topic-taxonomy-v1';
+export const TOPIC_EXTRACTOR_VERSION = 'topic-taxonomy-v2';
+
+// Useful for navigation, but these umbrella labels must not crowd out specifics.
+const UMBRELLA_IDS = new Set(['artificial-intelligence', 'startups', 'software-engineering',
+  'machine-learning', 'large-language-models']);
 
 const MIN_CONFIDENCE = 0.62;
 const FACET_LIMITS: Record<TopicFacet, number> = {
@@ -108,7 +112,7 @@ function removeTemplateNoise(value: string): string {
   for (const phrase of ['未明确提及', '负责人', '时间点', '执行条件', 'Not explicitly mentioned', 'Owner', 'Time point']) {
     result = result.replace(new RegExp(phrase, 'gi'), ' ');
   }
-  return normalizeTopicText(result);
+  return result.split(/\r?\n/).map(normalizeTopicText).join('\n').trim();
 }
 
 export function buildTopicExtractionInput(input: {
@@ -116,24 +120,28 @@ export function buildTopicExtractionInput(input: {
   briefSummary?: string | null;
   summaryZh?: string | null;
   summaryEn?: string | null;
+  content?: string | null;
 }): string {
   const coreZh = extractSection(String(input.summaryZh || ''), ['核心观点']);
   const coreEn = extractSection(String(input.summaryEn || ''), ['Key Takeaways']);
-  return [input.title, input.briefSummary, coreZh || coreEn]
+  return [input.title, input.briefSummary, coreZh || input.summaryZh, coreEn || input.summaryEn, input.content]
     .map((part) => removeTemplateNoise(String(part || '')))
     .filter(Boolean)
     .join('\n');
 }
 
 function findEvidence(input: string, terms: string[]): { evidence: string; weight: number } | null {
-  const haystack = comparisonText(input);
+  const haystack = normalizeTopicText(input);
+  let best: { evidence: string; weight: number } | null = null;
   for (const term of terms.filter(Boolean).sort((a, b) => b.length - a.length)) {
     const needle = comparisonText(term);
-    if (needle && haystack.includes(needle)) {
-      return { evidence: normalizeTopicText(term), weight: 1 };
-    }
+    if (!needle) continue;
+    const pattern = needle.split(' ').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s_\\-/]+');
+    // ASCII boundaries allow “FDE工程师” but reject AI in “said” / ML in HTML.
+    const matches = [...haystack.matchAll(new RegExp(`${/^[a-z0-9]/i.test(needle) ? '(?<![a-z0-9])' : ''}${pattern}${/[a-z0-9]$/i.test(needle) ? '(?![a-z0-9])' : ''}`, 'gi'))];
+    if (matches.length && (!best || matches.length > best.weight)) best = { evidence: matches[0][0], weight: matches.length };
   }
-  return null;
+  return best;
 }
 
 export function retrieveTopicCandidates(
@@ -142,12 +150,29 @@ export function retrieveTopicCandidates(
   limit = 50,
 ): TopicCandidateScore[] {
   const results: TopicCandidateScore[] = [];
+  const title = input.split('\n')[0] || '';
+  const lead = (input.split('\n')[1] || '').slice(0, 220);
+  const headings = input.split('\n').filter(line => /^#{1,6}\s/.test(line)).join('\n');
   for (const definition of definitions) {
     if (definition.status !== 'active' || isNoiseLabel(definition.canonicalName)) continue;
     const exact = findEvidence(input, [definition.canonicalName, ...definition.aliases]);
-    const keyword = findEvidence(input, definition.keywords);
+    const hiringTitle = definition.id === 'technical-hiring' && /\b(?:FDE|engineer|engineering)\b/i.test(title) && /interview/i.test(title);
+    const keywords = definition.keywords.filter(term => !/^interviews?$/i.test(term) || hiringTitle);
+    const keyword = findEvidence(input, keywords);
     if (!exact && !keyword) continue;
-    const retrievalScore = Math.min(100, (exact ? 100 : 0) + (keyword ? 20 : 0));
+    const titleMatch = findEvidence(title, [definition.canonicalName, ...definition.aliases]);
+    const titleKeyword = findEvidence(title, keywords);
+    const headingMatch = findEvidence(headings, [definition.canonicalName, ...definition.aliases, ...keywords]);
+    const leadMatch = findEvidence(lead, [definition.canonicalName, ...definition.aliases, ...keywords]);
+    // A single generic keyword in a long transcript is not an article topic.
+    if (!exact && keyword && keyword.weight < 2 && !hiringTitle && !/[\s-]|[\u3400-\u9fff]{4}/.test(keyword.evidence)) continue;
+    const frequency = Math.max(exact?.weight || 0, keyword?.weight || 0);
+    if (input.length > 3000 && !titleMatch && !titleKeyword && !headingMatch && frequency < 3) continue;
+    const retrievalScore = (titleMatch || titleKeyword || hiringTitle ? 65 : 0)
+      + (leadMatch ? 20 : 0)
+      + (headingMatch ? 12 + Math.min(30, Math.log2(1 + headingMatch.weight) * 8) : 0) + (exact ? 35 : 30)
+      + Math.min(45, Math.log2(1 + frequency) * 6)
+      - (UMBRELLA_IDS.has(definition.id) ? 50 : 0);
     results.push({
       definition,
       retrievalScore,
@@ -287,7 +312,9 @@ export function deterministicTopicFallback(
   definitions: TopicDefinition[],
   input: string,
 ): TopicAssignment[] {
-  const candidates = retrieveTopicCandidates(definitions, input);
+  const candidates = retrieveTopicCandidates(definitions, input).sort((a, b) =>
+    Number(UMBRELLA_IDS.has(a.definition.id)) - Number(UMBRELLA_IDS.has(b.definition.id))
+    || b.retrievalScore - a.retrievalScore);
   return applyLimits(candidates.map((candidate) => ({
     topicId: candidate.definition.id,
     facet: candidate.definition.facet,
@@ -321,7 +348,9 @@ export function projectCompatibilityTags(
   const byId = new Map(definitions.map((definition) => [definition.id, definition]));
   const result: string[] = [];
   const seen = new Set<string>();
-  for (const assignment of assignments) {
+  const ranked = [...assignments].sort((a, b) => Number(UMBRELLA_IDS.has(a.topicId)) - Number(UMBRELLA_IDS.has(b.topicId))
+    || b.relevanceScore - a.relevanceScore);
+  for (const assignment of ranked) {
     const label = byId.get(assignment.topicId)?.canonicalName;
     const key = comparisonText(label || '');
     if (!label || !key || seen.has(key)) continue;

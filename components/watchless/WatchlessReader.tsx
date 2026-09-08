@@ -11,6 +11,9 @@ import {
 } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { remarkReadingEmphasis } from '../../lib/readingEmphasis';
+import { createPronunciationController, type PronunciationController } from '../../lib/pronunciationClient';
+import WatchlessHintWord, { type HintPronunciation } from './WatchlessHintWord';
 import {
   annotateEnglishWithHints,
   buildHintDictionaryCard,
@@ -30,6 +33,7 @@ interface WatchlessReaderProps {
   article: WatchlessArticle;
   askQuestion?: (question: string) => Promise<string>;
   onCollapse?: () => void;
+  active?: boolean;
 }
 
 const LANGUAGE_OPTIONS: Array<{ value: WatchlessLanguageMode; label: string; detail: string }> = [
@@ -104,40 +108,33 @@ function QuestionIcon() {
   );
 }
 
-function Markdown({ children, className = '' }: { children: string; className?: string }) {
+function Markdown({ children, className = '', reading = false }: { children: string; className?: string; reading?: boolean }) {
   return (
     <div className={className}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={reading ? [remarkGfm, remarkReadingEmphasis] : [remarkGfm]}>{children}</ReactMarkdown>
     </div>
   );
 }
 
-function HintTranscript({ markdown, dictionary }: { markdown: string; dictionary: AdvancedWordDict }) {
+function HintTranscript({ markdown, dictionary, pronunciation }: { markdown: string; dictionary: AdvancedWordDict; pronunciation: HintPronunciation }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkReadingEmphasis]}
       urlTransform={(url) => (url.startsWith(HINT_HASH_PREFIX) ? url : defaultUrlTransform(url))}
       components={{
         a({ href, children }) {
           if (href?.startsWith(HINT_HASH_PREFIX)) {
-            const word = decodeURIComponent(href.slice(HINT_HASH_PREFIX.length)).toLowerCase();
+            let word: string;
+            try { word = decodeURIComponent(href.slice(HINT_HASH_PREFIX.length)).toLowerCase(); }
+            catch { return <>{children}</>; }
             const card = buildHintDictionaryCard(word, dictionary[word]);
             if (!card) {
               return <>{children}</>;
             }
             return (
-              <button type="button" className="watchless-hint-word" aria-label={`${card.word}：查看词汇释义`}>
-                <span>{children}</span>
-                <span className="watchless-hint-tooltip" role="tooltip">
-                  <span className="watchless-hint-headword">{card.word}</span>
-                  <span className="watchless-hint-level">{dictionary[word]?.level?.slice(0, 3).join(' · ')}</span>
-                  {card.senses.slice(0, 3).map((sense, index) => (
-                    <span key={`${sense.pos}-${index}`} className="watchless-hint-sense">
-                      <span>{sense.pos}</span> {sense.meaning}
-                    </span>
-                  ))}
-                </span>
-              </button>
+              <WatchlessHintWord word={word} card={card} level={dictionary[word]?.level} pronunciation={pronunciation}>
+                {children}
+              </WatchlessHintWord>
             );
           }
           return (
@@ -255,6 +252,7 @@ function SceneContent({
   dictionary,
   priority,
   dialogueSpeakerLabels,
+  pronunciation,
 }: {
   article: WatchlessArticle;
   scene: WatchlessScene;
@@ -263,6 +261,7 @@ function SceneContent({
   dictionary: AdvancedWordDict | null;
   priority: boolean;
   dialogueSpeakerLabels: string[];
+  pronunciation: HintPronunciation;
 }) {
   const showChinese = language === 'zh' || language === 'bilingual';
   const showEnglish = language === 'en' || language === 'bilingual' || language === 'hint';
@@ -282,7 +281,7 @@ function SceneContent({
         {showChinese ? (
           <article className="watchless-copy-column" lang={article.articleZhKind === 'original' && article.transcriptLanguage !== 'zh' ? undefined : 'zh-CN'}>
             <p className="watchless-copy-label">{chineseCopyLabel(article)}</p>
-            <Markdown className="watchless-prose watchless-prose-zh">
+            <Markdown reading className="watchless-prose watchless-prose-zh">
               {formatDialogueTurns(scene.articleZh, dialogueSpeakerLabels)}
             </Markdown>
           </article>
@@ -293,9 +292,9 @@ function SceneContent({
             <p className="watchless-copy-label">{article.transcriptEnKind === 'translation' ? 'English translation · 英文译文' : 'English transcript · 英文原话'}</p>
             <div className="watchless-prose watchless-prose-en">
               {language === 'hint' && dictionary && hintMarkdown ? (
-                <HintTranscript markdown={hintMarkdown} dictionary={dictionary} />
+                <HintTranscript markdown={hintMarkdown} dictionary={dictionary} pronunciation={pronunciation} />
               ) : (
-                <Markdown>{scene.transcriptEn}</Markdown>
+                <Markdown reading>{scene.transcriptEn}</Markdown>
               )}
             </div>
             <p className="watchless-boundary-note">
@@ -453,6 +452,7 @@ export default function WatchlessReader({
   article,
   askQuestion,
   onCollapse,
+  active = true,
 }: WatchlessReaderProps) {
   const availableLanguageModes = article.availableLanguageModes?.length
     ? article.availableLanguageModes
@@ -465,6 +465,13 @@ export default function WatchlessReader({
   const [progress, setProgress] = useState(0);
   const [dictionary, setDictionary] = useState<AdvancedWordDict | null>(null);
   const [dictionaryError, setDictionaryError] = useState('');
+  const pronunciationRef = useRef<PronunciationController | null>(null);
+  const canPronounce = active && language === 'hint';
+  const pronunciation = useMemo<HintPronunciation>(() => ({
+    hover: word => { if (canPronounce) pronunciationRef.current?.startHoverLoop(word); },
+    stop: () => pronunciationRef.current?.stop(),
+    tap: word => { if (canPronounce) pronunciationRef.current?.playTap(word); },
+  }), [canPronounce]);
   const hasEnglishTranscript = availableLanguageModes.includes('en');
   const heroRef = useRef<HTMLElement | null>(null);
   const articleRef = useRef<HTMLDivElement | null>(null);
@@ -472,6 +479,23 @@ export default function WatchlessReader({
     () => extractDialogueSpeakerLabels(article.scenes.map((scene) => scene.articleZh)),
     [article.scenes],
   );
+
+  useEffect(() => {
+    // The standard Summary / Full Text use these same recorded-audio/TTS defaults.
+    const controller = createPronunciationController();
+    pronunciationRef.current = controller;
+    const onVisibilityChange = () => { if (document.visibilityState === 'hidden') controller.stop(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('blur', controller.stop);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', controller.stop);
+      controller.dispose();
+      pronunciationRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => { if (!canPronounce) pronunciationRef.current?.stop(); }, [canPronounce]);
 
   useEffect(() => {
     const hero = heroRef.current;
@@ -525,6 +549,7 @@ export default function WatchlessReader({
   }, []);
 
   const selectLanguage = useCallback((next: WatchlessLanguageMode) => {
+    if (next === 'hint') pronunciationRef.current?.prime();
     setLanguage(next);
     if (next !== 'hint' || dictionary) return;
     setDictionaryError('');
@@ -596,7 +621,7 @@ export default function WatchlessReader({
             : language === 'bilingual'
               ? '同一场景内对照原话与忠实译文'
               : language === 'hint'
-                ? '在英文内容上标注进阶词汇'
+                ? '在英文内容上标注进阶词汇，悬停发音，点按重播'
                 : article.transcriptEnKind === 'translation' ? '按原话顺序逐条翻译的英文' : '按场景边界整理的英文原话'}</span>
         </div>
         {availableLanguageModes.length > 1 ? (
@@ -623,6 +648,7 @@ export default function WatchlessReader({
               dictionary={dictionary}
               priority={index === 0}
               dialogueSpeakerLabels={dialogueSpeakerLabels}
+              pronunciation={pronunciation}
             />
           ))}
           <footer className="watchless-article-footer">

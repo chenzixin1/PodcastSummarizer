@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  ANALYSIS_SNAPSHOT_CACHE_CONTROL,
   getAnalysisSnapshot,
 } from '../../../../../lib/staticSnapshots';
+import { getPodcast } from '../../../../../lib/db';
 
 export async function GET(
   _request: NextRequest,
@@ -23,6 +23,10 @@ export async function GET(
       return response;
     }
 
+    const current = await getPodcast(id);
+    if (!current.success || !(current.data as { isPublic?: boolean })?.isPublic) {
+      return NextResponse.json({ success: false, data: null }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+    }
     const snapshot = await getAnalysisSnapshot(id);
     if (!snapshot) {
       const response = NextResponse.json(
@@ -47,7 +51,7 @@ export async function GET(
         },
       },
     );
-    response.headers.set('Cache-Control', ANALYSIS_SNAPSHOT_CACHE_CONTROL);
+    response.headers.set('Cache-Control', 'private, no-store');
     return response;
   } catch (error) {
     const response = NextResponse.json(

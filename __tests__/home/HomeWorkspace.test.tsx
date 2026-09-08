@@ -1,4 +1,5 @@
 import React from 'react';
+import userEvent from '@testing-library/user-event';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useSession } from 'next-auth/react';
 import HomeWorkspace from '../../components/home/HomeWorkspace';
@@ -84,6 +85,7 @@ class NoopIntersectionObserver implements IntersectionObserver {
 describe('HomeWorkspace data boundaries', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
     (useSession as jest.Mock).mockReturnValue({ data: null, status: 'loading' });
     global.IntersectionObserver = NoopIntersectionObserver;
     Object.defineProperty(window, 'matchMedia', {
@@ -357,7 +359,10 @@ describe('HomeWorkspace data boundaries', () => {
     );
 
     const titleLink = screen.getByRole('link', { name: 'Public episode public-1' });
-    const viewLink = within(screen.getByRole('article')).getByRole('link', { name: 'View' });
+    const coverLink = within(screen.getByRole('article')).getByRole('link', { name: '打开详情：Public episode public-1' });
+    expect(coverLink).toHaveAttribute('href', '/dashboard/public-1');
+    expect(within(screen.getByRole('article')).queryByRole('link', { name: 'View' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /More actions/ })).not.toBeInTheDocument();
 
     expect(mockRouterPrefetch).not.toHaveBeenCalled();
 
@@ -365,9 +370,56 @@ describe('HomeWorkspace data boundaries', () => {
     expect(mockRouterPrefetch).toHaveBeenCalledTimes(1);
     expect(mockRouterPrefetch).toHaveBeenLastCalledWith('/dashboard/public-1');
 
-    fireEvent.focus(viewLink);
+    fireEvent.focus(coverLink);
     expect(mockRouterPrefetch).toHaveBeenCalledTimes(2);
     expect(mockRouterPrefetch).toHaveBeenLastCalledWith('/dashboard/public-1');
+  });
+
+  test('favorites stay independent of navigation, persist and can be removed after reload', () => {
+    const props = { initialView: 'explore' as const, initialTag: '', hasExplicitView: true, initialExploreRows: initialExploreRows.slice(0, 1) };
+    const first = render(<HomeWorkspace {...props} />);
+    const favorite = screen.getByRole('button', { name: 'Add to Starred: Public episode public-1' });
+    expect(favorite).toHaveTextContent('收藏');
+    expect(favorite.closest('a')).toBeNull();
+    fireEvent.click(favorite);
+    expect(favorite).toHaveAttribute('aria-pressed', 'true');
+    expect(favorite).toHaveTextContent('已收藏');
+    expect(JSON.parse(window.localStorage.getItem('podsum-starred-summary-ids')!)).toEqual(['public-1']);
+    expect(mockRouterPrefetch).not.toHaveBeenCalled();
+    first.unmount();
+    render(<HomeWorkspace {...props} />);
+    const restored = screen.getByRole('button', { name: 'Remove from Starred: Public episode public-1' });
+    expect(restored).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(restored);
+    expect(restored).toHaveAttribute('aria-pressed', 'false');
+    expect(JSON.parse(window.localStorage.getItem('podsum-starred-summary-ids')!)).toEqual([]);
+  });
+
+  test('unavailable browser storage does not break the list or in-page favorites', () => {
+    const getItem = jest.spyOn(window.localStorage, 'getItem').mockImplementation(() => { throw new Error('Storage blocked'); });
+    const setItem = jest.spyOn(window.localStorage, 'setItem').mockImplementation(() => { throw new Error('Storage blocked'); });
+    try {
+      render(<HomeWorkspace initialView="explore" initialTag="" hasExplicitView initialExploreRows={initialExploreRows.slice(0, 1)} />);
+      expect(screen.getByRole('status')).toHaveTextContent('浏览器存储不可用');
+      const favorite = screen.getByRole('button', { name: 'Add to Starred: Public episode public-1' });
+      fireEvent.click(favorite);
+      expect(favorite).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByRole('link', { name: 'Public episode public-1' })).toHaveAttribute('href', '/dashboard/public-1');
+    } finally {
+      getItem.mockRestore();
+      setItem.mockRestore();
+    }
+  });
+
+  test('favorite supports native keyboard activation', async () => {
+    const user = userEvent.setup();
+    render(<HomeWorkspace initialView="explore" initialTag="" hasExplicitView initialExploreRows={initialExploreRows.slice(0, 1)} />);
+    const favorite = screen.getByRole('button', { name: 'Add to Starred: Public episode public-1' });
+    favorite.focus();
+    await user.keyboard('{Enter}');
+    expect(favorite).toHaveAttribute('aria-pressed', 'true');
+    await user.keyboard(' ');
+    expect(favorite).toHaveAttribute('aria-pressed', 'false');
   });
 
   test('renders editorial covers in the initial card render without idle scheduling', () => {

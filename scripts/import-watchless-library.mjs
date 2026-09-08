@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { extractLocalTopics, projectCompatibilityTags, getTopicTaxonomy, buildTopicStatements } from './topics/local-runtime.mjs';
 
 /**
  * Converts completed Watchless output directories into validated PodSum article JSON,
@@ -123,16 +124,7 @@ function englishTranscriptRatio(value) {
 }
 
 function highConfidenceTags(title, summary) {
-  const source = `${title}\n${summary}`.toLowerCase();
-  const tags = [];
-  const add = (tag) => { if (!tags.includes(tag)) tags.push(tag); };
-  if (/\bai\b|人工智能|大模型|agent|openai|anthropic/.test(source)) add('Artificial Intelligence');
-  if (/startup|创业|fde|gtm|hire|yc\b/.test(source)) add('Startups');
-  if (/hynix|半导体|存储|memory|dram|hbm|光互连|nvidia|lam research|芯片/.test(source)) add('Semiconductors');
-  if (/market|投资|资本|泡沫|估值|周期|stock|美股/.test(source)) add('Investing');
-  if (/robot|physical intelligence|机器人/.test(source)) add('Robotics');
-  if (/enterprise|software|saas|salesforce|glean|企业软件/.test(source)) add('Enterprise Software');
-  return tags.slice(0, 4);
+  return projectCompatibilityTags(extractLocalTopics({ title, summaryZh: summary }).assignments, getTopicTaxonomy());
 }
 
 function sqlString(value) {
@@ -324,7 +316,7 @@ INSERT INTO podcasts (
   ${sqlString(entry.podcastId)}, ${sqlString(entry.title)}, ${sqlString(`${entry.title}.txt`)},
   ${sqlString(`${Buffer.byteLength(entry.translation, 'utf8')} bytes`)}, ${sqlString(blobUrl)},
   ${sqlString(entry.sourceUrl)}, ${sqlString(entry.sourcePublishedAt)}, ${Math.round(entry.durationSec)},
-  1, ${sqlString(ownerId)}, ${sqlString(JSON.stringify(entry.tags))}, ${sqlString(entry.createdAt)}
+  1, ${sqlString(ownerId)}, '[]', ${sqlString(entry.createdAt)}
 )
 ON CONFLICT(id) DO UPDATE SET
   title = excluded.title,
@@ -339,6 +331,15 @@ ON CONFLICT(id) DO UPDATE SET
     ELSE podcasts.tags_json
   END;
 `.trim());
+    // Only initialize untagged imports. Curated/live tags require the backed-up repair path.
+    const topics = extractLocalTopics({ title: entry.title, summaryZh: entry.summaryZh, summaryEn: entry.summaryEn, content: entry.highlights });
+    for (const statement of buildTopicStatements(entry.podcastId, topics.assignments, {
+      sql: "EXISTS (SELECT 1 FROM podcasts WHERE id=? AND COALESCE(tags_json,'[]') IN ('[]',''))",
+      params: [entry.podcastId],
+    })) {
+      let index = 0;
+      statements.push(statement.sql.replace(/\?/g, () => sqlString(statement.params[index++])) + ';');
+    }
     statements.push(`
 INSERT INTO analysis_results (
   podcast_id, summary, summary_zh, summary_en, brief_summary, translation, highlights,

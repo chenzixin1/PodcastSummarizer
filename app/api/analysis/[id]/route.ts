@@ -4,6 +4,8 @@ import { getProcessingJob, getProcessingJobLeaseSeconds } from '../../../../lib/
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../lib/auth';
 import { triggerWorkerProcessing } from '../../../../lib/workerTrigger';
+import { analysisRecoveryStatus, recoveryEnabled } from '../../../../lib/watchless/analysisRecovery';
+import { isAdminEmailAllowed } from '../../../../lib/adminGuard';
 
 const ANALYSIS_DEBUG_ENABLED = process.env.ANALYSIS_DEBUG_LOGS === 'true';
 function analysisDebug(...args: unknown[]) {
@@ -14,6 +16,8 @@ function analysisDebug(...args: unknown[]) {
 }
 
 interface AnalysisData {
+  analysisKind?: string;
+  analysisModel?: string;
   summary?: string | null;
   summaryZh?: string | null;
   summaryEn?: string | null;
@@ -58,7 +62,7 @@ function extractLegacySummary(summary: string): { zh: string; en: string } {
 }
 
 function hasCompleteAnalysis(analysis: AnalysisData | null, processingStatus: string | null): boolean {
-  if (!analysis) {
+  if (!analysis || analysis.analysisKind === 'overview') {
     return false;
   }
   const legacySummary = extractLegacySummary(String(analysis.summary || ''));
@@ -142,9 +146,18 @@ export async function GET(
 
     // 获取分析结果
     const processingJobResult = await getProcessingJob(id);
-    const processingJob = processingJobResult.success ? processingJobResult.data : null;
+    const legacyJob = processingJobResult.success ? processingJobResult.data : null;
+    // Optional background state must never turn a readable article into a 500.
+    const recovery = recoveryEnabled(id) ? await analysisRecoveryStatus(id).catch(() => {
+      console.error('Watchless recovery status unavailable');
+      return null;
+    }) : null;
+    const processingJob = legacyJob ? {...legacyJob, recovery,
+      ...(recovery ? { progressCurrent:recovery.completed, progressTotal:recovery.total,
+        status:recovery.status==='completed'?'completed':recovery.status==='paused'?'failed':recovery.status==='cancelled'?'cancelled':'processing',
+        lastError:recovery.pauseReason } : {})} : null;
 
-    if (shouldKickWorker(processingJob as ProcessingJobData | null)) {
+    if (!recovery && !recoveryEnabled(id) && shouldKickWorker(processingJob as ProcessingJobData | null)) {
       after(async () => {
         const triggerResult = await triggerWorkerProcessing('analysis_poll', id);
         if (!triggerResult.success) {
@@ -164,7 +177,7 @@ export async function GET(
           analysis: null,
           isProcessed: false,
           processingJob,
-          canEdit: session?.user?.id === podcast.userId // 是否可以编辑
+          canEdit: session?.user?.id === podcast.userId || isAdminEmailAllowed(session?.user?.email)
         }
       });
     }
@@ -180,7 +193,7 @@ export async function GET(
         analysis: analysisData,
         isProcessed,
         processingJob,
-        canEdit: session?.user?.id === podcast.userId // 是否可以编辑
+        canEdit: session?.user?.id === podcast.userId || isAdminEmailAllowed(session?.user?.email)
       }
     });
 

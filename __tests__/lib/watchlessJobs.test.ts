@@ -33,7 +33,7 @@ describe('Watchless job safety primitives', () => {
 
   test('pins the high-cost gate and online model', () => {
     expect(WATCHLESS_URL_CREDIT_COST).toBe(1000);
-    expect(WATCHLESS_ONLINE_MODEL).toBe('openai/gpt-5.6-luna');
+    expect(WATCHLESS_ONLINE_MODEL).toBe('@cf/zai-org/glm-5.3-flash');
     expect(WATCHLESS_MAX_ACTIVE_JOBS_PER_USER).toBe(1);
     expect(WATCHLESS_MAX_URL_JOBS_PER_USER_PER_DAY).toBe(3);
     expect(WATCHLESS_MAX_ACTIVE_BUNDLE_JOBS_PER_USER).toBe(3);

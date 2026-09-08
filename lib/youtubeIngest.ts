@@ -1143,7 +1143,8 @@ async function transcribeWithVolcanoFromYoutube(youtubeUrl: string, videoId: str
   });
 
   const audioFormat = toVolcanoAudioFormat(audio.extension);
-  const taskId = await submitVolcanoTask(audioBlob.url, audioFormat, volcConfig);
+  const { signedAudioObjectUrl } = await import('./objectSigning');
+  const taskId = await submitVolcanoTask(signedAudioObjectUrl(audioBlob), audioFormat, volcConfig);
 
   for (let attempt = 1; attempt <= volcConfig.maxRetries; attempt += 1) {
     const queryResult = await queryVolcanoTask(taskId, volcConfig);

@@ -454,6 +454,9 @@ async function ensureSchemaUpgrades(): Promise<void> {
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS token_count INTEGER
       `;
+      await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS analysis_kind TEXT NOT NULL DEFAULT 'full'`;
+      await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS analysis_model TEXT`;
+      await sql`ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS analysis_source_sha256 TEXT`;
       await sql`
         ALTER TABLE analysis_results
         ADD COLUMN IF NOT EXISTS brief_summary TEXT
@@ -1183,6 +1186,7 @@ export async function getAnalysisResults(podcastId: string): Promise<DbResult> {
         word_count as "wordCount",
         character_count as "characterCount",
         processed_at as "processedAt"
+        , analysis_kind as "analysisKind", analysis_model as "analysisModel"
       FROM analysis_results 
       WHERE podcast_id = ${podcastId}
     `;

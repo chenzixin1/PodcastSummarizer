@@ -109,6 +109,7 @@ function extractLegacySummary(summary: string): { zh: string; en: string } {
 }
 
 function hasCompleteAnalysis(analysis: SnapshotObject | null): boolean {
+  if (analysis?.analysisKind === 'overview') return false;
   if (!analysis) {
     return false;
   }

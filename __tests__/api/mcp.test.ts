@@ -243,6 +243,23 @@ describe('PodSum MCP API', () => {
     expect(submitNames).not.toContain('podsum_begin_watchless_publish');
   });
 
+  it('describes the configured Cloudflare model instead of a stale OpenRouter label', async () => {
+    const previous = process.env.WATCHLESS_AI_PROVIDER;
+    process.env.WATCHLESS_AI_PROVIDER = 'cloudflare';
+    try {
+      mockAuthenticateMcpAccessToken.mockResolvedValueOnce({ success: true,
+        data: { tokenId: 'token-123', userId: 'user-123', scopes: ['watchless:submit'] } });
+      const response = await POST(buildMcpRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+      const data = await response.json();
+      const tool = data.result.tools.find((item: {name: string}) => item.name === 'podsum_submit_watchless_url');
+      expect(tool.description).toContain('Cloudflare Workers AI');
+      expect(tool.description).not.toContain('OpenRouter');
+    } finally {
+      if (previous === undefined) delete process.env.WATCHLESS_AI_PROVIDER;
+      else process.env.WATCHLESS_AI_PROVIDER = previous;
+    }
+  });
+
   it('submits a youtube URL through the shared upload pipeline and queues processing', async () => {
     const response = await POST(buildMcpRequest(submitMessage()));
     const data = await response.json();

@@ -395,6 +395,8 @@ function cosineSimilarity(vecA: number[] | null, vecB: number[] | null): number 
 }
 
 async function fetchEmbeddingsBatch(texts: string[]): Promise<Array<number[] | null>> {
+  // Explicit lexical retrieval avoids repeatedly calling an unavailable region-gated provider.
+  if (process.env.QA_EMBEDDINGS_ENABLED === 'false') return texts.map(() => null);
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return texts.map(() => null);
@@ -416,6 +418,7 @@ async function fetchEmbeddingsBatch(texts: string[]): Promise<Array<number[] | n
         model: EMBEDDING_MODEL,
         input: texts.map(text => text.slice(0, 3000)),
       }),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!response.ok) {

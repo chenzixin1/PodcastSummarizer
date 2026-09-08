@@ -31,7 +31,10 @@ jest.mock('../../lib/db', () => ({
 
 jest.mock('../../lib/processingJobs', () => ({
   enqueueProcessingJob: jest.fn(),
+  getProcessingJob: jest.fn(async()=>({success:true,data:{status:'processing'}})),
 }));
+jest.mock('../../lib/watchless/analysisRecovery',()=>({recoveryEnabled:jest.fn(()=>false),startAnalysisRecovery:jest.fn(async()=>({status:'running',completed:19,total:30}))}));
+jest.mock('../../lib/watchless/repository',()=>({getStoredWatchlessPublication:jest.fn(async()=>({articleKey:'article.json'}))}));
 
 jest.mock('../../lib/workerTrigger', () => ({
   triggerWorkerProcessing: jest.fn(),
@@ -59,6 +62,7 @@ describe('POST /api/process/enqueue', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    require('../../lib/watchless/analysisRecovery').recoveryEnabled.mockReturnValue(false);
     process.env.ADMIN_EMAILS = 'chenzixin1@gmail.com';
 
     require('next-auth/next').getServerSession = mockGetServerSession;
@@ -123,5 +127,17 @@ describe('POST /api/process/enqueue', () => {
     expect(data.success).toBe(false);
     expect(data.error).toBe('Access denied');
     expect(mockEnqueueProcessingJob).not.toHaveBeenCalled();
+  });
+  it('routes force to recovery without resetting progress or invoking the old queue',async()=>{
+    require('../../lib/watchless/analysisRecovery').recoveryEnabled.mockReturnValue(true);
+    const response=await POST(buildRequest({id:'pod-1',force:true}));
+    expect((await response.json()).data.job.recovery.completed).toBe(19);
+    expect(mockEnqueueProcessingJob).not.toHaveBeenCalled();expect(mockTriggerWorkerProcessing).not.toHaveBeenCalled();
+  });
+  it('anonymous recovery requests cannot start work',async()=>{
+    require('../../lib/watchless/analysisRecovery').recoveryEnabled.mockReturnValue(true);
+    mockGetServerSession.mockResolvedValue(null);
+    expect((await POST(buildRequest({id:'pod-1',force:true}))).status).toBe(401);
+    expect(require('../../lib/watchless/analysisRecovery').startAnalysisRecovery).not.toHaveBeenCalled();
   });
 });

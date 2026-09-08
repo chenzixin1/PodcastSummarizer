@@ -4,9 +4,19 @@ import { getD1DatabaseBinding, sql } from '../sql';
 import { deleteObject, getObject, getObjectText, uploadObject } from '../objectStorage';
 import { normalizeWatchlessArticle, type WatchlessArticle } from './article';
 import { assertBilingualArticle, ensureBilingualArticle, translateWatchlessBlocks } from './bilingual';
+import { projectWatchlessFullText } from './analysisProjection';
+import { readWatchlessCheckpoint } from './analysisGuard';
+import { mapSceneKeyframes, validateOriginalSource } from './bundleIntegrity';
+import { validateAnalysisBundle } from './fullAnalysis';
+import { refreshSnapshotsForPodcastMutation } from '../staticSnapshotHooks';
+import { recoveryEnabled } from './recoveryPolicy';
+import { extractWatchlessTopics } from './topics';
+import { buildTopicStatements } from '../topicPersistence';
+import { projectCompatibilityTags } from '../topicTaxonomy';
+import { getTopicTaxonomy } from '../topicTaxonomyData';
 
 export const WATCHLESS_URL_CREDIT_COST = 1000;
-export const WATCHLESS_ONLINE_MODEL = 'openai/gpt-5.6-luna';
+export const WATCHLESS_ONLINE_MODEL = '@cf/zai-org/glm-5.3-flash';
 export const WATCHLESS_MAX_ACTIVE_JOBS_PER_USER = 1;
 export const WATCHLESS_MAX_URL_JOBS_PER_USER_PER_DAY = 3;
 export const WATCHLESS_MAX_ACTIVE_BUNDLE_JOBS_PER_USER = 3;
@@ -309,6 +319,35 @@ export async function listOwnedWatchlessJobs(userId: string, limit = 20): Promis
   return result.rows.map(mapJob);
 }
 
+export async function pageOwnedWatchlessJobs(userId: string, page: number, filter: string) {
+  const pageSize = 20;
+  if (!Number.isSafeInteger(page) || page < 1 || page > 100000
+      || !['all', 'queued', 'running', 'completed', 'failed', 'closed'].includes(filter)) {
+    throw new WatchlessJobError('INVALID_PAGINATION', 'Invalid task page or status filter.', 400);
+  }
+  // Bind every input, and apply ownership to both counts and rows (including admins).
+  const counts = await sql`
+    SELECT COUNT(*) AS total FROM watchless_jobs WHERE user_id = ${userId}
+    AND (${filter} = 'all' OR CASE
+      WHEN status IN ('created','awaiting_upload','queued') THEN 'queued'
+      WHEN status IN ('preparing','transcribing','segmenting','rendering','validating','publishing') THEN 'running'
+      WHEN status IN ('cancelled','rolled_back') THEN 'closed'
+      ELSE status END = ${filter})
+  `;
+  const total = Number(counts.rows[0]?.total || 0);
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)));
+  const result = await sql`
+    SELECT * FROM watchless_jobs WHERE user_id = ${userId}
+    AND (${filter} = 'all' OR CASE
+      WHEN status IN ('created','awaiting_upload','queued') THEN 'queued'
+      WHEN status IN ('preparing','transcribing','segmenting','rendering','validating','publishing') THEN 'running'
+      WHEN status IN ('cancelled','rolled_back') THEN 'closed'
+      ELSE status END = ${filter})
+    ORDER BY created_at DESC, id DESC LIMIT ${pageSize} OFFSET ${(currentPage - 1) * pageSize}
+  `;
+  return { jobs: result.rows.map(mapJob), pagination: { page: currentPage, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } };
+}
+
 export async function listWatchlessJobAssets(jobId: string): Promise<WatchlessJobAsset[]> {
   const result = await sql`
     SELECT * FROM watchless_job_assets
@@ -398,8 +437,8 @@ export async function createWatchlessUrlJob(input: {
             AND status IN ('created', 'queued', 'preparing', 'transcribing', 'segmenting', 'rendering', 'validating', 'publishing')
         ) < ?
         AND (
-          SELECT COUNT(*) FROM watchless_jobs
-          WHERE user_id = ? AND source_kind = 'url'
+          SELECT COUNT(*) FROM credit_transactions
+          WHERE user_id = ? AND reason = 'watchless_credit_reservation'
             AND created_at >= datetime('now', '-24 hours')
         ) < ?
       RETURNING id, credits
@@ -510,6 +549,9 @@ export async function retryWatchlessUrlJob(jobId: string, userId: string): Promi
           WHERE id = ? AND user_id = ? AND source_kind = 'url'
             AND status = 'failed' AND credit_status = 'refunded'
         )
+        AND (SELECT COUNT(*) FROM credit_transactions
+          WHERE user_id = ? AND reason = 'watchless_credit_reservation'
+            AND created_at >= datetime('now', '-24 hours')) < ?
         AND (
           SELECT COUNT(*) FROM watchless_jobs
           WHERE user_id = ?
@@ -518,7 +560,8 @@ export async function retryWatchlessUrlJob(jobId: string, userId: string): Promi
       RETURNING id, credits
     `).bind(
       WATCHLESS_URL_CREDIT_COST, userId, WATCHLESS_URL_CREDIT_COST,
-      jobId, userId, userId, WATCHLESS_MAX_ACTIVE_JOBS_PER_USER,
+      jobId, userId, userId, WATCHLESS_MAX_URL_JOBS_PER_USER_PER_DAY,
+      userId, WATCHLESS_MAX_ACTIVE_JOBS_PER_USER,
     ),
     database.prepare(`
       UPDATE watchless_jobs SET
@@ -570,7 +613,7 @@ export async function createWatchlessBundleJob(input: {
   const activeForVideo = await sql`
     SELECT * FROM watchless_jobs
     WHERE user_id = ${input.userId} AND video_id = ${input.videoId}
-      AND source_kind = 'mcp_bundle' AND status IN ('awaiting_upload', 'validating', 'publishing')
+      AND source_kind = 'mcp_bundle' AND status IN ('awaiting_upload', 'queued', 'validating', 'publishing')
     ORDER BY created_at DESC LIMIT 1
   `;
   if (activeForVideo.rows[0]) return mapJob(activeForVideo.rows[0]);
@@ -605,7 +648,7 @@ export async function createWatchlessBundleJob(input: {
       WHERE (
         SELECT COUNT(*) FROM watchless_jobs
         WHERE user_id = ${input.userId} AND source_kind = 'mcp_bundle'
-          AND status IN ('awaiting_upload', 'validating', 'publishing')
+          AND status IN ('awaiting_upload', 'queued', 'validating', 'publishing')
       ) < ${WATCHLESS_MAX_ACTIVE_BUNDLE_JOBS_PER_USER}
       RETURNING *
     `;
@@ -768,6 +811,7 @@ export async function updateWatchlessJobStatus(input: {
   errorCode?: string | null;
   errorMessage?: string | null;
   message?: string | null;
+  expectedStatus?: WatchlessJobStatus;
 }): Promise<WatchlessJob> {
   if (!WATCHLESS_JOB_STATUSES.includes(input.status)) throw new WatchlessJobError('INVALID_STATUS', 'Invalid Watchless job status.');
   const progressCurrent = Math.max(0, Math.min(1000, Math.floor(input.progressCurrent ?? 0)));
@@ -785,6 +829,7 @@ export async function updateWatchlessJobStatus(input: {
       completed_at = CASE WHEN ${input.status} IN ('completed', 'failed', 'cancelled', 'rolled_back') THEN CURRENT_TIMESTAMP ELSE completed_at END,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ${input.jobId}
+      AND (${input.expectedStatus || null} IS NULL OR status = ${input.expectedStatus || null})
       AND (status NOT IN ('completed', 'failed', 'cancelled', 'rolled_back') OR status = ${input.status})
     RETURNING *
   `;
@@ -832,16 +877,6 @@ function wordCount(value: string): number {
   return latin + cjk;
 }
 
-function highConfidenceTags(article: WatchlessArticle): string[] {
-  const text = `${article.title} ${article.titleZh} ${article.summaryZh}`.toLowerCase();
-  const tags: string[] = [];
-  if (/\bai\b|人工智能|模型|agent/.test(text)) tags.push('Artificial Intelligence');
-  if (/startup|创业|创始人/.test(text)) tags.push('Startups');
-  if (/semiconductor|gpu|hbm|芯片|半导体/.test(text)) tags.push('Semiconductors');
-  if (/invest|market|股票|资本|财报/.test(text)) tags.push('Investing');
-  return tags.slice(0, 4);
-}
-
 function requiredAsset(assets: WatchlessJobAsset[], role: WatchlessAssetRole): WatchlessJobAsset {
   const asset = assets.find((item) => item.role === role);
   if (!asset) throw new WatchlessJobError('MISSING_ASSET', `Missing required ${role} asset.`, 422);
@@ -876,7 +911,7 @@ export async function validateWatchlessBundle(jobId: string): Promise<{
   if (assets.length > WATCHLESS_MAX_ASSETS) throw new WatchlessJobError('ASSET_COUNT_LIMIT', 'Too many Watchless assets.', 422);
   const articleAsset = requiredAsset(assets, 'article');
   requiredAsset(assets, 'pdf');
-  const keyframes = assets.filter((item) => item.role === 'keyframe').sort((a, b) => a.assetPath.localeCompare(b.assetPath));
+  const keyframes = assets.filter((item) => item.role === 'keyframe');
   let raw: unknown;
   try {
     raw = JSON.parse(await getObjectText(articleAsset.objectKey));
@@ -893,6 +928,14 @@ export async function validateWatchlessBundle(jobId: string): Promise<{
   if (keyframes.length < article.scenes.length) {
     throw new WatchlessJobError('KEYFRAMES_INCOMPLETE', `Expected at least ${article.scenes.length} keyframes, found ${keyframes.length}.`, 422);
   }
+  mapSceneKeyframes(article, keyframes);
+  const transcript = assets.find(asset => asset.role === 'transcript');
+  if (!transcript && article.scenes.some(scene => !scene.sourceTranscript)) {
+    throw new WatchlessJobError('ORIGINAL_SOURCE_REQUIRED', 'Provide a transcript asset or sourceTranscript for every scene.', 422);
+  }
+  validateOriginalSource(article, transcript ? await getObjectText(transcript.objectKey) : undefined);
+  const analysis = assets.find(asset => asset.assetPath === 'analysis.json' && asset.role === 'manifest');
+  if (analysis) validateAnalysisBundle(JSON.parse(await getObjectText(analysis.objectKey)), article.scenes.map(scene => scene.id));
   return { job, assets, article };
 }
 
@@ -954,10 +997,13 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
     article = await ensureBilingualArticle(article, async (blocks, target, sceneId) => {
       const fingerprint = createHash('sha256').update(JSON.stringify({ blocks, target, version: 1 })).digest('hex');
       const cacheKey = `watchless-staging/${jobId}/translations/${sceneId}-${fingerprint}.json`;
-      try {
-        const cached = JSON.parse(await getObjectText(cacheKey)) as unknown;
-        if (Array.isArray(cached) && cached.length === blocks.length && cached.every(s => typeof s === 'string' && s.trim())) return cached as string[];
-      } catch { /* Cache miss or invalid cached translation: regenerate. */ }
+      const cached = await readWatchlessCheckpoint(cacheKey);
+      if (cached !== undefined) {
+        if (!Array.isArray(cached) || cached.length !== blocks.length || cached.some(s => typeof s !== 'string' || !s.trim())) {
+          throw new Error('WATCHLESS_TRANSLATION_CHECKPOINT_INVALID');
+        }
+        return cached as string[];
+      }
       const translated = await translateWatchlessBlocks(blocks, target);
       await uploadObject(cacheKey, new TextEncoder().encode(JSON.stringify(translated)), { contentType: 'application/json' });
       return translated;
@@ -965,19 +1011,23 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
   }
   assertBilingualArticle(article);
   await updateWatchlessJobStatus({ jobId, status: 'publishing', stage: 'publishing', progressCurrent: 88, progressTotal: 100 });
-  const finalPrefix = `watchless/${videoId}`;
+  const finalPrefix = `watchless/${videoId}/${jobId}`;
   const pdfAsset = requiredAsset(assets, 'pdf');
   const articleAsset = requiredAsset(assets, 'article');
   const transcriptAsset = assets.find((item) => item.role === 'transcript');
-  const keyframes = assets.filter((item) => item.role === 'keyframe').sort((a, b) => a.assetPath.localeCompare(b.assetPath));
+  const keyframes = mapSceneKeyframes(article, assets.filter((item) => item.role === 'keyframe'));
   const finalKeys: Array<{ asset: WatchlessJobAsset; key: string }> = [];
   finalKeys.push({ asset: pdfAsset, key: `${finalPrefix}/article.pdf` });
-  if (transcriptAsset) finalKeys.push({ asset: transcriptAsset, key: `${finalPrefix}/transcript.txt` });
+  if (transcriptAsset) finalKeys.push({ asset: transcriptAsset, key: `${finalPrefix}/source-transcript.txt` });
+  const suppliedAnalysis = assets.find(asset => asset.assetPath === 'analysis.json' && asset.role === 'manifest');
+  if (suppliedAnalysis) finalKeys.push({ asset: suppliedAnalysis, key: `${finalPrefix}/analysis.json` });
   for (let index = 0; index < article.scenes.length; index += 1) {
     const extension = keyframes[index].assetPath.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
     finalKeys.push({ asset: keyframes[index], key: `${finalPrefix}/keyframes/scene_${String(index + 1).padStart(3, '0')}.${extension}` });
   }
   const articleKey = `${finalPrefix}/article.json`;
+  const transcriptKey = `${finalPrefix}/transcript.txt`;
+  const provenanceKey = `${finalPrefix}/provenance.json`;
   try {
     for (const entry of finalKeys) await copyAsset(entry.asset, entry.key);
 
@@ -997,9 +1047,22 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
     const finalArticleSha256 = createHash('sha256').update(finalArticleBytes).digest('hex');
     await uploadObject(articleKey, finalArticleBytes, { contentType: 'application/json; charset=utf-8' });
 
-    const fullText = finalArticle.scenes.map((scene) => scene.articleZh).join('\n\n');
-    const tags = JSON.stringify(highConfidenceTags(finalArticle));
-    const transcriptKey = transcriptAsset ? `${finalPrefix}/transcript.txt` : articleKey;
+    const fullTextProjection = projectWatchlessFullText(finalArticle);
+    if (new TextEncoder().encode(JSON.stringify({ ...fullTextProjection,
+      summary: finalArticle.summaryZh, summaryZh: finalArticle.summaryZh,
+      summaryEn: finalArticle.summaryEn, briefSummary: finalArticle.summaryZh.slice(0, 420),
+    })).byteLength > 1_800_000) {
+      throw new WatchlessJobError('WATCHLESS_ANALYSIS_TOO_LARGE', 'The complete analysis row exceeds its storage budget.', 422);
+    }
+    const fullText = fullTextProjection.highlights;
+    const topics = extractWatchlessTopics(finalArticle);
+    const tags = JSON.stringify(projectCompatibilityTags(topics.assignments, getTopicTaxonomy()));
+    const original = validateOriginalSource(finalArticle);
+    await uploadObject(transcriptKey, original.text, { contentType: 'text/plain; charset=utf-8' });
+    await uploadObject(provenanceKey, JSON.stringify({ version: 1, sourceSha256: original.sha256,
+      sourceAssetSha256: transcriptAsset?.sha256 || null, verification: 'submitted-transcript-consistency-not-audio-verification',
+      scenes: finalArticle.scenes.map(scene => ({ id: scene.id, startSec: scene.startSec, endSec: scene.endSec,
+        sha256: createHash('sha256').update(scene.sourceTranscript || scene.transcriptEn).digest('hex') })) }), { contentType: 'application/json' });
     const database = d1();
     const publicationStatements: D1Statement[] = [
     database.prepare(`
@@ -1011,24 +1074,27 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
         title = excluded.title, blob_url = excluded.blob_url, source_reference = excluded.source_reference,
         duration_sec = excluded.duration_sec, is_public = excluded.is_public, tags_json = excluded.tags_json
     `).bind(
-      podcastId, finalArticle.title, `${videoId}.txt`, `${fullText.length} bytes`,
+      podcastId, finalArticle.title, `${videoId}.txt`, `${new TextEncoder().encode(original.text).byteLength} bytes`,
       `/api/files/${transcriptKey}`, finalArticle.sourceUrl, Math.round(finalArticle.durationSec),
       job.isPublic ? 1 : 0, job.userId, tags,
     ),
     database.prepare(`
       INSERT INTO analysis_results (
         podcast_id, summary, summary_zh, summary_en, brief_summary, translation, highlights,
-        token_count, word_count, character_count, processed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, CURRENT_TIMESTAMP)
+        token_count, word_count, character_count, full_text_bilingual_json, bilingual_alignment_version, analysis_kind, processed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 1, 'overview', CURRENT_TIMESTAMP)
       ON CONFLICT(podcast_id) DO UPDATE SET
         summary = excluded.summary, summary_zh = excluded.summary_zh, summary_en = excluded.summary_en,
         brief_summary = excluded.brief_summary, translation = excluded.translation, highlights = excluded.highlights,
-        word_count = excluded.word_count, character_count = excluded.character_count, processed_at = CURRENT_TIMESTAMP
+        word_count = excluded.word_count, character_count = excluded.character_count,
+        full_text_bilingual_json = excluded.full_text_bilingual_json,
+        analysis_kind = 'overview',
+        bilingual_alignment_version = excluded.bilingual_alignment_version, processed_at = CURRENT_TIMESTAMP
     `).bind(
       podcastId, finalArticle.summaryZh, finalArticle.summaryZh, finalArticle.summaryEn,
-      finalArticle.summaryZh.slice(0, 420), fullText.slice(0, 22000),
-      finalArticle.scenes.slice(0, 8).map((scene) => `- ${scene.titleZh}`).join('\n'),
-      wordCount(fullText), fullText.length,
+      finalArticle.summaryZh.slice(0, 420), fullTextProjection.translation,
+      fullTextProjection.highlights,
+      wordCount(fullText), fullText.length, JSON.stringify(fullTextProjection.fullTextBilingualJson),
     ),
     database.prepare(`
       INSERT INTO watchless_publications (
@@ -1044,6 +1110,9 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
       podcastId, videoId, articleKey, finalArticle.scenes.length, finalArticle.durationLabel,
       finalArticle.availableLanguageModes?.includes('en') ? 1 : 0, jobId,
     ),
+    ...buildTopicStatements(podcastId, topics.assignments).map(s => database.prepare(s.sql).bind(...s.params)),
+    database.prepare(`INSERT INTO processing_jobs (podcast_id, status, status_message, executor)
+      VALUES (?, 'queued', 'Watchless full analysis queued', ?) ON CONFLICT(podcast_id) DO NOTHING`).bind(podcastId,recoveryEnabled(podcastId)?'watchless-workflow':'legacy'),
       ...finalKeys.map((entry) => database.prepare(`
       UPDATE watchless_job_assets SET object_key = ?, status = 'published', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -1063,6 +1132,12 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
     `).bind(podcastId, jobId),
     ];
     await database.batch(publicationStatements);
+    // Publication success/credits are independent from analysis scheduling.
+    const { startAnalysisRecovery } = await import('./analysisRecovery');
+    if (recoveryEnabled(podcastId)) {
+      await startAnalysisRecovery(podcastId).catch(error => console.error('Watchless analysis scheduling pending', error instanceof Error ? error.message : 'unknown'));
+    }
+    await refreshSnapshotsForPodcastMutation(podcastId, 'Watchless publication');
     const completedForEvent = await getWatchlessJob(jobId);
     if (completedForEvent) await recordWatchlessJobEvent(completedForEvent, 'PodSum publication completed.');
     await cleanupWatchlessStagingAssets(jobId, assets);
@@ -1075,6 +1150,8 @@ export async function publishWatchlessJob(jobId: string): Promise<WatchlessJob> 
     await Promise.all([
       ...finalKeys.map((entry) => deleteObject(entry.key).catch(() => undefined)),
       deleteObject(articleKey).catch(() => undefined),
+      deleteObject(transcriptKey).catch(() => undefined),
+      deleteObject(provenanceKey).catch(() => undefined),
     ]);
     throw error;
   }
@@ -1135,6 +1212,7 @@ export async function cancelWatchlessJob(jobId: string, userId: string): Promise
   const cancelled = await updateWatchlessJobStatus({
     jobId,
     status: 'cancelled',
+    expectedStatus: job.status,
     stage: 'cancelled',
     progressCurrent: job.progressCurrent,
     progressTotal: job.progressTotal,

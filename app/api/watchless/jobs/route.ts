@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createWatchlessUrlJob, listOwnedWatchlessJobs } from '../../../../lib/watchless/jobs';
+import { createWatchlessUrlJob, listOwnedWatchlessJobs, pageOwnedWatchlessJobs } from '../../../../lib/watchless/jobs';
 import { requireWatchlessUser, watchlessErrorResponse } from '../../../../lib/watchless/api';
 import { startWatchlessWorkflow } from '../../../../lib/watchless/workflow';
 
@@ -7,7 +7,13 @@ export async function GET(request: NextRequest) {
   const auth = await requireWatchlessUser(request, 'watchless:submit');
   if (auth instanceof NextResponse) return auth;
   try {
-    return NextResponse.json({ success: true, data: await listOwnedWatchlessJobs(auth.userId, 30) });
+    const headers = { 'Cache-Control': 'private, no-store', Vary: 'Cookie, Authorization' };
+    if (request.nextUrl.searchParams.has('page') || request.nextUrl.searchParams.has('status')) {
+      const result = await pageOwnedWatchlessJobs(auth.userId,
+        Number(request.nextUrl.searchParams.get('page') || '1'), request.nextUrl.searchParams.get('status') || 'all');
+      return NextResponse.json({ success: true, data: result.jobs, pagination: result.pagination }, { headers });
+    }
+    return NextResponse.json({ success: true, data: await listOwnedWatchlessJobs(auth.userId, 30) }, { headers });
   } catch (error) {
     return watchlessErrorResponse(error);
   }

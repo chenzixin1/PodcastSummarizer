@@ -5,9 +5,10 @@ import Image from 'next/image';
 interface LiteYouTubeEmbedProps {
   videoId: string;
   title: string;
+  compact?: boolean;
 }
 
-export default function LiteYouTubeEmbed({ videoId, title }: LiteYouTubeEmbedProps) {
+export default function LiteYouTubeEmbed({ videoId, title, compact = false }: LiteYouTubeEmbedProps) {
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
   const displayTitle = title.replace(/^Original video for\s+/i, '');
@@ -18,7 +19,7 @@ export default function LiteYouTubeEmbed({ videoId, title }: LiteYouTubeEmbedPro
       target="_blank"
       rel="noopener noreferrer"
       aria-label={`在 YouTube 打开原视频：${displayTitle}`}
-      className="group relative flex aspect-video h-full min-h-[220px] w-full overflow-hidden bg-[#141814] text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-white sm:min-h-[320px] lg:min-h-[520px]"
+      className={`group relative flex aspect-video h-full ${compact ? 'min-h-[180px]' : 'min-h-[220px] sm:min-h-[320px] lg:min-h-[520px]'} w-full overflow-hidden bg-[#141814] text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-white`}
     >
       <Image
         src={thumbnailUrl}

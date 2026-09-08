@@ -1116,11 +1116,11 @@ export async function POST(request: NextRequest) {
   // 解析请求数据
   const requestData = await request.json();
   
-  if (!requestData || !requestData.id || !requestData.blobUrl) {
+  if (!requestData || typeof requestData.id !== 'string' || !requestData.id) {
     return NextResponse.json({ error: 'Invalid request data. Missing required fields.' }, { status: 400 });
   }
   
-  const { id, blobUrl } = requestData;
+  const { id } = requestData;
   
   // ====== 权限校验开始 ======
   const workerSecret = request.headers.get('x-process-worker-secret');
@@ -1137,6 +1137,7 @@ export async function POST(request: NextRequest) {
     title?: string | null;
     sourceReference?: string | null;
     userId?: string | null;
+    blobUrl?: string | null;
   };
   if (!isWorkerRequest) {
     const session = await getServerSession(authOptions);
@@ -1148,6 +1149,37 @@ export async function POST(request: NextRequest) {
     }
   }
   // ====== 权限校验结束 ======
+  const blobUrl = podcast.blobUrl;
+  if (!blobUrl) return NextResponse.json({ error: 'Podcast source is missing' }, { status: 422 });
+  // Watchless already has a faithful bilingual transcript; only derive analysis.
+  const { getStoredWatchlessPublication, loadStoredWatchlessArticle } = await import('../../../lib/watchless/repository');
+  const publication = await getStoredWatchlessPublication(id);
+  if (publication) {
+    if (!isWorkerRequest) return NextResponse.json({ error: 'Use the analysis queue for Watchless processing' }, { status: 409 });
+    const { generateWatchlessAnalysis, saveWatchlessFullAnalysis, validateAnalysisBundle } = await import('../../../lib/watchless/fullAnalysis');
+    const { assertWatchlessAnalysisLease, readWatchlessCheckpoint } = await import('../../../lib/watchless/analysisGuard');
+    const { getProcessingJobLeaseSeconds } = await import('../../../lib/processingJobs');
+    if (typeof requestData.workerId !== 'string' || !requestData.workerId) {
+      return NextResponse.json({ error: 'Watchless processing requires the current worker lease' }, { status: 409 });
+    }
+    const lease = { articleKey: publication.articleKey, workerId: requestData.workerId, leaseSeconds: getProcessingJobLeaseSeconds() };
+    const encoder = new TextEncoder();
+    return new Response(new ReadableStream({ async start(controller) {
+      const emit = (event: unknown) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      try {
+        await assertWatchlessAnalysisLease(id, lease);
+        const article = await loadStoredWatchlessArticle(publication);
+        const raw = await readWatchlessCheckpoint(publication.articleKey.replace(/[^/]+$/, 'analysis.json'));
+        const supplied = raw === undefined ? null : validateAnalysisBundle(raw, article.scenes.map(scene => scene.id));
+        const analysis = supplied || await generateWatchlessAnalysis(article, async (current, total) => {
+          emit({ type: 'summary_chunk_result', chunkIndex: current - 1, totalChunks: total });
+        }, lease);
+        await saveWatchlessFullAnalysis(article, analysis, supplied ? 'mcp-supplied' : process.env.WATCHLESS_MODEL || '@cf/zai-org/glm-5.3-flash', lease);
+        emit({ type: 'all_done' });
+      } catch (error) { emit({ type: 'error', message: error instanceof Error ? error.message : 'Watchless analysis failed' }); }
+      finally { controller.close(); }
+    } }), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' } });
+  }
 
   // 设置响应流
   const encoder = new TextEncoder();

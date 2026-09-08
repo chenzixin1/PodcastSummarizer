@@ -3,7 +3,7 @@ import MindMapCanvas from '../../components/MindMapCanvas';
 import type { MindMapData } from '../../lib/mindMap';
 
 jest.mock('@ant-design/graphs', () => {
-  const React = require('react');
+  const React = jest.requireActual<typeof import('react')>('react');
   const state =
     (globalThis as {
       __ANTV_MINDMAP_TEST_STATE__?: {
@@ -44,18 +44,25 @@ jest.mock('@ant-design/graphs', () => {
 
   MindMap.displayName = 'MindMapMock';
 
-  return { MindMap };
+  return { MindMap, RCNode:{TextNode:({text}:{text:string})=>React.createElement('span',null,text)} };
 });
 
+interface MindMapTestProps {
+  defaultExpandLevel?: number;
+  direction: string; type: string; labelField: string;
+  nodeMinWidth: number; nodeMaxWidth: number; animation: boolean;
+  transforms: (previous: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+  node: { style: { component: (node: {depth:number;data:{label:string};style:{color:string}}) => React.ReactNode } };
+}
 function getMockState() {
   return (globalThis as {
     __ANTV_MINDMAP_TEST_STATE__?: {
       fitViewMock: jest.Mock;
-      latestProps: any;
+      latestProps: unknown;
     };
   }).__ANTV_MINDMAP_TEST_STATE__ as {
     fitViewMock: jest.Mock;
-    latestProps: any;
+    latestProps: MindMapTestProps | null;
   };
 }
 
@@ -89,7 +96,7 @@ describe('MindMapCanvas AntV integration', () => {
       expect(getMockState().latestProps).toBeTruthy();
     });
 
-    const props = getMockState().latestProps;
+    const props = getMockState().latestProps!;
     expect(props.direction).toBe('right');
     expect(props.type).toBe('linear');
     expect(props.labelField).toBe('label');
@@ -110,10 +117,19 @@ describe('MindMapCanvas AntV integration', () => {
     );
 
     expect(collapseTransform).toBeDefined();
-    expect(collapseTransform.enable).toBe(true);
-    expect(collapseTransform.trigger).toBe('node');
-    expect(collapseTransform.direction).toBe('out');
-    expect(collapseTransform.refreshLayout).toBe(false);
+    expect(collapseTransform?.enable).toBe(true);
+    expect(collapseTransform?.trigger).toBe('node');
+    expect(collapseTransform?.direction).toBe('out');
+    expect(collapseTransform?.refreshLayout).toBe(true);
+    expect(props.defaultExpandLevel).toBeUndefined();
+  });
+
+  test('large complete analyses start at readable branch level without removing source nodes',()=>{
+    const data={root:{label:'Complete episode',children:Array.from({length:3},(_,group)=>({label:`Group ${group}`,children:Array.from({length:25},(_,i)=>({label:`Point ${i}`}))}))}};
+    const original=JSON.stringify(data);
+    render(<MindMapCanvas data={data} themeMode="light" />);
+    expect(getMockState().latestProps?.defaultExpandLevel).toBe(1);
+    expect(JSON.stringify(data)).toBe(original);
   });
 
   test('calls graph.fitView when clicking Fit View button', async () => {
@@ -128,6 +144,19 @@ describe('MindMapCanvas AntV integration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fit View' }));
 
     expect(state.fitViewMock).toHaveBeenCalledTimes(1);
+  });
+  test('deferred node labels do not access an already destroyed graph model',()=>{
+    render(<MindMapCanvas data={SAMPLE_DATA} themeMode="light" />);
+    const renderer=getMockState().latestProps!.node.style.component;
+    const disposed={getParentData:()=>{throw new Error('disposed model');}};
+    expect(()=>renderer.call(disposed,{depth:1,data:{label:'A source point'},style:{color:'#3f7d6a'}})).not.toThrow();
+  });
+  test('all queued fits are cancelled when switching away from the graph',()=>{
+    jest.useFakeTimers();
+    const {unmount}=render(<MindMapCanvas data={SAMPLE_DATA} themeMode="light" />);
+    unmount(); getMockState().fitViewMock.mockClear(); jest.runAllTimers();
+    expect(getMockState().fitViewMock).not.toHaveBeenCalled();
+    jest.useRealTimers();
   });
 
   test('fullscreen button enters and exits fullscreen mode', async () => {

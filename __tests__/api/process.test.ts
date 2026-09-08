@@ -7,6 +7,10 @@
  */
 
 import { NextRequest } from 'next/server';
+jest.mock('../../lib/watchless/repository', () => ({ getStoredWatchlessPublication: jest.fn(async () => null), loadStoredWatchlessArticle: jest.fn() }));
+jest.mock('../../lib/watchless/analysisGuard', () => ({ assertWatchlessAnalysisLease: jest.fn(), readWatchlessCheckpoint: jest.fn() }));
+jest.mock('../../lib/watchless/fullAnalysis', () => ({ generateWatchlessAnalysis: jest.fn(), saveWatchlessFullAnalysis: jest.fn(), validateAnalysisBundle: jest.fn(value => value) }));
+jest.mock('../../lib/processingJobs', () => ({ getProcessingJobLeaseSeconds: jest.fn(() => 300) }));
 
 class ImmediateReadableStream<T = Uint8Array> {
   private chunks: T[] = [];
@@ -163,6 +167,9 @@ import { generateMindMapData } from '../../lib/mindMap';
 import { getObjectText } from '../../lib/objectStorage';
 import { rebuildQaContextChunksForPodcast } from '../../lib/qaContextChunks';
 import { refreshSnapshotsForPodcastMutation } from '../../lib/staticSnapshotHooks';
+import { getStoredWatchlessPublication, loadStoredWatchlessArticle } from '../../lib/watchless/repository';
+import { assertWatchlessAnalysisLease, readWatchlessCheckpoint } from '../../lib/watchless/analysisGuard';
+import { generateWatchlessAnalysis, saveWatchlessFullAnalysis } from '../../lib/watchless/fullAnalysis';
 
 global.fetch = jest.fn();
 
@@ -311,6 +318,9 @@ describe('Process API Tests', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (getStoredWatchlessPublication as jest.Mock).mockResolvedValue(null);
+    (assertWatchlessAnalysisLease as jest.Mock).mockReset().mockResolvedValue(undefined);
+    (readWatchlessCheckpoint as jest.Mock).mockReset().mockResolvedValue(undefined);
     process.env.PROCESS_WORKER_SECRET = 'test-worker-secret';
     mockSaveAnalysisPartialResults.mockResolvedValue({ success: true });
     mockSaveAnalysisResults.mockResolvedValue({ success: true });
@@ -321,6 +331,7 @@ describe('Process API Tests', () => {
         title: 'Test Podcast',
         sourceReference: null,
         userId: 'user-001',
+        blobUrl: '/api/files/owned-source.srt',
       },
     });
     mockGetObjectText.mockResolvedValue(`1
@@ -373,8 +384,8 @@ Hello world`);
 
   it('should return error for missing required fields', async () => {
     const requestData = {
-      id: 'test-id'
-      // Missing blobUrl
+      blobUrl: 'https://example.com/test.srt'
+      // Missing id; source URL is never required from the caller.
     };
 
     const request = new NextRequest('http://localhost:3000/api/process', {
@@ -446,6 +457,7 @@ Hello world`);
   it('refreshes snapshots after analysis save succeeds when the stream completes', async () => {
     const response = await POST(buildProcessRequest());
     const events = await readStreamResponse(response);
+    expect(mockGetObjectText).toHaveBeenCalledWith('/api/files/owned-source.srt');
     const allDoneEvent = getEventByType(events, 'all_done');
 
     expect(response.headers.get('Content-Type')).toBe('text/event-stream');
@@ -486,5 +498,54 @@ Hello world`);
     expect(mockRebuildQaContextChunksForPodcast).toHaveBeenCalledWith(
       expect.objectContaining({ podcastId: 'test-id' })
     );
+  });
+
+  describe('Watchless queue integration', () => {
+    const article = { id: 'test-id', scenes: [{ id: 'scene-1' }] };
+    const analysis = { version: 1, scenes: [{ id: 'scene-1' }] };
+    const articleKey = 'watchless/video/article.bilingual-v1-20260905.json';
+    const lease = { articleKey, workerId: 'worker-current', leaseSeconds: 300 };
+    const workerRequest = (workerId?: string) => new NextRequest('http://localhost:3000/api/process', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-process-worker-secret': 'test-worker-secret' },
+      body: JSON.stringify({ id: 'test-id', workerId }),
+    });
+    beforeEach(() => {
+      (getStoredWatchlessPublication as jest.Mock).mockResolvedValue({ podcastId: 'test-id', articleKey });
+      (loadStoredWatchlessArticle as jest.Mock).mockResolvedValue(article);
+      (generateWatchlessAnalysis as jest.Mock).mockResolvedValue(analysis);
+    });
+    it('rejects unclaimed worker requests before touching source or model', async () => {
+      expect((await POST(workerRequest())).status).toBe(409);
+      expect(loadStoredWatchlessArticle).not.toHaveBeenCalled();
+      expect(generateWatchlessAnalysis).not.toHaveBeenCalled();
+    });
+    it('threads the article version and worker lease through generation and commit', async () => {
+      const events = await readStreamResponse(await POST(workerRequest('worker-current')));
+      expect(getEventByType(events, 'all_done')).toBeDefined();
+      expect(assertWatchlessAnalysisLease).toHaveBeenCalledWith('test-id', lease);
+      expect(generateWatchlessAnalysis).toHaveBeenCalledWith(article, expect.any(Function), lease);
+      expect(saveWatchlessFullAnalysis).toHaveBeenCalledWith(article, analysis, expect.any(String), lease);
+    });
+    it('finds supplied MCP analysis beside renamed historical articles without regeneration', async () => {
+      (readWatchlessCheckpoint as jest.Mock).mockResolvedValue(analysis);
+      await readStreamResponse(await POST(workerRequest('worker-current')));
+      expect(readWatchlessCheckpoint).toHaveBeenCalledWith('watchless/video/analysis.json');
+      expect(generateWatchlessAnalysis).not.toHaveBeenCalled();
+      expect(saveWatchlessFullAnalysis).toHaveBeenCalledWith(article, analysis, 'mcp-supplied', lease);
+    });
+    it('storage failures abort without fallback spending or writing', async () => {
+      (readWatchlessCheckpoint as jest.Mock).mockRejectedValue(new Error('R2 HTTP 503'));
+      const events = await readStreamResponse(await POST(workerRequest('worker-current')));
+      expect(getEventByType(events, 'error')).toBeDefined();
+      expect(generateWatchlessAnalysis).not.toHaveBeenCalled();
+      expect(saveWatchlessFullAnalysis).not.toHaveBeenCalled();
+    });
+    it('lost worker lease stops before source loading', async () => {
+      (assertWatchlessAnalysisLease as jest.Mock).mockRejectedValue(new Error('SUPERSEDED'));
+      const events = await readStreamResponse(await POST(workerRequest('worker-current')));
+      expect(getEventByType(events, 'error')).toBeDefined();
+      expect(loadStoredWatchlessArticle).not.toHaveBeenCalled();
+      expect(generateWatchlessAnalysis).not.toHaveBeenCalled();
+    });
   });
 });

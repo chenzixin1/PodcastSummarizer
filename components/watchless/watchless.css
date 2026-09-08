@@ -959,40 +959,50 @@
   display: none;
   width: min(260px, 78vw);
   transform: translateX(-50%);
-  border: 1px solid var(--watchless-rule);
+  border: 1px solid var(--vocab-border);
   border-radius: 0.65rem;
-  background: var(--watchless-paper);
+  background: var(--vocab-paper);
   box-shadow: 0 20px 48px -28px rgba(34, 29, 19, 0.72);
   padding: 0.75rem;
-  color: var(--watchless-ink-soft);
-  font-family: var(--font-geist-sans), sans-serif;
-  font-size: 0.7rem;
-  font-weight: 500;
-  line-height: 1.45;
+  color: var(--vocab-text);
+  font-family: var(--font-ui);
+  font-size: var(--vocab-size);
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.58;
+  letter-spacing: 0;
   text-align: left;
 }
 
 .watchless-hint-word:hover .watchless-hint-tooltip,
-.watchless-hint-word:focus-visible .watchless-hint-tooltip {
+.watchless-hint-word:focus .watchless-hint-tooltip {
   display: grid;
   gap: 0.3rem;
 }
 
 .watchless-hint-headword {
-  color: var(--watchless-ink);
-  font-family: var(--watchless-serif);
-  font-size: 1rem;
-  font-weight: 750;
+  color: var(--vocab-heading);
+  font-family: inherit;
+  font-size: var(--vocab-heading-size);
+  font-weight: 700;
 }
 
 .watchless-hint-level {
-  color: var(--watchless-rust);
-  font-size: 0.6rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  color: var(--vocab-muted);
+  font-size: var(--vocab-meta-size);
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
-.watchless-hint-sense > span { color: var(--watchless-sage); font-weight: 800; }
+.watchless-hint-sense > span { color: var(--vocab-accent); font-weight: 600; }
+
+.watchless-hint-audio-note {
+  margin-top: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--vocab-border);
+  color: var(--vocab-muted);
+  font-size: var(--vocab-meta-size);
+}
 
 .watchless-source-dock {
   position: fixed;

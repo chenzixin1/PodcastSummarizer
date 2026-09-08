@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  PUBLIC_LIST_SNAPSHOT_CACHE_CONTROL,
   getPublicListSnapshot,
   normalizePage,
   normalizePageSize,
 } from '../../../../../lib/staticSnapshots';
+import { sql } from '../../../../../lib/sql';
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,10 +28,12 @@ export async function GET(request: NextRequest) {
       return response;
     }
 
+    const visible = await sql<{ id: string }>`SELECT id FROM podcasts WHERE is_public = true`;
+    const visibleIds = new Set(visible.rows.map(row => row.id));
     const response = NextResponse.json(
       {
         success: true,
-        data: snapshot.data,
+        data: snapshot.data.filter(item => visibleIds.has(String(item.id))),
         snapshot: {
           version: snapshot.snapshotVersion,
           generatedAt: snapshot.generatedAt,
@@ -40,7 +42,7 @@ export async function GET(request: NextRequest) {
         },
       },
     );
-    response.headers.set('Cache-Control', PUBLIC_LIST_SNAPSHOT_CACHE_CONTROL);
+    response.headers.set('Cache-Control', 'private, no-store');
     return response;
   } catch (error) {
     const response = NextResponse.json(
