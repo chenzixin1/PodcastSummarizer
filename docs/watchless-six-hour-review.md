@@ -44,3 +44,7 @@ Boundary tests cover 1 second, old two-hour limit, just above two hours, exactly
 
 **Review Status:** COMPLETE
 <!-- REVIEW:END -->
+
+Container verification: Linux amd64 image `e599cf2719a39d0ab70863d5b04762581955783a5751e59ef8810140a45d7afd`; all 14 tests passed, including the five HTTP tests unavailable in the local Python environment. Source commit `92dbaed`, release checkout `d4f3a9c`.
+
+Deployment blocked before container registry push: Docker context `colima-podsum-amd64` uses a missing `docker-credential-desktop` helper. Do not disable credential storage protection or claim the new container is live. Initial OpenNext auto-deploy was stopped during unchanged cache population; direct deployment built the image but failed credential storage. No URL job was retried. Restore the local credential helper before continuing deployment.
