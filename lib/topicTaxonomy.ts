@@ -312,7 +312,9 @@ export function deterministicTopicFallback(
   definitions: TopicDefinition[],
   input: string,
 ): TopicAssignment[] {
-  const candidates = retrieveTopicCandidates(definitions, input);
+  const candidates = retrieveTopicCandidates(definitions, input).sort((a, b) =>
+    Number(UMBRELLA_IDS.has(a.definition.id)) - Number(UMBRELLA_IDS.has(b.definition.id))
+    || b.retrievalScore - a.retrievalScore);
   return applyLimits(candidates.map((candidate) => ({
     topicId: candidate.definition.id,
     facet: candidate.definition.facet,
