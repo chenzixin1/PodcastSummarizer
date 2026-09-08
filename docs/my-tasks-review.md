@@ -47,3 +47,9 @@ Visual QA: desktop 1440×960 and mobile 390×844 local browser with explicitly m
 
 **Review Status:** COMPLETE
 <!-- REVIEW:END -->
+
+## Release verification
+
+Source `98dd031`, release checkout `913c418`, Worker `62768beb-8d31-43b3-b379-d02adf633a59`. 94 suites / 797 tests, TypeScript and changed-file ESLint pass. OpenNext production build passed after loading existing build authentication configuration without writing credentials. 27/27 cache objects verified. Deployment used `--autoconfig=false --containers-rollout none`; six-hour runtime image is still not deployed.
+
+Production `/watchless/jobs` visibly renders its sign-in boundary in the real anonymous browser; `/api/watchless/jobs?page=1` returns 401. Logged-in task rendering is covered with explicit browser fixtures and owner isolation with SQLite/API tests; no authenticated production browser session was available for a full user-history UI readback. No task rerun, model request or credit operation was performed.
